@@ -1,0 +1,70 @@
+postcss.config.js
+  179abe16fc01005c 1-6
+vitest.config.mts
+  179abe16fc01005c 1-10,12-18
+  9294c19c1e7a5a31 11
+Makefile
+  9294c19c1e7a5a31 1,35-40,46,56-79
+  179abe16fc01005c 2-34,41-45,47-55
+.env.example
+  179abe16fc01005c 1-4
+package.json
+  9294c19c1e7a5a31 15-16,26
+  179abe16fc01005c 1-14,17-25,27-57
+playwright.config.ts
+  9294c19c1e7a5a31 1-25
+e2e/extract.spec.ts
+  9294c19c1e7a5a31 1-23
+README.md
+  179abe16fc01005c 1-59,95-98,100-105
+  9294c19c1e7a5a31 60-94
+tailwind.config.ts
+  179abe16fc01005c 1-11
+.gitignore
+  179abe16fc01005c 1-30
+  9294c19c1e7a5a31 31-35
+.prettierrc
+  179abe16fc01005c 1-7
+next.config.js
+  179abe16fc01005c 1-17
+tsconfig.json
+  179abe16fc01005c 1-31,33
+  9294c19c1e7a5a31 32
+eslint.config.mjs
+  179abe16fc01005c 1-9
+vitest.setup.ts
+  179abe16fc01005c 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "020fcf737e888bc77ca6eb437f77e57d19f095ef",
+  "prompts": {
+    "179abe16fc01005c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "65482eef-8534-4b3f-bd91-20dd67744f10",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Louis Choquel",
+      "messages": [],
+      "total_additions": 335,
+      "total_deletions": 0,
+      "accepted_lines": 310,
+      "overriden_lines": 1
+    },
+    "9294c19c1e7a5a31": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "56c78f1b-e14a-4c1a-9cc1-edfdbfc6581c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Louis Choquel",
+      "messages": [],
+      "total_additions": 126,
+      "total_deletions": 16,
+      "accepted_lines": 125,
+      "overriden_lines": 0
+    }
+  }
+}
