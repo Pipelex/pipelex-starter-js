@@ -57,22 +57,22 @@ src/
 
 ## Make targets
 
-| Target              | Purpose                                                         |
-| ------------------- | --------------------------------------------------------------- |
-| `make dev`          | Start the Next.js dev server                                    |
-| `make build`        | Production build                                                |
-| `make lint`         | ESLint                                                          |
-| `make format`       | Prettier write                                                  |
-| `make format-check` | Prettier check (CI)                                             |
-| `make typecheck`    | `tsc --noEmit`                                                  |
-| `make test`         | Vitest single pass (unit tests, no API call)                    |
-| `make agent-test`   | Vitest, silent on success (for AI agents)                       |
-| `make test-e2e`     | Playwright e2e — hits the real Pipelex API, needs a valid key   |
-| `make test-e2e-ui`  | Same, with the Playwright UI runner                             |
-| `make check`        | lint + format-check + typecheck                                 |
-| `make all`          | check + test + build (does **not** run e2e — see `test-e2e`)    |
-| `make use-local`    | Symlink sibling `../mthds-js` into `node_modules` (alias: `ul`) |
-| `make use-npm`      | Restore the npm-published `mthds` package (alias: `un`)         |
+| Target              | Purpose                                                                |
+| ------------------- | ---------------------------------------------------------------------- |
+| `make dev`          | Start the Next.js dev server                                           |
+| `make build`        | Production build                                                       |
+| `make lint`         | ESLint                                                                 |
+| `make format`       | Prettier write                                                         |
+| `make format-check` | Prettier check (CI)                                                    |
+| `make typecheck`    | `tsc --noEmit`                                                         |
+| `make test`         | Vitest single pass (unit tests, no API call)                           |
+| `make agent-test`   | Vitest, silent on success (for AI agents)                              |
+| `make test-e2e`     | Playwright e2e — hits the real Pipelex API, needs a valid key          |
+| `make test-e2e-ui`  | Same, with the Playwright UI runner                                    |
+| `make check`        | lint + format-check + typecheck                                        |
+| `make all`          | check + test + build (does **not** run e2e — see `test-e2e`)           |
+| `make use-local`    | Pack & install sibling `../mthds-js` into `node_modules` (alias: `ul`) |
+| `make use-npm`      | Restore the npm-published `mthds` package (alias: `un`)                |
 
 ## End-to-end testing
 
@@ -87,11 +87,11 @@ src/
 If you have the [`mthds-js`](https://github.com/mthds-ai/mthds-js) repo checked out as a sibling directory (`../mthds-js`) and want this app to use it instead of the published npm package:
 
 ```bash
-make use-local   # builds ../mthds-js, symlinks it into node_modules/mthds
+make use-local   # builds ../mthds-js, packs it with `npm pack`, installs the tarball into node_modules/mthds
 make use-npm     # restores the npm version
 ```
 
-Aliases: `make ul` / `make un`. Mirrors the pattern used by `playroom/`.
+Aliases: `make ul` / `make un`. **Re-run `make use-local` after every SDK edit** — the tarball is a snapshot, not a live link. We use a tarball install rather than a symlink because Next.js 16's Turbopack does not follow symlinked workspace packages (`Module not found: Can't resolve 'mthds'`).
 
 ## Environment variables
 
