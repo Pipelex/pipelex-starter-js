@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { runHelloPipeline } from "@/actions/runHelloPipeline";
 import type { ExtractedEntities } from "@/types/helloPipeline";
-import type { PipelineError } from "@/lib/errors";
+import { classifyTransportError, type PipelineError } from "@/lib/errors";
 import { EntityResult } from "./EntityResult";
 import { ErrorDisplay } from "./ErrorDisplay";
 
@@ -21,11 +21,20 @@ export function EntityForm() {
     setError(null);
     setEntities(null);
     startTransition(async () => {
-      const result = await runHelloPipeline(text);
-      if (result.ok) {
-        setEntities(result.entities);
-      } else {
-        setError(result.error);
+      try {
+        const result = await runHelloPipeline(text);
+        if (result.ok) {
+          setEntities(result.entities);
+        } else {
+          setError(result.error);
+        }
+      } catch (err) {
+        // The action's own try/catch handles application errors and returns
+        // them as `{ ok: false }`, so a rejection here is a transport-layer
+        // failure (network drop, server crash, stale Server Action ID after
+        // a deploy). Without this catch the rejection escapes the transition
+        // and bypasses <ErrorDisplay> via React's error boundary.
+        setError(classifyTransportError(err));
       }
     });
   }

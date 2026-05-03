@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { ApiResponseError, ApiUnreachableError, ClientAuthenticationError } from "mthds";
 import { BadPipelineOutputError } from "@/types/helloPipeline";
-import { classifyPipelineError, type ClassifyEnv } from "./errors";
+import { classifyPipelineError, classifyTransportError, type ClassifyEnv } from "./errors";
 
 const LOCAL_ENV: ClassifyEnv = { apiUrl: "http://localhost:8081", hasApiKey: true };
 const CLOUD_ENV: ClassifyEnv = { apiUrl: "https://api.pipelex.com", hasApiKey: true };
@@ -223,6 +223,31 @@ describe("classifyPipelineError — unknown fallback", () => {
     const result = classifyPipelineError("a string was thrown", LOCAL_ENV);
     expect(result.kind).toBe("unknown");
     expect(result.details).toContain("a string was thrown");
+  });
+});
+
+describe("classifyTransportError", () => {
+  it("returns transport_error for fetch-style TypeError rejections", () => {
+    const err = new TypeError("Failed to fetch");
+    const result = classifyTransportError(err);
+    expect(result.kind).toBe("transport_error");
+    expect(result.title).toMatch(/server/i);
+    expect(result.details).toContain("TypeError");
+    expect(result.details).toContain("Failed to fetch");
+    expect(result.hint?.summary).toMatch(/[Rr]eload/);
+  });
+
+  it("includes the original Error name and message in details", () => {
+    const err = Object.assign(new Error("connection reset"), { name: "AbortError" });
+    const result = classifyTransportError(err);
+    expect(result.details).toBe("AbortError: connection reset");
+  });
+
+  it("handles non-Error throws", () => {
+    const result = classifyTransportError("disconnected");
+    expect(result.kind).toBe("transport_error");
+    expect(result.details).toContain("disconnected");
+    expect(result.details).toContain("Unknown");
   });
 });
 

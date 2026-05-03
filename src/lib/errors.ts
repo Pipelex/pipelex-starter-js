@@ -10,6 +10,7 @@ export type PipelineErrorKind =
   | "server_error"
   | "bundle_load_failed"
   | "bad_response"
+  | "transport_error"
   | "unknown";
 
 export interface ErrorHint {
@@ -213,6 +214,37 @@ function classifyBundleMissing(err: unknown): PipelineError {
     title: "Pipeline bundle not found",
     message: `Could not read the .mthds bundle from disk (${e.code ?? "fs error"}). The starter ships with extract_entities.mthds — make sure it's still there.`,
     details: `${e.name}: ${e.message}`,
+  };
+}
+
+/**
+ * Classify a client-side rejection of an awaited Server Action call.
+ *
+ * Distinct from `classifyPipelineError`: the Server Action's own try/catch
+ * already routes every application-level failure into a structured
+ * `{ ok: false, error }` result, so a rejected await here is by construction
+ * a *transport* failure — the browser couldn't deliver the request, the dev
+ * server died mid-call, or the page is running against a stale build whose
+ * Server Action IDs no longer resolve. The SDK error classes referenced by
+ * `classifyPipelineError` only exist server-side and are stripped to opaque
+ * digests when crossing the boundary in production, so they would never
+ * `instanceof`-match here. Without this helper, rejections inside
+ * `startTransition` bypass `<ErrorDisplay>` and bubble to React's nearest
+ * error boundary instead.
+ */
+export function classifyTransportError(err: unknown): PipelineError {
+  const message = err instanceof Error ? err.message : String(err);
+  const name = err instanceof Error ? err.name : "Unknown";
+  return {
+    kind: "transport_error",
+    title: "Could not reach the server",
+    message:
+      "The browser couldn't deliver the request to the Next.js server. The dev server may have stopped, the network may have dropped, or this page may be running against a stale build whose Server Action IDs no longer exist on the deployed server.",
+    hint: {
+      summary:
+        "Reload the page. If the problem persists, check your network and confirm the server is reachable.",
+    },
+    details: `${name}: ${message}`,
   };
 }
 
