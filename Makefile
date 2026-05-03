@@ -56,19 +56,29 @@ clean: ## Remove build artifacts and caches
 
 # ── Local mthds SDK development ────────────────────────────────────────────
 # By default, `make install` fetches the published `mthds` package from npm.
-# `make use-local` symlinks the sibling ../mthds-js into node_modules so you
-# can develop the SDK and the starter side-by-side. `make use-npm` restores
-# the npm version. (Mirrors playroom's use-local / use-github pattern.)
+# `make use-local` packs and installs the sibling ../mthds-js so you can
+# develop the SDK and the starter side-by-side. `make use-npm` restores the
+# npm version.
+#
+# We use `npm pack` + tarball install rather than a symlink because Next.js
+# 16's Turbopack does not follow symlinked workspace packages — `npm run dev`
+# and `npm run build` both fail with "Module not found" against a symlinked
+# node_modules entry. The tarball install gives us a real directory that
+# Turbopack resolves correctly. Re-run `make use-local` after every SDK edit
+# to pick up changes.
 
-use-local: ## Symlink ../mthds-js into node_modules for local SDK development
+use-local: ## Pack and install ../mthds-js into node_modules for local SDK development
 	@if [ ! -d ../mthds-js ]; then \
 		echo "ERROR: ../mthds-js not found — expected as a sibling directory."; exit 1; \
 	fi
 	@echo "Building ../mthds-js so dist/ is up-to-date..."
 	cd ../mthds-js && npm run build
+	@echo "Packing ../mthds-js into a tarball..."
+	@cd ../mthds-js && rm -f mthds-*.tgz && TARBALL=$$(npm pack --silent) && mv $$TARBALL /tmp/mthds-local.tgz
 	rm -rf node_modules/mthds
-	ln -s ../../mthds-js node_modules/mthds
-	@echo "Now using local ../mthds-js (symlink). Run 'make use-npm' to switch back."
+	npm install /tmp/mthds-local.tgz --no-save --silent
+	@rm -f /tmp/mthds-local.tgz
+	@echo "Now using local ../mthds-js (tarball install). Re-run after every SDK edit. 'make use-npm' to switch back."
 
 use-npm: ## Restore the npm-published mthds package
 	rm -rf node_modules/mthds

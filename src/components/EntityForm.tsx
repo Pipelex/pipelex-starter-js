@@ -3,7 +3,9 @@
 import { useState, useTransition } from "react";
 import { runHelloPipeline } from "@/actions/runHelloPipeline";
 import type { ExtractedEntities } from "@/types/helloPipeline";
+import type { PipelineError } from "@/lib/errors";
 import { EntityResult } from "./EntityResult";
+import { ErrorDisplay } from "./ErrorDisplay";
 
 const SAMPLE_TEXT =
   "Apple announced new products in Cupertino on March 5th, 2026, with Tim Cook presenting alongside Jony Ive.";
@@ -11,7 +13,7 @@ const SAMPLE_TEXT =
 export function EntityForm() {
   const [text, setText] = useState(SAMPLE_TEXT);
   const [entities, setEntities] = useState<ExtractedEntities | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<PipelineError | null>(null);
   const [pending, startTransition] = useTransition();
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -19,11 +21,11 @@ export function EntityForm() {
     setError(null);
     setEntities(null);
     startTransition(async () => {
-      try {
-        const result = await runHelloPipeline(text);
-        setEntities(result);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Unknown error");
+      const result = await runHelloPipeline(text);
+      if (result.ok) {
+        setEntities(result.entities);
+      } else {
+        setError(result.error);
       }
     });
   }
@@ -51,14 +53,7 @@ export function EntityForm() {
         </button>
       </form>
 
-      {error && (
-        <div
-          role="alert"
-          className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800"
-        >
-          {error}
-        </div>
-      )}
+      {error && <ErrorDisplay error={error} />}
 
       {entities && <EntityResult entities={entities} />}
     </div>
