@@ -1,0 +1,44 @@
+src/lib/errors.ts
+  57d7de14ca94de66 13,220-250
+src/components/EntityForm.tsx
+  57d7de14ca94de66 6,24-37
+CLAUDE.md
+  57d7de14ca94de66 45,92-93,101
+src/lib/errors.test.ts
+  57d7de14ca94de66 4,229-253
+src/components/EntityForm.test.tsx
+  57d7de14ca94de66 1-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "620f969daa8e876250ac340043c3d60f90046e82",
+  "prompts": {
+    "57d7de14ca94de66": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5091837f-4434-489d-a210-52ae06f0f76b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Louis Choquel",
+      "messages": [],
+      "total_additions": 151,
+      "total_deletions": 14,
+      "accepted_lines": 150,
+      "overriden_lines": 0
+    },
+    "98b5c9b1bb64aa78": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48d27303-ba0f-4843-8da8-119c5570e8da",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Louis Choquel",
+      "messages": [],
+      "total_additions": 199,
+      "total_deletions": 0,
+      "accepted_lines": 196,
+      "overriden_lines": 0
+    }
+  }
+}
