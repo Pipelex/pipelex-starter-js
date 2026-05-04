@@ -24,7 +24,10 @@ describe("runHelloPipeline", () => {
       pipe_output: {
         pipeline_run_id: "run-1",
         working_memory: {
-          entities: { content: { people: ["Ada"], orgs: ["ACME"], dates: ["1843"] } },
+          root: {
+            entities: { content: { people: ["Ada"], orgs: ["ACME"], dates: ["1843"] } },
+          },
+          aliases: {},
         },
       },
     });

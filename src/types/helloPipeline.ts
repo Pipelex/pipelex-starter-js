@@ -34,7 +34,12 @@ export function parseEntities(pipeOutput: unknown): ExtractedEntities {
     throw new BadPipelineOutputError("Expected pipe_output.working_memory to be an object");
   }
 
-  const entries = Object.values(workingMemory as Record<string, unknown>);
+  const root = (workingMemory as { root?: unknown }).root;
+  if (!root || typeof root !== "object") {
+    throw new BadPipelineOutputError("Expected pipe_output.working_memory.root to be an object");
+  }
+
+  const entries = Object.values(root as Record<string, unknown>);
   const candidate = entries
     .map((entry) => {
       if (!entry || typeof entry !== "object") return null;

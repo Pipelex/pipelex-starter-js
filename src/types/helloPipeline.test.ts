@@ -5,7 +5,10 @@ function makePipeOutput(content: unknown) {
   return {
     pipeline_run_id: "run-123",
     working_memory: {
-      entities: { content },
+      root: {
+        entities: { content },
+      },
+      aliases: {},
     },
   };
 }
@@ -36,13 +39,22 @@ describe("parseEntities", () => {
     expect(() => parseEntities("not an object")).toThrow();
   });
 
-  it("throws when working_memory has no matching entry", () => {
+  it("throws when working_memory.root has no matching entry", () => {
     expect(() =>
       parseEntities({
         pipeline_run_id: "x",
-        working_memory: { other: { content: { foo: "bar" } } },
+        working_memory: { root: { other: { content: { foo: "bar" } } }, aliases: {} },
       }),
     ).toThrow();
+  });
+
+  it("throws when working_memory has no root key", () => {
+    expect(() =>
+      parseEntities({
+        pipeline_run_id: "x",
+        working_memory: { entities: { content: { people: [], orgs: [], dates: [] } } },
+      }),
+    ).toThrow(/working_memory\.root/);
   });
 
   it("throws when a field is not an array of strings", () => {
