@@ -1,0 +1,65 @@
+TODOS.md
+  f2c61f4e1c9ec28d 1-274
+wip/watch-mode.md
+  f2c61f4e1c9ec28d 1-26
+wip/refines-support.md
+  f2c61f4e1c9ec28d 1-26
+wip/cross-bundle-concept-refs.md
+  f2c61f4e1c9ec28d 1-26
+wip/pipe-input-typing.md
+  f2c61f4e1c9ec28d 1-26
+src/types/helloPipeline.ts
+  591b14c1228f3f48 37-42
+src/types/helloPipeline.test.ts
+  591b14c1228f3f48 8-11,42,46,51-57
+wip/runtime-schema-fetch.md
+  f2c61f4e1c9ec28d 1-28
+src/actions/runHelloPipeline.test.ts
+  591b14c1228f3f48 27-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "3b8fd019b4b2a75d218e48442f07ac16bd98a648",
+  "prompts": {
+    "57d7de14ca94de66": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5091837f-4434-489d-a210-52ae06f0f76b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Louis Choquel",
+      "messages": [],
+      "total_additions": 105,
+      "total_deletions": 0,
+      "accepted_lines": 106,
+      "overriden_lines": 0
+    },
+    "591b14c1228f3f48": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cd5b9c63-f7f0-494e-b402-f4af5550731b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Louis Choquel",
+      "messages": [],
+      "total_additions": 25,
+      "total_deletions": 5,
+      "accepted_lines": 25,
+      "overriden_lines": 0
+    },
+    "f2c61f4e1c9ec28d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cb1f6b41-fc9b-4525-946d-9bedc0453ce0",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Louis Choquel",
+      "messages": [],
+      "total_additions": 454,
+      "total_deletions": 43,
+      "accepted_lines": 412,
+      "overriden_lines": 0
+    }
+  }
+}
