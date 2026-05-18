@@ -19,30 +19,44 @@ This repo is a **reference template**. Keep it small, clear, and high-quality �
 
 ```
 methods/
-  hello/main.mthds            # demo pipeline (TOML)
+  hello/main.mthds            # text → entities pipeline (TOML)
+  summarize-pdf/main.mthds    # PDF Document → structured summary
+  generate-image/main.mthds   # text prompt → image (gpt-image-1-mini)
+public/
+  sample-invoice.pdf          # sample PDF the PDF example loads out of the box
 src/
   app/                        # Next.js App Router (layout, page, globals.css)
-  actions/
-    runHelloPipeline.ts       # 'use server' Server Action calling the SDK
+  actions/                    # 'use server' Server Actions — one per pipeline
+    runHelloPipeline.ts
+    runSummarizePdfPipeline.ts
+    runGenerateImagePipeline.ts
   lib/
     pipelexClient.ts          # MthdsApiClient singleton factory
-    loadBundle.ts             # fs.readFile of methods/hello/main.mthds
+    loadBundle.ts             # fs.readFile of the .mthds bundles
     errors.ts                 # classifyPipelineError + PipelineError display model
+    fileEncoding.ts           # data-URL validation + Document input envelope (server)
+    clientFile.ts             # browser File → base64 data URL (client)
   components/
-    EntityForm.tsx            # client component (textarea + submit)
-    EntityResult.tsx          # server component (renders structured output)
+    ExampleTabs.tsx           # client component — tab switcher for the 3 examples
+    EntityForm/PdfForm/ImageForm.tsx        # client components (per-example input)
+    EntityResult/PdfSummaryResult/ImageResult.tsx  # server components (render output)
     ErrorDisplay.tsx          # server component (renders classified PipelineError)
   types/
-    helloPipeline.ts          # ExtractedEntities + BadPipelineOutputError + parseEntities()
+    pipelineError.ts          # BadPipelineOutputError + BadImageOutputError (tagged)
+    helloPipeline.ts          # ExtractedEntities + parseEntities()
+    summarizePipeline.ts      # DocumentSummary + parseDocumentSummary()
+    generateImagePipeline.ts  # GeneratedImage + parseGeneratedImage()
 e2e/
   extract.spec.ts             # Playwright e2e (hits live API)
+  summarize-pdf.spec.ts
+  generate-image.spec.ts
 ```
 
 ### What lives where
 
 - **`methods/`** — `.mthds` bundles (TOML). Treat them as first-class artifacts, not embedded strings. Use the `/mthds-build`, `/mthds-edit`, `/mthds-check`, `/mthds-run` skills from the `mthds-plugins` marketplace to author and validate them.
 - **`src/actions/`** — Server Actions (`"use server"`). The only place that calls the Pipelex SDK. Keep them thin: load bundle → call SDK → narrow output → return.
-- **`src/lib/`** — Server-side utilities. No React. `errors.ts` is the one exception: its types cross the server→client boundary, and `classifyTransportError` runs client-side (called from `EntityForm` to handle rejected Server Action awaits).
+- **`src/lib/`** — Server-side utilities. No React. Two deliberate client-touching exceptions: `errors.ts` (its types cross the server→client boundary, and `classifyTransportError` runs client-side), and `clientFile.ts` (a browser `FileReader` wrapper imported only by client components). `fileEncoding.ts` is pure (no React, no `process.env`) so it is safe to import from either side.
 - **`src/components/`** — React components. `"use client"` only when the component uses hooks, event handlers, or browser APIs.
 - **`src/types/`** — TS types and runtime narrowers (`parseXxx()`). Narrowers throw on shape mismatch; that's deliberate (system boundary).
 
@@ -89,8 +103,18 @@ Conventions:
 - **One client**: instantiate `MthdsApiClient` once via `getPipelexClient()`. Never `new MthdsApiClient()` directly in actions or components.
 - **Narrow at the boundary**: the SDK returns loosely-typed `pipe_output`. Always pass it through a `parseXxx()` narrower in `src/types/` that throws a tagged subclass of `Error` (e.g. `BadPipelineOutputError`) on shape mismatch. Do not `as` your way through.
 - **Return classified errors, don't throw across the server→client boundary**: server actions return `{ ok: true, ... } | { ok: false, error: PipelineError }`. Throwing works in dev but Next.js production builds strip server-action error messages to opaque digests, which destroys the developer-facing error UX. Wrap the SDK call in `try/catch`, hand the caught value to `classifyPipelineError(err, env)`, and return the structured error. Render it client-side with `<ErrorDisplay>`.
-- **Add new error kinds in `src/lib/errors.ts`**: extend `PipelineErrorKind`, add a branch in `classifyPipelineError`, and cover it in `src/lib/errors.test.ts` (table-driven). Keep `classifyPipelineError` pure — env passed in by caller, no `process.env` reads inside. Client-side rejections of awaited Server Actions go through `classifyTransportError` instead — the SDK error classes don't survive the server→client boundary, so they would never `instanceof`-match on the client.
+- **Add new error kinds in `src/lib/errors.ts`**: extend `PipelineErrorKind`, add a branch in `classifyPipelineError`, and cover it in `src/lib/errors.test.ts` (table-driven). Keep `classifyPipelineError` pure — env passed in by caller, no `process.env` reads inside. Client-side rejections of awaited Server Actions go through `classifyTransportError` instead — the SDK error classes don't survive the server→client boundary, so they would never `instanceof`-match on the client. Pre-flight validation kinds (`file_too_large`, `unsupported_file_type`) are the exception: they are built inline by a Server Action _before_ the SDK call (there is no thrown error to classify), so they have no `classifyPipelineError` branch.
 - **Wrap awaited Server Action calls in `try/catch` on the client** and route catches through `classifyTransportError(err)`. Even though the action's own catch turns application errors into `{ ok: false, error }`, the await itself can still reject (network drop, dev server crash, stale Server Action ID after a deploy) — without the client-side catch, the rejection escapes `startTransition` and bypasses `<ErrorDisplay>` via React's error boundary.
+
+### File & image inputs
+
+Text inputs are plain strings. File inputs (PDFs, images) take one extra step, demonstrated by the PDF example:
+
+- **Encode client-side, never cross the boundary with a `File`.** The browser reads the `File` into a base64 data URL via `fileToDataUrl` (`src/lib/clientFile.ts`). Server Actions accept only serializable arguments — pass the `string` data URL + filename, never a `File`, `Blob`, or `FormData`.
+- **Validate, then build the envelope server-side.** The Server Action calls `validateDataUrl` (authoritative MIME + size gate) and `buildDocumentInput` (`src/lib/fileEncoding.ts`), which produces a Pipelex `Document` input: `{ concept: "Document", content: { url, filename, mime_type } }`. Images use the same shape with `concept: "Image"`. The Pipelex API decodes the base64 data URL server-side.
+- **Re-validate on the server.** The client may also pre-check for fast UX feedback, but that is trivially bypassed — the Server Action's `validateDataUrl` call is the real gate.
+- **Mind the Server Action body limit.** Next.js caps Server Action bodies at 1 MB by default; base64 inflates payloads ~37%. `next.config.js` raises `serverActions.bodySizeLimit`, and `MAX_PDF_BYTES` in `fileEncoding.ts` caps the raw file size with margin.
+- **File/image outputs come back as a URL** — a storage URL or a base64 data URL — in `pipe_output`. The `parseXxx()` narrower extracts it; render it directly in an `<img>` (see `ImageResult.tsx`).
 
 To add a new pipeline:
 
@@ -172,7 +196,7 @@ If `make format-check` fails, run `make format` to auto-fix and re-run `make all
 Other targets that matter:
 
 - **`make agent-test`** instead of `make test` when an AI agent runs the suite. It's silent on success; only failures hit the context.
-- **`make test-e2e`** before shipping changes that touch the SDK call path (`src/actions/`, `src/lib/pipelexClient.ts`, `src/lib/loadBundle.ts`, `src/lib/errors.ts`, `methods/`). Unit tests mock the SDK; only e2e exercises the real API and the rendered error UX. Not part of `make all` (costs an LLM call per run).
+- **`make test-e2e`** before shipping changes that touch the SDK call path (`src/actions/`, `src/lib/pipelexClient.ts`, `src/lib/loadBundle.ts`, `src/lib/errors.ts`, `src/lib/fileEncoding.ts`, `methods/`). Unit tests mock the SDK; only e2e exercises the real API and the rendered error UX. Not part of `make all` (costs an LLM call per run).
 - **`make use-local`** after editing the sibling `../mthds-js` SDK, before re-running tests or the dev server. The tarball install only refreshes when the target re-runs.
 
 ## Git Workflow

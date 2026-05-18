@@ -33,3 +33,6 @@ next-env.d.ts
 playwright-report/
 test-results/
 /playwright/.cache/
+
+# pipelex / mthds tooling artifacts (traces, caches)
+.pipelex/

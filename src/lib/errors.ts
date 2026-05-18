@@ -1,5 +1,5 @@
 import { ApiResponseError, ApiUnreachableError, ClientAuthenticationError } from "mthds";
-import { BadPipelineOutputError } from "@/types/helloPipeline";
+import { BadImageOutputError, BadPipelineOutputError } from "@/types/pipelineError";
 
 export type PipelineErrorKind =
   | "api_unreachable"
@@ -10,7 +10,14 @@ export type PipelineErrorKind =
   | "server_error"
   | "bundle_load_failed"
   | "bad_response"
+  | "bad_image_output"
   | "transport_error"
+  // Pre-flight validation kinds: built inline by a Server Action before the
+  // SDK call (see `runSummarizePdfPipeline` / `fileInputErrorToPipelineError`),
+  // never produced by `classifyPipelineError` — there is no thrown error to
+  // classify. They are still valid kinds so `<ErrorDisplay>` renders them.
+  | "file_too_large"
+  | "unsupported_file_type"
   | "unknown";
 
 export interface ErrorHint {
@@ -41,6 +48,7 @@ export function classifyPipelineError(err: unknown, env: ClassifyEnv): PipelineE
   if (err instanceof ApiUnreachableError) return classifyUnreachable(err, env);
   if (err instanceof ApiResponseError) return classifyResponse(err, env);
   if (err instanceof ClientAuthenticationError) return classifyClientAuth(err, env);
+  if (err instanceof BadImageOutputError) return classifyBadImageOutput(err);
   if (err instanceof BadPipelineOutputError) return classifyBadOutput(err);
   if (isFsNotFound(err)) return classifyBundleMissing(err);
   return classifyUnknown(err);
@@ -202,7 +210,33 @@ function classifyBadOutput(err: BadPipelineOutputError): PipelineError {
     kind: "bad_response",
     title: "Pipeline output didn't match the expected shape",
     message:
-      "The pipeline ran but its output didn't contain ExtractedEntities. This usually means the bundle was edited or the LLM produced something unexpected.",
+      "The pipeline ran but its output didn't match the shape this example expects. This usually means the bundle was edited or the LLM produced something unexpected.",
+    details: `${err.name}: ${err.message}`,
+  };
+}
+
+function classifyBadImageOutput(err: BadImageOutputError): PipelineError {
+  if (err.nonWebUrl) {
+    return {
+      kind: "bad_image_output",
+      title: "Generated image isn't web-accessible",
+      message:
+        "The pipeline generated an image, but the Pipelex API returned a URL a browser can't load — typically a file:// path on the API server's disk. This happens when the API uses the local file storage provider.",
+      hint: {
+        summary:
+          "Configure the Pipelex API with an S3 or GCP storage provider so it returns presigned HTTPS URLs, or point PIPELEX_API_URL at the hosted API. Set this in pipelex-api's .pipelex/pipelex.toml:",
+        code: '[storage]\nmethod = "s3"  # or "gcp"',
+        codeLanguage: "env",
+        docs: { label: "Pipelex storage configuration", href: "https://docs.pipelex.com/" },
+      },
+      details: `${err.name}: ${err.message}`,
+    };
+  }
+  return {
+    kind: "bad_image_output",
+    title: "Image generation returned no usable image",
+    message:
+      "The pipeline ran but its output didn't contain an image URL. The image model may have refused the prompt or returned an unexpected shape.",
     details: `${err.name}: ${err.message}`,
   };
 }
