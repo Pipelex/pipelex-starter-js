@@ -193,7 +193,6 @@ Other targets that matter:
 
 ## Gotchas
 
-- **`mthds` version**: the npm package is currently `^0.5.0`; the workspace's local `mthds-js` is on `0.6.0` (unpublished). 0.6.0 adds typed error subclasses (`ApiUnreachableError`, `ApiResponseError`) that `src/lib/errors.ts` imports — the starter will fail to typecheck against the npm 0.5.0 until 0.6.0 ships. Use `make use-local` for development; bump the `package.json` constraint to `^0.6.0` once published.
 - **Husky `prepare` warning**: `npm install` prints `.git can't be found` if you install before `git init`. Harmless — just re-run `npm install` after `git init` to wire `.husky/_/`.
 - **Renaming App Router directories**: delete `.next/` before running `make check` — stale type references in `.next/types/` will fail typecheck.
 - **`next-env.d.ts` is generated** (gitignored). Next regenerates it on dev/build. Don't edit by hand.
