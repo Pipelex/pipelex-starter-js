@@ -19,7 +19,9 @@ It ships three demo pipelines, presented as tabs:
 ## Prerequisites
 
 - Node.js 18+
-- A Pipelex API key — get one at [app.pipelex.com](https://app.pipelex.com).
+- Access to a **Pipelex API** server. You have two options:
+  - **Hosted** — currently in private beta. Join the waitlist at [go.pipelex.com/waitlist](https://go.pipelex.com/waitlist). Once you have access, get an API key at [app.pipelex.com](https://app.pipelex.com) and point `PIPELEX_API_URL` at `https://api.pipelex.com` (the default).
+  - **Self-hosted** — the Pipelex API is open source at [github.com/Pipelex/pipelex-api](https://github.com/Pipelex/pipelex-api). Run it locally or on your own infra and point `PIPELEX_API_URL` at your instance (e.g. `http://localhost:8000`).
 
 ## Quick start
 
@@ -117,10 +119,10 @@ Aliases: `make ul` / `make un`. **Re-run `make use-local` after every SDK edit**
 
 ## Environment variables
 
-| Variable          | Purpose                      | Default                   |
-| ----------------- | ---------------------------- | ------------------------- |
-| `PIPELEX_API_URL` | Pipelex API base URL         | `https://api.pipelex.com` |
-| `PIPELEX_API_KEY` | Bearer token used by the SDK | (required at runtime)     |
+| Variable          | Purpose                                                                                                                              | Default                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- |
+| `PIPELEX_API_URL` | Pipelex API base URL — hosted (`https://api.pipelex.com`) or your own [self-hosted instance](https://github.com/Pipelex/pipelex-api) | `https://api.pipelex.com` |
+| `PIPELEX_API_KEY` | Bearer token used by the SDK                                                                                                         | (required at runtime)     |
 
 ## License
 
