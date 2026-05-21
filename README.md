@@ -126,4 +126,4 @@ Aliases: `make ul` / `make un`. **Re-run `make use-local` after every SDK edit**
 
 ## License
 
-MIT
+This project is licensed under the [MIT license](LICENSE). Runtime dependencies are distributed under their own licenses via npm.

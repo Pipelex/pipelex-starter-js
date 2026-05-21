@@ -36,3 +36,6 @@ test-results/
 
 # pipelex / mthds tooling artifacts (traces, caches)
 .pipelex/
+
+# claude code local settings (per-user, never commit)
+.claude/settings.local.json

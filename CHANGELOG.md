@@ -20,3 +20,10 @@
 ### Fixed
 
 - README docs for `make use-local` corrected to match the tarball install (Turbopack does not follow symlinks)
+
+### Repository
+
+- Added MIT `LICENSE` (Evotis S.A.S.) and refreshed the README license section ahead of open-sourcing
+- Added CI workflows `lint-check` (runs `make check`) and `tests-check` (runs `make agent-test` + `make build`) on PRs to `main` and `release/vX.Y.Z`
+- Removed internal-only planning docs (`TODOS.md`, `wip/`)
+- Gitignored `.claude/settings.local.json` so per-user Claude Code settings don't get committed
