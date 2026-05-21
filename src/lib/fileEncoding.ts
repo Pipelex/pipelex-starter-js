@@ -17,6 +17,7 @@ export type FileInputError = {
 };
 
 const BASE64_DATA_URL_RE = /^data:([^;,]+);base64,/;
+const BASE64_PAYLOAD_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 /** MIME type of a base64 data URL, or null if the string isn't one. */
 export function dataUrlMimeType(dataUrl: string): string | null {
@@ -64,6 +65,13 @@ export function validateDataUrl(
     return {
       kind: "unsupported_file_type",
       message: `Unsupported file type "${mime}". Expected: ${opts.allowedMimes.join(", ")}.`,
+    };
+  }
+  const payload = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  if (!BASE64_PAYLOAD_RE.test(payload)) {
+    return {
+      kind: "unsupported_file_type",
+      message: "Expected a valid base64-encoded data URL.",
     };
   }
   const bytes = dataUrlByteLength(dataUrl);

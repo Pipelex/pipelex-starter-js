@@ -64,6 +64,19 @@ describe("validateDataUrl", () => {
     expect(result?.kind).toBe("file_too_large");
     expect(result?.message).toMatch(/limit/);
   });
+
+  it("rejects a malformed base64 payload", () => {
+    // `@@@@` matches MIME and would pass the size cap, but isn't valid base64.
+    const result = validateDataUrl("data:application/pdf;base64,@@@@", opts);
+    expect(result?.kind).toBe("unsupported_file_type");
+    expect(result?.message).toMatch(/base64/i);
+  });
+
+  it("rejects base64 with wrong padding", () => {
+    // Base64 padding only appears at the very end; embedded `==` is invalid.
+    const result = validateDataUrl("data:application/pdf;base64,AB==A===", opts);
+    expect(result?.kind).toBe("unsupported_file_type");
+  });
 });
 
 describe("buildDocumentInput", () => {

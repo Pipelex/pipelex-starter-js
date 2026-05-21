@@ -21,12 +21,24 @@ function megabytes(bytes: number): string {
 }
 
 /**
+ * Browsers and OS integrations occasionally surface an empty `file.type`
+ * for valid PDFs (e.g. some drag-drop sources, some Windows configurations).
+ * Fall back to the extension so those uploads aren't blocked client-side —
+ * the Server Action still re-validates authoritatively.
+ */
+function inferPdfMime(file: File): string {
+  if (file.type) return file.type;
+  return file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "";
+}
+
+/**
  * Fast client-side check so we don't base64-encode a huge or wrong-typed
  * file just to have the server reject it. `runSummarizePdfPipeline`
  * re-validates the data URL authoritatively — this is UX, not a gate.
  */
 function checkFile(file: File): FileInputError | null {
-  if (file.type !== "application/pdf") {
+  const mime = inferPdfMime(file);
+  if (mime !== "application/pdf") {
     return {
       kind: "unsupported_file_type",
       message: `Expected a PDF; received "${file.type || "unknown type"}".`,
@@ -48,9 +60,14 @@ export function PdfForm() {
   const [error, setError] = useState<PipelineError | null>(null);
   const [pending, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Bumped on every `acceptFile` call; lets us ignore a stale FileReader read
+  // when the user picks a second file before the first finishes encoding.
+  const selectionTokenRef = useRef(0);
 
   /** Validate, then base64-encode a chosen PDF into a data URL for submission. */
   async function acceptFile(file: File) {
+    const token = ++selectionTokenRef.current;
+    const isCurrent = () => selectionTokenRef.current === token;
     setSummary(null);
     setError(null);
     const fileError = checkFile(file);
@@ -60,11 +77,19 @@ export function PdfForm() {
       setError(fileInputErrorToPipelineError(fileError, file.name));
       return;
     }
+    // Normalize an empty MIME (see `inferPdfMime`) so the encoded data URL
+    // carries `application/pdf`, which the server's validator requires.
+    const fileForEncoding =
+      file.type === "application/pdf"
+        ? file
+        : new File([file], file.name, { type: "application/pdf" });
     try {
-      const url = await fileToDataUrl(file);
+      const url = await fileToDataUrl(fileForEncoding);
+      if (!isCurrent()) return;
       setFilename(file.name);
       setDataUrl(url);
     } catch (err) {
+      if (!isCurrent()) return;
       setFilename(null);
       setDataUrl(null);
       setError(classifyTransportError(err));
