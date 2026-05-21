@@ -100,7 +100,7 @@ Image **outputs** (the image example) come back as a URL — a storage URL or a 
 
 ## End-to-end testing
 
-`make test-e2e` runs a Playwright spec that opens the dev server, fills in the sample text, clicks **Extract entities**, and asserts that the expected entities appear. It hits the **live** Pipelex API using `PIPELEX_API_KEY` from `.env.local`, so:
+`make test-e2e` runs Playwright specs that open the dev server and exercise each of the three example tabs end-to-end — entity extraction, PDF summary, and image generation — asserting the expected output for each. The specs hit the **live** Pipelex API using `PIPELEX_API_KEY` from `.env.local`, so:
 
 - It costs an LLM call per run.
 - It is intentionally excluded from `make all`.
