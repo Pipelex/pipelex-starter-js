@@ -4,6 +4,7 @@ import { test, expect } from "@playwright/test";
 // PIPELEX_API_KEY in `.env.local`. It will fail if those are unset or invalid.
 test("extracts entities from sample text", async ({ page }) => {
   await page.goto("/");
+  await page.getByRole("tab", { name: /text entities/i }).click();
 
   const textarea = page.getByLabel("Input text");
   await textarea.fill(

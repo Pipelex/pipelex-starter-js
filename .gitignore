@@ -33,3 +33,9 @@ next-env.d.ts
 playwright-report/
 test-results/
 /playwright/.cache/
+
+# pipelex / mthds tooling artifacts (traces, caches)
+.pipelex/
+
+# claude code local settings (per-user, never commit)
+.claude/settings.local.json

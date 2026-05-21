@@ -2,7 +2,11 @@
 
 A minimal Next.js 16 starter that calls the [Pipelex](https://pipelex.com) API via the [`mthds`](https://www.npmjs.com/package/mthds) SDK to run AI methods (`.mthds` bundles) from a TypeScript app.
 
-The included demo pipeline (`methods/hello/main.mthds`) takes a piece of text and returns structured `{ people, orgs, dates }` entities.
+It ships three demo pipelines, presented as tabs:
+
+- **Text entities** (`methods/hello`) — extracts `{ people, orgs, dates }` from pasted text.
+- **PDF summary** (`methods/summarize-pdf`) — uploads a PDF in the browser and returns a structured `{ title, docType, keyPoints }` summary from a cheap OpenAI model.
+- **Image generation** (`methods/generate-image`) — turns a text prompt into an image with `gpt-image-1-mini`.
 
 ## Stack
 
@@ -15,7 +19,9 @@ The included demo pipeline (`methods/hello/main.mthds`) takes a piece of text an
 ## Prerequisites
 
 - Node.js 18+
-- A Pipelex API key — get one at [app.pipelex.com](https://app.pipelex.com).
+- Access to a **Pipelex API** server. You have two options:
+  - **Hosted** — currently in private beta. Join the waitlist at [go.pipelex.com/waitlist](https://go.pipelex.com/waitlist). Once you have access, get an API key at [app.pipelex.com](https://app.pipelex.com) and point `PIPELEX_API_URL` at `https://api.pipelex.com` (the default).
+  - **Self-hosted** — the Pipelex API is open source at [github.com/Pipelex/pipelex-api](https://github.com/Pipelex/pipelex-api). Run it locally or on your own infra and point `PIPELEX_API_URL` at your instance (e.g. `http://localhost:8000`).
 
 ## Quick start
 
@@ -26,34 +32,52 @@ make install
 make dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), paste a sentence, click **Extract entities**.
+Open [http://localhost:3000](http://localhost:3000) and try the three example tabs.
 
 ## Project structure
 
 ```
-methods/hello/main.mthds      # the demo pipeline (TOML)
+methods/
+  hello/main.mthds            # text → { people, orgs, dates }
+  summarize-pdf/main.mthds    # PDF Document → { title, docType, keyPoints }
+  generate-image/main.mthds   # text prompt → generated Image
+public/sample-invoice.pdf     # sample PDF, so the PDF example works out of the box
 src/
   app/                        # Next.js App Router (layout, page, globals.css)
-  actions/runHelloPipeline.ts # 'use server' Server Action calling the SDK
-  lib/pipelexClient.ts        # MthdsApiClient singleton
-  lib/loadBundle.ts           # reads methods/hello/main.mthds
-  components/                 # EntityForm (client) + EntityResult (server)
-  types/helloPipeline.ts      # ExtractedEntities type + parseEntities() narrower
+  actions/                    # 'use server' Server Actions — one per pipeline
+  lib/
+    pipelexClient.ts          # MthdsApiClient singleton
+    loadBundle.ts             # reads the .mthds bundles from disk
+    errors.ts                 # classifyPipelineError + PipelineError model
+    fileEncoding.ts           # data-URL validation + Document input envelope
+    clientFile.ts             # browser File → base64 data URL
+  components/                 # ExampleTabs + per-example form/result components
+  types/                      # concept types + parseXxx() narrowers
 ```
 
 ## How it works
 
-1. The browser submits the textarea to the **Server Action** `runHelloPipeline`.
-2. The Server Action reads the `.mthds` bundle from disk and calls `MthdsApiClient.executePipeline()` with the bundle TOML + input text.
-3. The Pipelex API runs the `extract_entities` pipe (a `PipeLLM`) and returns structured output.
-4. `parseEntities()` narrows the loosely-typed SDK response into our `ExtractedEntities` type.
-5. The result is rendered by `<EntityResult>`.
+1. The browser submits to a **Server Action** (`runHelloPipeline`, `runSummarizePdfPipeline`, or `runGenerateImagePipeline`).
+2. The Server Action reads the `.mthds` bundle from disk and calls `MthdsApiClient.executePipeline()` with the bundle TOML + inputs.
+3. The Pipelex API runs the pipe and returns loosely-typed output.
+4. A `parseXxx()` narrower in `src/types/` validates the output into a typed shape.
+5. The result is rendered, or a classified `PipelineError` is shown by `<ErrorDisplay>`.
+
+## File & image inputs
+
+Text inputs are plain strings. File inputs (the PDF example) go through one extra step:
+
+1. The browser reads the chosen `File` into a base64 data URL with `fileToDataUrl` (`src/lib/clientFile.ts`). `File` objects are **not** serializable across the server boundary — the Server Action only ever receives the resulting `string`.
+2. The Server Action validates the data URL (`validateDataUrl`) and wraps it in a Pipelex `Document` envelope (`buildDocumentInput` → `{ concept: "Document", content: { url, filename, mime_type } }`).
+3. The Pipelex API decodes the data URL server-side — the app never hosts the file itself.
+
+Image **outputs** (the image example) come back as a URL — a storage URL or a base64 data URL — which renders directly in an `<img>`.
 
 ## Swap in your own pipeline
 
-1. Replace `methods/hello/main.mthds` with your own bundle (or add new ones). The `/mthds-build` skill from the [mthds-plugins](https://github.com/Pipelex/mthds-plugins) marketplace can generate one for you.
-2. Update `src/actions/runHelloPipeline.ts` — change `pipe_code`, the `inputs` shape, and the parser.
-3. Update `src/types/helloPipeline.ts` to match your concept's structure.
+1. Add `methods/<name>/main.mthds` (the `/mthds-build` skill from the [mthds-plugins](https://github.com/Pipelex/mthds-plugins) marketplace can generate one).
+2. Add a loader in `src/lib/loadBundle.ts`, a type + `parseXxx()` narrower in `src/types/`, and a Server Action in `src/actions/`.
+3. Wire it from a component. The three existing examples are the canonical patterns to copy.
 
 ## Make targets
 
@@ -76,7 +100,7 @@ src/
 
 ## End-to-end testing
 
-`make test-e2e` runs a Playwright spec that opens the dev server, fills in the sample text, clicks **Extract entities**, and asserts that the expected entities appear. It hits the **live** Pipelex API using `PIPELEX_API_KEY` from `.env.local`, so:
+`make test-e2e` runs Playwright specs that open the dev server and exercise each of the three example tabs end-to-end — entity extraction, PDF summary, and image generation — asserting the expected output for each. The specs hit the **live** Pipelex API using `PIPELEX_API_KEY` from `.env.local`, so:
 
 - It costs an LLM call per run.
 - It is intentionally excluded from `make all`.
@@ -95,11 +119,11 @@ Aliases: `make ul` / `make un`. **Re-run `make use-local` after every SDK edit**
 
 ## Environment variables
 
-| Variable          | Purpose                      | Default                   |
-| ----------------- | ---------------------------- | ------------------------- |
-| `PIPELEX_API_URL` | Pipelex API base URL         | `https://api.pipelex.com` |
-| `PIPELEX_API_KEY` | Bearer token used by the SDK | (required at runtime)     |
+| Variable          | Purpose                                                                                                                              | Default                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- |
+| `PIPELEX_API_URL` | Pipelex API base URL — hosted (`https://api.pipelex.com`) or your own [self-hosted instance](https://github.com/Pipelex/pipelex-api) | `https://api.pipelex.com` |
+| `PIPELEX_API_KEY` | Bearer token used by the SDK                                                                                                         | (required at runtime)     |
 
 ## License
 
-MIT
+This project is licensed under the [MIT license](LICENSE). Runtime dependencies are distributed under their own licenses via npm.

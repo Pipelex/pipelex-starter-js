@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ApiResponseError, ApiUnreachableError, ClientAuthenticationError } from "mthds";
-import { BadPipelineOutputError } from "@/types/helloPipeline";
+import { BadImageOutputError, BadPipelineOutputError } from "@/types/pipelineError";
 import { classifyPipelineError, classifyTransportError, type ClassifyEnv } from "./errors";
 
 const LOCAL_ENV: ClassifyEnv = { apiUrl: "http://localhost:8081", hasApiKey: true };
@@ -198,6 +198,30 @@ describe("classifyPipelineError — BadPipelineOutputError", () => {
     expect(result.title).toContain("output");
     expect(result.details).toContain("BadPipelineOutputError");
     expect(result.details).toContain("missing field");
+  });
+});
+
+describe("classifyPipelineError — BadImageOutputError", () => {
+  it("returns bad_image_output", () => {
+    const err = new BadImageOutputError("no image url");
+    const result = classifyPipelineError(err, LOCAL_ENV);
+    expect(result.kind).toBe("bad_image_output");
+    expect(result.title).toMatch(/image/i);
+    expect(result.details).toContain("BadImageOutputError");
+    expect(result.details).toContain("no image url");
+  });
+
+  it("recommends S3/GCP storage when the image URL isn't web-accessible", () => {
+    const err = new BadImageOutputError(
+      'The pipeline returned an image at "file:///tmp/storage/abc.png", but a browser cannot load a file: URL.',
+      { nonWebUrl: "file:///tmp/storage/abc.png" },
+    );
+    const result = classifyPipelineError(err, LOCAL_ENV);
+    expect(result.kind).toBe("bad_image_output");
+    expect(result.title).toMatch(/web-accessible/i);
+    expect(result.hint?.summary).toMatch(/S3 or GCP/);
+    expect(result.hint?.code).toContain("[storage]");
+    expect(result.details).toContain("file:///tmp/storage/abc.png");
   });
 });
 

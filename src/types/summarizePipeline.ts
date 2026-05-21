@@ -1,9 +1,9 @@
 import { BadPipelineOutputError } from "@/types/pipelineError";
 
-export type ExtractedEntities = {
-  people: string[];
-  orgs: string[];
-  dates: string[];
+export type DocumentSummary = {
+  title: string;
+  docType: string;
+  keyPoints: string[];
 };
 
 function isStringArray(value: unknown): value is string[] {
@@ -11,11 +11,14 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 /**
- * Narrow the SDK's loosely-typed `pipe_output` into our ExtractedEntities shape.
- * Throws `BadPipelineOutputError` on shape mismatch — this is a system boundary
- * (LLM output → typed app), so failures are real bugs we want surfaced.
+ * Narrow the SDK's loosely-typed `pipe_output` into our DocumentSummary
+ * shape. Throws `BadPipelineOutputError` on shape mismatch — this is a
+ * system boundary (model output → typed app), so failures are real bugs.
+ *
+ * The bundle emits snake_case (`doc_type`, `key_points`); we map to
+ * camelCase here so the rest of the app stays idiomatic TypeScript.
  */
-export function parseEntities(pipeOutput: unknown): ExtractedEntities {
+export function parseDocumentSummary(pipeOutput: unknown): DocumentSummary {
   if (!pipeOutput || typeof pipeOutput !== "object") {
     throw new BadPipelineOutputError("Expected pipe_output to be an object");
   }
@@ -30,8 +33,7 @@ export function parseEntities(pipeOutput: unknown): ExtractedEntities {
     throw new BadPipelineOutputError("Expected pipe_output.working_memory.root to be an object");
   }
 
-  const entries = Object.values(root as Record<string, unknown>);
-  const candidate = entries
+  const candidate = Object.values(root as Record<string, unknown>)
     .map((entry) => {
       if (!entry || typeof entry !== "object") return null;
       const content = (entry as { content?: unknown }).content;
@@ -39,19 +41,21 @@ export function parseEntities(pipeOutput: unknown): ExtractedEntities {
     })
     .find(
       (content) =>
-        content !== null && "people" in content && "orgs" in content && "dates" in content,
+        content !== null && "title" in content && "doc_type" in content && "key_points" in content,
     );
 
   if (!candidate) {
     throw new BadPipelineOutputError(
-      "Could not find ExtractedEntities in pipe_output.working_memory",
+      "Could not find DocumentSummary in pipe_output.working_memory",
     );
   }
 
-  const { people, orgs, dates } = candidate;
-  if (!isStringArray(people) || !isStringArray(orgs) || !isStringArray(dates)) {
-    throw new BadPipelineOutputError("ExtractedEntities fields must each be an array of strings");
+  const { title, doc_type: docType, key_points: keyPoints } = candidate;
+  if (typeof title !== "string" || typeof docType !== "string" || !isStringArray(keyPoints)) {
+    throw new BadPipelineOutputError(
+      "DocumentSummary requires a string title, a string doc_type, and a string-array key_points",
+    );
   }
 
-  return { people, orgs, dates };
+  return { title, docType, keyPoints };
 }
