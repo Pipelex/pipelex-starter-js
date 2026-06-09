@@ -18,7 +18,7 @@ It ships three demo pipelines, presented as tabs:
 
 ## Prerequisites
 
-- Node.js 18+
+- Node.js 22+
 - Access to a **Pipelex API** server. You have two options:
   - **Hosted** — currently in private beta. Join the waitlist at [go.pipelex.com/waitlist](https://go.pipelex.com/waitlist). Once you have access, get an API key at [app.pipelex.com](https://app.pipelex.com) and point `PIPELEX_API_URL` at `https://api.pipelex.com` (the default).
   - **Self-hosted** — the Pipelex API is open source at [github.com/Pipelex/pipelex-api](https://github.com/Pipelex/pipelex-api). Run it locally or on your own infra and point `PIPELEX_API_URL` at your instance (e.g. `http://localhost:8000`).
