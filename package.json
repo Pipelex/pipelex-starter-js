@@ -8,8 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint src/",
-    "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
+    "format": "prettier --write --no-error-on-unmatched-pattern \"src/**/*.{ts,tsx,css}\" \".claude/skills/bootstrap/scripts/*.mjs\"",
+    "format:check": "prettier --check --no-error-on-unmatched-pattern \"src/**/*.{ts,tsx,css}\" \".claude/skills/bootstrap/scripts/*.mjs\"",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
@@ -48,6 +48,9 @@
       "prettier --write"
     ],
     "*.{css,json,md}": [
+      "prettier --write"
+    ],
+    "*.mjs": [
       "prettier --write"
     ]
   },
