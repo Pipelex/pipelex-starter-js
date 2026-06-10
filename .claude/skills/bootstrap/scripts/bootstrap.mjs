@@ -10,26 +10,34 @@
  *
  * Why a script instead of a pile of Edit calls: the same name appears in two
  * forms (npm slug / display title) scattered across many files, and the
- * license choice touches four places (LICENSE, package.json, README, and the
- * changelog reset adds a fifth file). Doing that by hand once is fine; doing
- * it reliably every time someone clones the template is exactly what a script
- * is for. It is also safe to run with --dry-run, which is what makes it
- * testable.
+ * license choice touches several files at once (LICENSE, package.json, the
+ * README license line — and the changelog reset adds another). Doing that by
+ * hand once is fine; doing it reliably every time someone clones the template
+ * is exactly what a script is for. It supports --dry-run, and its transforms
+ * are exported for the anchor-drift test that lives next to it.
  *
  * The script only transforms files. It does NOT touch git, run `npm install`,
  * run the checks, or remove the bootstrap skill — the SKILL.md orchestrates
- * those so each step stays reviewable and the script stays a pure, idempotent
- * transform. Zero dependencies; runs on the same Node 22+ the project needs.
+ * those so each step stays reviewable and the script stays a pure transform.
+ * Re-running on an already-bootstrapped repo requires --force: the transforms
+ * only know the template's tokens, so re-runs are not fully idempotent (the
+ * changelog is reset again, and a license-type change doesn't restore wording
+ * the first run already replaced). Zero dependencies; runs on the same
+ * Node 22+ the project needs.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 // The template's placeholders, in their two spellings. Everything the script
 // does is ultimately "turn these into the user's chosen name".
-const TEMPLATE_NAME = "pipelex-starter-js"; // npm package name / repo slug
-const TEMPLATE_TITLE = "Pipelex Starter"; // human-facing display name (page H1, <title>)
+export const TEMPLATE_NAME = "pipelex-starter-js"; // npm package name / repo slug
+export const TEMPLATE_TITLE = "Pipelex Starter"; // human-facing display name (page H1, <title>)
+
+// Fresh projects restart here — package.json and CHANGELOG.md must agree.
+export const RESET_VERSION = "0.1.0";
 
 // The two long-form description placeholders. README and CLAUDE.md carry the
 // same sentence modulo the leading article, so anchor each exactly.
@@ -38,6 +46,9 @@ const README_DESCRIPTION =
 const CLAUDE_DESCRIPTION =
   "Minimal Next.js 16 starter that calls the [Pipelex](https://pipelex.com) API via the [`mthds`](https://www.npmjs.com/package/mthds) SDK to run AI methods (`.mthds` bundles) from a TypeScript app.";
 const LAYOUT_DESCRIPTION = "Minimal Next.js app calling Pipelex via the mthds SDK.";
+
+// CLAUDE.md's template-only charter paragraph, stripped by --clean.
+const CHARTER_MARKER = "This repo is a **reference template**.";
 
 // npm package name rules (legacy-strict subset: new packages must be lowercase
 // URL-safe, optionally scoped). Anything else breaks `npm install` later.
@@ -52,8 +63,8 @@ function warn(message) {
   console.error(`warning: ${message}`);
 }
 
-function validateName(name) {
-  if (!NAME_RE.test(name) || name.length > 214 || name.startsWith(".") || name.startsWith("_")) {
+export function validateName(name) {
+  if (!NAME_RE.test(name) || name.length > 214) {
     fail(
       `invalid package name ${JSON.stringify(name)}: use lowercase letters, digits, '-', '.', '_',` +
         ` optionally scoped (e.g. 'invoice-extractor' or '@acme/invoice-extractor').`,
@@ -70,7 +81,7 @@ function localDate() {
   return `${now.getFullYear()}-${month}-${day}`;
 }
 
-function titleFromName(name) {
+export function titleFromName(name) {
   const bare = name.includes("/") ? name.split("/")[1] : name;
   return bare
     .split(/[-._]+/)
@@ -112,7 +123,7 @@ from https://spdx.org/licenses/{spdx}.html
  * (npm's convention for closed-source is the literal "UNLICENSED"), and
  * `holder`/`year` fill the copyright notice.
  */
-function resolveLicense(value, holder, year) {
+export function resolveLicense(value, holder, year) {
   const norm = (value || "mit").trim().toLowerCase();
   if (norm === "" || norm === "mit") {
     return { kind: "mit", npmField: "MIT", holder, year };
@@ -130,26 +141,42 @@ function resolveLicense(value, holder, year) {
 // ---------------------------------------------------------------------------
 
 /** Escape a value for a double-quoted JS/TSX string literal. */
-function jsString(value) {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+export function jsString(value) {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n");
+}
+
+/** Wrap a user value for use as a replace()/replaceAll() replacement: passed
+ * as a string it would expand $-patterns ($&, $', $$, ...) and silently
+ * corrupt the output; a callback is always taken literally. */
+function literally(value) {
+  return () => value;
 }
 
 /** Substitute both spellings of the template name with the new ones. */
-function applyNameTokens(text, names) {
-  return text.replaceAll(TEMPLATE_NAME, names.name).replaceAll(TEMPLATE_TITLE, names.title);
+export function applyNameTokens(text, names) {
+  return text
+    .replaceAll(TEMPLATE_NAME, literally(names.name))
+    .replaceAll(TEMPLATE_TITLE, literally(names.title));
 }
 
 /**
  * Soften the template's self-references in prose ("the starter ...") — these
- * appear in user-facing error messages (errors.ts), a Makefile comment, and an
- * e2e spec comment. A bootstrapped project is not a starter, and the
- * errors.ts strings are shown to the app's end users at runtime.
+ * appear in user-facing error messages (errors.ts), a Makefile comment, e2e
+ * spec comments, and "this starter" asides in CLAUDE.md and the release
+ * skill. A bootstrapped project is not a starter, and the errors.ts strings
+ * are shown to the app's end users at runtime.
  */
-function applyStarterProse(text) {
+export function applyStarterProse(text) {
   return text
     .replaceAll('"I just cloned the starter"', '"I just cloned the repo"')
     .replaceAll("The starter", "This app")
-    .replaceAll("the starter", "this app");
+    .replaceAll("the starter", "this app")
+    .replaceAll("This starter", "This app")
+    .replaceAll("this starter", "this app");
 }
 
 /**
@@ -158,7 +185,7 @@ function applyStarterProse(text) {
  * `description` to keep the file tidy, since plain assignment would append
  * them at the bottom.
  */
-function transformPackageJson(text, names, opts) {
+export function transformPackageJson(text, names, opts) {
   const pkg = JSON.parse(text);
   const inserted = {};
   inserted.license = opts.lic.npmField;
@@ -182,26 +209,39 @@ function transformPackageJson(text, names, opts) {
     }
   }
   out.name = names.name;
-  out.version = "0.1.0"; // fresh project, fresh semver — CHANGELOG.md is reset to match
+  out.version = RESET_VERSION; // fresh project, fresh semver — CHANGELOG.md is reset to match
   out.description = opts.description;
   return JSON.stringify(out, null, 2) + "\n";
 }
 
-function transformReadme(text, names, opts) {
+export function transformReadme(text, names, opts) {
   if (text.includes(README_DESCRIPTION)) {
-    text = text.replace(README_DESCRIPTION, opts.description);
+    text = text.replace(README_DESCRIPTION, literally(opts.description));
   } else {
     warn("README.md: template description paragraph not found; left as-is.");
   }
 
   // License line: reflect the chosen license in the README's License section.
   if (opts.lic.kind === "proprietary") {
-    text = text.replace(
-      "This project is licensed under the [MIT license](LICENSE). Runtime dependencies are distributed under their own licenses via npm.",
-      "This project is proprietary — all rights reserved. See the [LICENSE](LICENSE) file. Runtime dependencies are distributed under their own licenses via npm.",
-    );
+    const anchor =
+      "This project is licensed under the [MIT license](LICENSE). Runtime dependencies are distributed under their own licenses via npm.";
+    if (text.includes(anchor)) {
+      text = text.replace(
+        anchor,
+        "This project is proprietary — all rights reserved. See the [LICENSE](LICENSE) file. Runtime dependencies are distributed under their own licenses via npm.",
+      );
+    } else {
+      warn("README.md: MIT license line not found; update the License section manually.");
+    }
   } else if (opts.lic.kind === "other") {
-    text = text.replace("[MIT license](LICENSE)", `[${opts.lic.npmField} license](LICENSE)`);
+    if (text.includes("[MIT license](LICENSE)")) {
+      text = text.replace(
+        "[MIT license](LICENSE)",
+        literally(`[${opts.lic.npmField} license](LICENSE)`),
+      );
+    } else {
+      warn("README.md: MIT license link not found; update the License section manually.");
+    }
   }
 
   return applyNameTokens(text, names);
@@ -213,18 +253,26 @@ function transformReadme(text, names, opts) {
  * keeping the paragraph would steer every future Claude session toward
  * template-maintainer behavior instead of building the user's app.
  */
-function stripTemplateParagraph(text) {
-  const marker = "This repo is a **reference template**.";
-  const start = text.indexOf(marker);
-  if (start === -1) return text; // already stripped (e.g. re-run) — nothing to do
-  const end = text.indexOf("\n\n", start);
-  if (end === -1) return text;
-  return text.slice(0, start) + text.slice(end + 2);
+export function stripTemplateParagraph(text) {
+  const start = text.indexOf(CHARTER_MARKER);
+  if (start === -1) {
+    warn("CLAUDE.md: template charter paragraph not found (already stripped?); skipped.");
+    return text;
+  }
+  // Match the paragraph end on LF or CRLF (Windows clones with core.autocrlf
+  // check out CRLF working trees, where indexOf("\n\n") would miss).
+  const end = /\r?\n\r?\n/.exec(text.slice(start));
+  if (!end) {
+    warn("CLAUDE.md: template charter paragraph has no end boundary; left as-is.");
+    return text;
+  }
+  return text.slice(0, start) + text.slice(start + end.index + end[0].length);
 }
 
-function transformClaudeMd(text, names, opts) {
+export function transformClaudeMd(text, names, opts) {
+  text = applyStarterProse(text);
   if (text.includes(CLAUDE_DESCRIPTION)) {
-    text = text.replace(CLAUDE_DESCRIPTION, opts.description);
+    text = text.replace(CLAUDE_DESCRIPTION, literally(opts.description));
   } else {
     warn("CLAUDE.md: template description line not found; left as-is.");
   }
@@ -234,51 +282,82 @@ function transformClaudeMd(text, names, opts) {
   return applyNameTokens(text, names);
 }
 
-function transformLayout(text, names, opts) {
-  text = text.replace(
-    `description: "${LAYOUT_DESCRIPTION}"`,
-    `description: "${jsString(opts.description)}"`,
-  );
-  return text.replaceAll(`"${TEMPLATE_TITLE}"`, `"${jsString(names.title)}"`);
+export function transformLayout(text, names, opts) {
+  const descAnchor = `description: "${LAYOUT_DESCRIPTION}"`;
+  if (text.includes(descAnchor)) {
+    text = text.replace(descAnchor, literally(`description: "${jsString(opts.description)}"`));
+  } else {
+    warn("src/app/layout.tsx: template metadata description not found; left as-is.");
+  }
+  const titleAnchor = `"${TEMPLATE_TITLE}"`;
+  if (text.includes(titleAnchor)) {
+    text = text.replaceAll(titleAnchor, literally(`"${jsString(names.title)}"`));
+  } else {
+    warn("src/app/layout.tsx: template title not found; left as-is.");
+  }
+  return text;
 }
 
-function transformLicense(text, opts) {
+/**
+ * page.tsx renders the title as JSX text, so emit it as a string-literal
+ * expression container ({"..."}). Raw substitution would let JSX-significant
+ * characters break the build (<, {), trip eslint's no-unescaped-entities
+ * (', "), or even evaluate as an expression in a server component.
+ */
+export function transformPage(text, names) {
+  const anchor = `>${TEMPLATE_TITLE}<`;
+  if (text.includes(anchor)) {
+    text = text.replaceAll(anchor, literally(`>{${JSON.stringify(names.title)}}<`));
+  } else {
+    warn("src/app/page.tsx: template title heading not found; left as-is.");
+  }
+  return text.replaceAll(TEMPLATE_NAME, literally(names.name));
+}
+
+export function transformLicense(text, opts) {
   const lic = opts.lic;
   if (lic.kind === "mit") {
     // Keep the MIT text; only refresh the copyright line when we have a
     // holder to put there (don't silently bump the template holder's year).
     if (lic.holder) {
-      text = text.replace(/Copyright \(c\) \d{4} .*/, `Copyright (c) ${lic.year} ${lic.holder}`);
+      const line = /Copyright \(c\) \d{4} .*/;
+      if (line.test(text)) {
+        text = text.replace(line, literally(`Copyright (c) ${lic.year} ${lic.holder}`));
+      } else {
+        warn("LICENSE: copyright line not found; left as-is.");
+      }
     }
     return text;
   }
   const holder = lic.holder || "<COPYRIGHT HOLDER>";
   if (!lic.holder) {
-    warn("no --license-holder given; wrote a placeholder into LICENSE.");
+    warn("no --license-holder given; LICENSE gets a placeholder holder.");
   }
   if (lic.kind === "proprietary") {
-    return PROPRIETARY_LICENSE.replaceAll("{year}", String(lic.year)).replaceAll(
+    return PROPRIETARY_LICENSE.replaceAll("{year}", literally(String(lic.year))).replaceAll(
       "{holder}",
-      holder,
+      literally(holder),
     );
   }
   warn(
-    `wrote a LICENSE stub for '${lic.npmField}'. Replace it with the full ${lic.npmField} license text.`,
+    `LICENSE becomes a stub for '${lic.npmField}' (used verbatim — SPDX ids are case-sensitive,` +
+      ` e.g. Apache-2.0). Replace it with the full license text.`,
   );
-  return OTHER_LICENSE.replaceAll("{year}", String(lic.year))
-    .replaceAll("{holder}", holder)
-    .replaceAll("{spdx}", lic.npmField);
+  return OTHER_LICENSE.replaceAll("{year}", literally(String(lic.year)))
+    .replaceAll("{holder}", literally(holder))
+    .replaceAll("{spdx}", literally(lic.npmField));
 }
 
 /**
  * The template's changelog chronicles the template, not the user's project.
- * Start the new project's history at v0.1.0 (matching the package.json reset)
- * in the same `## [vX.Y.Z] - date` format the release skill expects.
+ * Start the new project's history at the reset version (matching the
+ * package.json reset) in the same `## [vX.Y.Z] - date` format the release
+ * skill expects.
  */
-function resetChangelog(_text, opts) {
+export function resetChangelog(_text, opts) {
   return `# Changelog
 
-## [v0.1.0] - ${opts.date}
+## [v${RESET_VERSION}] - ${opts.date}
 
 ### Added
 
@@ -290,32 +369,42 @@ function resetChangelog(_text, opts) {
 // Orchestration
 // ---------------------------------------------------------------------------
 
-const TARGETS = [
+export const TARGETS = [
   { rel: "package.json", transform: transformPackageJson },
   { rel: "README.md", transform: transformReadme },
   { rel: "CLAUDE.md", transform: transformClaudeMd },
   { rel: "LICENSE", transform: (text, _names, opts) => transformLicense(text, opts) },
   { rel: "CHANGELOG.md", transform: (text, _names, opts) => resetChangelog(text, opts) },
   { rel: "src/app/layout.tsx", transform: transformLayout },
-  { rel: "src/app/page.tsx", transform: (text, names) => applyNameTokens(text, names) },
-  { rel: ".claude/skills/release/SKILL.md", transform: (text, names) => applyNameTokens(text, names) },
+  { rel: "src/app/page.tsx", transform: transformPage },
+  {
+    rel: ".claude/skills/release/SKILL.md",
+    transform: (text, names) => applyNameTokens(applyStarterProse(text), names),
+  },
   { rel: "src/lib/errors.ts", transform: (text) => applyStarterProse(text) },
   { rel: "e2e/error-display.spec.ts", transform: (text) => applyStarterProse(text) },
   { rel: "Makefile", transform: (text) => applyStarterProse(text) },
 ];
 
-function run(root, names, opts) {
+export function run(root, names, opts) {
   // Guard: confirm this actually is the unbootstrapped template before we
-  // start rewriting things. Cheap check, saves a confusing half-applied state.
+  // start rewriting things — in a wrong directory or an already-bootstrapped
+  // repo, proceeding would clobber that project's version, changelog and
+  // identity. --force is the explicit opt-in for confirmed re-runs.
   const pkgPath = path.join(root, "package.json");
   if (!fs.existsSync(pkgPath)) {
     fail(`no package.json found in ${root} — run this from the project root.`);
   }
   const pkgText = fs.readFileSync(pkgPath, "utf8");
   if (!pkgText.includes(`"name": "${TEMPLATE_NAME}"`)) {
-    warn(
-      `package.json does not contain "name": "${TEMPLATE_NAME}". This repo may already be bootstrapped; proceeding anyway.`,
-    );
+    if (!opts.force) {
+      fail(
+        `package.json does not contain "name": "${TEMPLATE_NAME}" — this doesn't look like the` +
+          ` un-bootstrapped template. Pass --force only if you really mean to re-bootstrap this` +
+          ` repo (the changelog will be reset again).`,
+      );
+    }
+    warn(`package.json does not contain "name": "${TEMPLATE_NAME}"; proceeding (--force).`);
   }
 
   console.log(`Bootstrapping template -> ${JSON.stringify(names.title)}`);
@@ -326,7 +415,9 @@ function run(root, names, opts) {
   console.log("");
   console.log("Edits:");
 
-  let changed = 0;
+  // Transform everything first, write second: a transform that throws (e.g.
+  // on a hand-mangled package.json) must not leave a half-applied tree.
+  const edits = [];
   for (const target of TARGETS) {
     const filePath = path.join(root, target.rel);
     if (!fs.existsSync(filePath)) {
@@ -336,21 +427,25 @@ function run(root, names, opts) {
     const original = fs.readFileSync(filePath, "utf8");
     const updated = target.transform(original, names, opts);
     if (updated === original) continue;
-    if (opts.dryRun) {
-      console.log(`  edit    ${target.rel}`);
-    } else {
-      fs.writeFileSync(filePath, updated, "utf8");
-      console.log(`  edited  ${target.rel}`);
-    }
-    changed += 1;
+    edits.push({ rel: target.rel, filePath, updated });
   }
-  if (changed === 0) {
+  for (const edit of edits) {
+    if (opts.dryRun) {
+      console.log(`  edit    ${edit.rel}`);
+    } else {
+      fs.writeFileSync(edit.filePath, edit.updated, "utf8");
+      console.log(`  edited  ${edit.rel}`);
+    }
+  }
+  if (edits.length === 0) {
     console.log("  (no content changes)");
   }
   console.log("");
-  console.log(`Done. ${changed} file(s) ${opts.dryRun ? "would be " : ""}edited.`);
+  console.log(`Done. ${edits.length} file(s) ${opts.dryRun ? "would be " : ""}edited.`);
   if (!opts.dryRun) {
-    console.log("\nNext: sync the lock file (npm ci in CI validates its name/version) and run the gates:");
+    console.log(
+      "\nNext: sync the lock file (npm ci in CI validates its name/version) and run the gates:",
+    );
     console.log("  npm install --package-lock-only && make all");
     console.log("Then review with `git status` and `git diff` before committing.");
   }
@@ -372,17 +467,20 @@ const FLAGS = {
   "--license-year": "licenseYear",
   "--root": "root",
 };
-const SWITCHES = { "--clean": "clean", "--dry-run": "dryRun" };
+const SWITCHES = { "--clean": "clean", "--dry-run": "dryRun", "--force": "force" };
 
-function parseArgs(argv) {
-  const args = { clean: false, dryRun: false, root: "." };
+export function parseArgs(argv) {
+  const args = { clean: false, dryRun: false, force: false, root: "." };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg in SWITCHES) {
       args[SWITCHES[arg]] = true;
     } else if (arg in FLAGS) {
       const value = argv[i + 1];
-      if (value === undefined) fail(`missing value for ${arg}`);
+      // A value starting with "--" almost certainly means the real value was
+      // dropped and the next flag would be swallowed (e.g. --dry-run becoming
+      // a description — and the run turning real). Fail loudly instead.
+      if (value === undefined || value.startsWith("--")) fail(`missing value for ${arg}`);
       args[FLAGS[arg]] = value;
       i += 1;
     } else {
@@ -394,28 +492,39 @@ function parseArgs(argv) {
   return args;
 }
 
-function main(argv) {
+export function main(argv) {
   const args = parseArgs(argv);
   const name = args.name.trim();
   validateName(name);
   const title = (args.title || titleFromName(name)).trim();
+  if (!title) fail("--title is empty");
+  const description = args.description.trim();
+  if (!description) fail("--description is empty");
   const names = { name, title };
 
-  const year = args.licenseYear ? Number.parseInt(args.licenseYear, 10) : new Date().getFullYear();
-  if (Number.isNaN(year)) fail(`invalid --license-year ${JSON.stringify(args.licenseYear)}`);
+  const rawYear = (args.licenseYear || "").trim();
+  if (args.licenseYear !== undefined && !/^\d{4}$/.test(rawYear)) {
+    fail(`invalid --license-year ${JSON.stringify(args.licenseYear)} (expected e.g. 2026)`);
+  }
+  const year = rawYear ? Number.parseInt(rawYear, 10) : new Date().getFullYear();
   const lic = resolveLicense(args.license, (args.licenseHolder || "").trim() || null, year);
 
   const opts = {
-    description: args.description.trim(),
+    description,
     authorName: (args.authorName || "").trim() || null,
     authorEmail: (args.authorEmail || "").trim() || null,
     repoUrl: (args.repoUrl || "").trim().replace(/\/+$/, "") || null,
     lic,
     clean: args.clean,
+    force: args.force,
     dryRun: args.dryRun,
     date: localDate(),
   };
   run(path.resolve(args.root), names, opts);
 }
 
-main(process.argv.slice(2));
+// Only execute when invoked directly (`node bootstrap.mjs ...`) — importing
+// the module (e.g. from the anchor-drift test) must not run the CLI.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main(process.argv.slice(2));
+}
