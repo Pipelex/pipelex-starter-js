@@ -193,8 +193,6 @@ export function transformPackageJson(text, names, opts) {
     inserted.author = `${opts.authorName} <${opts.authorEmail}>`;
   } else if (opts.authorName) {
     inserted.author = opts.authorName;
-  } else if (opts.authorEmail) {
-    inserted.author = `<${opts.authorEmail}>`;
   }
   if (opts.repoUrl) {
     inserted.repository = opts.repoUrl;
@@ -317,6 +315,12 @@ export function transformPage(text, names) {
 export function transformLicense(text, opts) {
   const lic = opts.lic;
   if (lic.kind === "mit") {
+    if (!text.includes("Permission is hereby granted")) {
+      warn(
+        "LICENSE does not look like the MIT text (license changed on a previous run?) —" +
+          " package.json will say MIT; fix LICENSE manually.",
+      );
+    }
     // Keep the MIT text; only refresh the copyright line when we have a
     // holder to put there (don't silently bump the template holder's year).
     if (lic.holder) {
@@ -326,6 +330,8 @@ export function transformLicense(text, opts) {
       } else {
         warn("LICENSE: copyright line not found; left as-is.");
       }
+    } else {
+      warn("LICENSE copyright line left untouched — pass --license-holder to claim it.");
     }
     return text;
   }
@@ -509,10 +515,17 @@ export function main(argv) {
   const year = rawYear ? Number.parseInt(rawYear, 10) : new Date().getFullYear();
   const lic = resolveLicense(args.license, (args.licenseHolder || "").trim() || null, year);
 
+  const authorName = (args.authorName || "").trim() || null;
+  const authorEmail = (args.authorEmail || "").trim() || null;
+  // A bare "<email>" author field is malformed npm metadata; name-only is fine.
+  if (authorEmail && !authorName) {
+    fail("--author-email given without --author-name — provide the author's name too.");
+  }
+
   const opts = {
     description,
-    authorName: (args.authorName || "").trim() || null,
-    authorEmail: (args.authorEmail || "").trim() || null,
+    authorName,
+    authorEmail,
     repoUrl: (args.repoUrl || "").trim().replace(/\/+$/, "") || null,
     lic,
     clean: args.clean,

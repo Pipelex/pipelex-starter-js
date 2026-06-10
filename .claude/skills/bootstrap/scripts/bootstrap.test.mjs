@@ -52,6 +52,13 @@ function runScript(args) {
   return spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8" });
 }
 
+/** An empty temp dir to use as a harmless --root for failure-path tests. */
+function makeEmptyRoot() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bootstrap-empty-"));
+  tempRoots.push(root);
+  return root;
+}
+
 function read(root, rel) {
   return fs.readFileSync(path.join(root, rel), "utf8");
 }
@@ -190,8 +197,35 @@ describe("bootstrap.mjs guards", () => {
     expect(runScript([...baseArgs(root, { "--name": "other-app" }), "--force"]).status).toBe(0);
   });
 
+  it("warns when default MIT keeps the template's copyright holder", () => {
+    const root = makeTempRepo();
+    const before = read(root, "LICENSE");
+    const res = runScript([...baseArgs(root), "--clean"]);
+    expect(res.status).toBe(0);
+    expect(res.stderr).toContain("--license-holder");
+    expect(read(root, "LICENSE")).toBe(before);
+  });
+
+  it("warns when the MIT license field is applied over a non-MIT LICENSE body", () => {
+    const root = makeTempRepo();
+    fs.writeFileSync(
+      path.join(root, "LICENSE"),
+      "Copyright (c) 2026 Acme Corp\n\nAll rights reserved.\n",
+    );
+    const res = runScript([...baseArgs(root), "--license-holder", "Acme Corp", "--clean"]);
+    expect(res.status).toBe(0);
+    expect(res.stderr).toContain("does not look like the MIT");
+  });
+
   it("rejects a flag value that was swallowed by the next flag", () => {
-    const res = runScript(["--name", "my-app", "--description", "--dry-run"]);
+    const res = runScript([
+      "--root",
+      makeEmptyRoot(),
+      "--name",
+      "my-app",
+      "--description",
+      "--dry-run",
+    ]);
     expect(res.status).toBe(1);
     expect(res.stderr).toContain("missing value for --description");
   });
@@ -203,9 +237,13 @@ describe("bootstrap.mjs guards", () => {
     [["--name", "my-app", "--description", "d.", "--title", "   "], "--title is empty"],
     [["--name", "my-app", "--description", "   "], "--description is empty"],
     [["--name", "my-app", "--description", "d.", "--license-year", "2026abc"], "license-year"],
+    [["--name", "my-app", "--description", "d.", "--author-email", "a@b.c"], "--author-name"],
     [["--name", "my-app", "--description", "d.", "--oops", "x"], "unknown argument"],
   ])("fails fast on bad input: %j", (args, message) => {
-    const res = runScript(args);
+    // Pin --root to an empty temp dir: if a case ever passes validation
+    // unexpectedly, the run hits "no package.json found" instead of
+    // bootstrapping the real repo (--root defaults to ".").
+    const res = runScript(["--root", makeEmptyRoot(), ...args]);
     expect(res.status).toBe(1);
     expect(res.stderr).toContain(message);
   });
