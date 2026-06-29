@@ -58,7 +58,7 @@ src/
 ## How it works
 
 1. The browser submits to a **Server Action** (`runHelloPipeline`, `runSummarizePdfPipeline`, or `runGenerateImagePipeline`).
-2. The Server Action reads the `.mthds` bundle from disk and calls `MthdsApiClient.executePipeline()` with the bundle TOML + inputs.
+2. The Server Action reads the `.mthds` bundle from disk and calls `MthdsApiClient.execute()` with the bundle TOML + inputs.
 3. The Pipelex API runs the pipe and returns loosely-typed output.
 4. A `parseXxx()` narrower in `src/types/` validates the output into a typed shape.
 5. The result is rendered, or a classified `PipelineError` is shown by `<ErrorDisplay>`.

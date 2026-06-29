@@ -34,7 +34,7 @@ export async function runGenerateImagePipeline(
   try {
     const bundle = await loadGenerateImageBundle();
     const client = getPipelexClient();
-    const response = await client.executePipeline({
+    const response = await client.execute({
       pipe_code: "generate_image",
       mthds_contents: [bundle],
       inputs: { image_prompt: trimmed },

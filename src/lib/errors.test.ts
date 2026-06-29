@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ApiResponseError, ApiUnreachableError, ClientAuthenticationError } from "mthds";
+import { ApiResponseError, ApiUnreachableError, ClientAuthenticationError } from "mthds/errors";
 import { BadImageOutputError, BadPipelineOutputError } from "@/types/pipelineError";
 import { classifyPipelineError, classifyTransportError, type ClassifyEnv } from "./errors";
 
@@ -57,6 +57,7 @@ describe("classifyPipelineError — ApiResponseError 401/403", () => {
       JSON.stringify({ detail: "Invalid authentication token" }),
       undefined,
       "Invalid authentication token",
+      undefined,
     );
     const result = classifyPipelineError(err, {
       apiUrl: "https://api.pipelex.com",
@@ -76,6 +77,7 @@ describe("classifyPipelineError — ApiResponseError 401/403", () => {
       JSON.stringify({ detail: "Invalid authentication token" }),
       undefined,
       "Invalid authentication token",
+      undefined,
     );
     const result = classifyPipelineError(err, {
       apiUrl: "https://api.pipelex.com",
@@ -86,7 +88,16 @@ describe("classifyPipelineError — ApiResponseError 401/403", () => {
   });
 
   it("treats 403 like 401", () => {
-    const err = new ApiResponseError("forbidden", "x", 403, "Forbidden", "", undefined, undefined);
+    const err = new ApiResponseError(
+      "forbidden",
+      "x",
+      403,
+      "Forbidden",
+      "",
+      undefined,
+      undefined,
+      undefined,
+    );
     const result = classifyPipelineError(err, { apiUrl: "x", hasApiKey: true });
     expect(result.kind).toBe("auth_invalid");
   });
@@ -102,6 +113,7 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
       "",
       "CredentialsError",
       "Missing OPENAI_API_KEY",
+      undefined,
     );
     const result = classifyPipelineError(err, LOCAL_ENV);
     expect(result.kind).toBe("server_error");
@@ -119,6 +131,7 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
       "",
       "PipeOperatorModelAvailabilityError",
       "no backend",
+      undefined,
     );
     const result = classifyPipelineError(err, LOCAL_ENV);
     expect(result.kind).toBe("server_error");
@@ -132,7 +145,16 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
       "PipelexInterpreterError",
       "MthdsDecodeError",
     ]) {
-      const err = new ApiResponseError("...", "x", 500, "", "", errorType, `${errorType} message`);
+      const err = new ApiResponseError(
+        "...",
+        "x",
+        500,
+        "",
+        "",
+        errorType,
+        `${errorType} message`,
+        undefined,
+      );
       const result = classifyPipelineError(err, LOCAL_ENV);
       expect(result.kind).toBe("server_error");
       expect(result.title).toContain("pipeline definition");
@@ -140,7 +162,7 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
   });
 
   it("falls through to generic server error for unknown errorType", () => {
-    const err = new ApiResponseError("...", "x", 500, "", "", "MysteryError", "boom");
+    const err = new ApiResponseError("...", "x", 500, "", "", "MysteryError", "boom", undefined);
     const result = classifyPipelineError(err, LOCAL_ENV);
     expect(result.kind).toBe("server_error");
     expect(result.title).toContain("HTTP 500");
@@ -156,6 +178,7 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
       '{"detail":{"error_type":"X","message":"y"}}',
       "X",
       "y",
+      undefined,
     );
     const result = classifyPipelineError(err, LOCAL_ENV);
     expect(result.details).toContain("error_type: X");
@@ -173,6 +196,7 @@ describe("classifyPipelineError — ApiResponseError 4xx (non-auth)", () => {
       "",
       undefined,
       "missing field 'foo'",
+      undefined,
     );
     const result = classifyPipelineError(err, LOCAL_ENV);
     expect(result.kind).toBe("bad_request");
@@ -278,7 +302,7 @@ describe("classifyTransportError", () => {
 describe("classifyPipelineError — details truncation", () => {
   it("truncates very long response bodies", () => {
     const huge = "x".repeat(5000);
-    const err = new ApiResponseError("...", "x", 500, "", huge, undefined, undefined);
+    const err = new ApiResponseError("...", "x", 500, "", huge, undefined, undefined, undefined);
     const result = classifyPipelineError(err, LOCAL_ENV);
     expect(result.details).toContain("truncated");
     expect(result.details.length).toBeLessThan(huge.length + 200);

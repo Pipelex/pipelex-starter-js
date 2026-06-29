@@ -1,25 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ApiUnreachableError } from "mthds";
+import { ApiUnreachableError } from "mthds/errors";
 
-const executePipeline = vi.fn();
+const execute = vi.fn();
 
 vi.mock("@/lib/loadBundle", () => ({
   loadGenerateImageBundle: vi.fn().mockResolvedValue("DUMMY_BUNDLE_TOML"),
 }));
 
 vi.mock("@/lib/pipelexClient", () => ({
-  getPipelexClient: () => ({ executePipeline }),
+  getPipelexClient: () => ({ execute }),
 }));
 
 import { runGenerateImagePipeline } from "./runGenerateImagePipeline";
 
 beforeEach(() => {
-  executePipeline.mockReset();
+  execute.mockReset();
 });
 
 describe("runGenerateImagePipeline", () => {
   it("calls the SDK with the bundle, pipe code, and trimmed prompt on success", async () => {
-    executePipeline.mockResolvedValue({
+    execute.mockResolvedValue({
       pipeline_run_id: "run-1",
       pipe_output: {
         pipeline_run_id: "run-1",
@@ -37,7 +37,7 @@ describe("runGenerateImagePipeline", () => {
 
     const result = await runGenerateImagePipeline("  a red bicycle  ");
 
-    expect(executePipeline).toHaveBeenCalledWith({
+    expect(execute).toHaveBeenCalledWith({
       pipe_code: "generate_image",
       mthds_contents: ["DUMMY_BUNDLE_TOML"],
       inputs: { image_prompt: "a red bicycle" },
@@ -59,11 +59,11 @@ describe("runGenerateImagePipeline", () => {
       ok: false,
       error: expect.objectContaining({ kind: "bad_request", title: "Prompt required" }),
     });
-    expect(executePipeline).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("classifies SDK errors into a structured PipelineError", async () => {
-    executePipeline.mockRejectedValue(
+    execute.mockRejectedValue(
       new ApiUnreachableError("unreachable", "http://localhost:8081", "ECONNREFUSED"),
     );
     const result = await runGenerateImagePipeline("a red bicycle");
@@ -73,7 +73,7 @@ describe("runGenerateImagePipeline", () => {
   });
 
   it("classifies a missing image URL as bad_image_output", async () => {
-    executePipeline.mockResolvedValue({
+    execute.mockResolvedValue({
       pipeline_run_id: "run-1",
       pipe_output: {
         pipeline_run_id: "run-1",

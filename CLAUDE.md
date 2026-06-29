@@ -56,7 +56,7 @@ e2e/
 
 - **`methods/`** — `.mthds` bundles (TOML). Treat them as first-class artifacts, not embedded strings. Use the `/mthds-build`, `/mthds-edit`, `/mthds-check`, `/mthds-run` skills from the `mthds-plugins` marketplace to author and validate them.
 - **`src/actions/`** — Server Actions (`"use server"`). The only place that calls the Pipelex SDK. Keep them thin: load bundle → call SDK → narrow output → return.
-- **`src/lib/`** — Server-side utilities. No React. Two deliberate client-touching exceptions: `errors.ts` (its types cross the server→client boundary, and `classifyTransportError` runs client-side), and `clientFile.ts` (a browser `FileReader` wrapper imported only by client components). `fileEncoding.ts` is pure (no React, no `process.env`) so it is safe to import from either side.
+- **`src/lib/`** — Server-side utilities. No React. Two deliberate client-touching exceptions: `errors.ts` (its types cross the server→client boundary, and `classifyTransportError` runs client-side), and `clientFile.ts` (a browser `FileReader` wrapper imported only by client components). `fileEncoding.ts` is pure (no React, no `process.env`) so it is safe to import from either side. Because `errors.ts` is bundled into the client, it imports the SDK error classes from the **`mthds/errors`** subpath, never the top-level `mthds` barrel — the barrel pulls `MthdsApiClient` → `node:fs` into the graph, which a client bundler cannot externalize and which breaks `make build`. Only `pipelexClient.ts` (server-only) imports `MthdsApiClient` from `mthds`.
 - **`src/components/`** — React components. `"use client"` only when the component uses hooks, event handlers, or browser APIs.
 - **`src/types/`** — TS types and runtime narrowers (`parseXxx()`). Narrowers throw on shape mismatch; that's deliberate (system boundary).
 
@@ -79,7 +79,7 @@ export type RunHelloPipelineResult =
 export async function runHelloPipeline(text: string): Promise<RunHelloPipelineResult> {
   try {
     const bundle = await loadHelloBundle();
-    const response = await getPipelexClient().executePipeline({
+    const response = await getPipelexClient().execute({
       pipe_code: "extract_entities",
       mthds_contents: [bundle],
       inputs: { text: text.trim() },
@@ -153,7 +153,7 @@ Enforced via Husky + lint-staged on commit.
 - **Library**: `@testing-library/react` + `@testing-library/jest-dom`
 - **Location**: co-located `.test.ts` / `.test.tsx` next to the source file
 - **Queries**: prefer accessible queries (`getByRole`, `getByLabelText`) over `getByTestId`
-- **Mocking the SDK**: mock `@/lib/pipelexClient` with `vi.mock`, returning `{ executePipeline: vi.fn() }`. Do **not** mock the `mthds` package directly — it's harder to wire as a constructor and the indirection adds noise.
+- **Mocking the SDK**: mock `@/lib/pipelexClient` with `vi.mock`, returning `{ execute: vi.fn() }`. Do **not** mock the `mthds` package directly — it's harder to wire as a constructor and the indirection adds noise.
 
 ### E2E (Playwright)
 

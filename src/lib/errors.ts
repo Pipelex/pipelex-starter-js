@@ -1,4 +1,10 @@
-import { ApiResponseError, ApiUnreachableError, ClientAuthenticationError } from "mthds";
+// Import the SDK error classes from the client-safe `mthds/errors` subpath, not
+// the top-level `mthds` barrel. This module is bundled into the client (client
+// components import `classifyTransportError` + the `PipelineError` type from
+// here), and the top-level barrel pulls `MthdsApiClient` → `node:fs` into the
+// graph, which a client bundler cannot externalize. `mthds/errors` re-exports
+// only the exception classes and carries no Node built-ins.
+import { ApiResponseError, ApiUnreachableError, ClientAuthenticationError } from "mthds/errors";
 import { BadImageOutputError, BadPipelineOutputError } from "@/types/pipelineError";
 
 export type PipelineErrorKind =

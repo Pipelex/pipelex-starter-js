@@ -33,7 +33,7 @@ export async function runHelloPipeline(text: string): Promise<RunHelloPipelineRe
   try {
     const bundle = await loadHelloBundle();
     const client = getPipelexClient();
-    const response = await client.executePipeline({
+    const response = await client.execute({
       pipe_code: "extract_entities",
       mthds_contents: [bundle],
       inputs: { text: trimmed },

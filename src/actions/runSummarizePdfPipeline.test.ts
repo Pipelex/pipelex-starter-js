@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ApiUnreachableError } from "mthds";
+import { ApiUnreachableError } from "mthds/errors";
 
-const executePipeline = vi.fn();
+const execute = vi.fn();
 
 vi.mock("@/lib/loadBundle", () => ({
   loadSummarizePdfBundle: vi.fn().mockResolvedValue("DUMMY_BUNDLE_TOML"),
 }));
 
 vi.mock("@/lib/pipelexClient", () => ({
-  getPipelexClient: () => ({ executePipeline }),
+  getPipelexClient: () => ({ execute }),
 }));
 
 import { runSummarizePdfPipeline } from "./runSummarizePdfPipeline";
@@ -33,19 +33,19 @@ function summaryOutput() {
 }
 
 beforeEach(() => {
-  executePipeline.mockReset();
+  execute.mockReset();
 });
 
 describe("runSummarizePdfPipeline", () => {
   it("calls the SDK with the bundle, pipe code, and a Document input envelope", async () => {
-    executePipeline.mockResolvedValue(summaryOutput());
+    execute.mockResolvedValue(summaryOutput());
 
     const result = await runSummarizePdfPipeline({
       dataUrl: PDF_DATA_URL,
       filename: "invoice.pdf",
     });
 
-    expect(executePipeline).toHaveBeenCalledWith({
+    expect(execute).toHaveBeenCalledWith({
       pipe_code: "summarize_pdf",
       mthds_contents: ["DUMMY_BUNDLE_TOML"],
       inputs: {
@@ -67,7 +67,7 @@ describe("runSummarizePdfPipeline", () => {
       ok: false,
       error: expect.objectContaining({ kind: "bad_request" }),
     });
-    expect(executePipeline).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("rejects a non-PDF data URL as unsupported_file_type without calling the SDK", async () => {
@@ -78,11 +78,11 @@ describe("runSummarizePdfPipeline", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("unsupported_file_type");
-    expect(executePipeline).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("classifies SDK errors into a structured PipelineError", async () => {
-    executePipeline.mockRejectedValue(
+    execute.mockRejectedValue(
       new ApiUnreachableError(
         "Could not reach Pipelex API at http://localhost:8081 (ECONNREFUSED)",
         "http://localhost:8081",
