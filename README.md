@@ -1,6 +1,6 @@
 # pipelex-starter-js
 
-A minimal Next.js 16 starter that calls the [Pipelex](https://pipelex.com) API via the [`mthds`](https://www.npmjs.com/package/mthds) SDK to run AI methods (`.mthds` bundles) from a TypeScript app.
+A minimal Next.js 16 starter that calls the [Pipelex](https://pipelex.com) API via the [`@pipelex/sdk`](https://www.npmjs.com/package/@pipelex/sdk) SDK to run AI methods (`.mthds` bundles) from a TypeScript app.
 
 It ships three demo pipelines, presented as tabs:
 
@@ -14,7 +14,7 @@ It ships three demo pipelines, presented as tabs:
 - **Tailwind CSS 3**
 - **Vitest 4** + Testing Library (happy-dom)
 - **ESLint 9** + **Prettier 3**, **Husky** + **lint-staged**
-- **`mthds`** SDK for Pipelex API calls
+- **`@pipelex/sdk`** SDK for Pipelex API calls
 
 ## Prerequisites
 
@@ -46,7 +46,7 @@ src/
   app/                        # Next.js App Router (layout, page, globals.css)
   actions/                    # 'use server' Server Actions — one per pipeline
   lib/
-    pipelexClient.ts          # MthdsApiClient singleton
+    pipelexClient.ts          # PipelexApiClient singleton
     loadBundle.ts             # reads the .mthds bundles from disk
     errors.ts                 # classifyPipelineError + PipelineError model
     fileEncoding.ts           # data-URL validation + Document input envelope
@@ -58,7 +58,7 @@ src/
 ## How it works
 
 1. The browser submits to a **Server Action** (`runHelloPipeline`, `runSummarizePdfPipeline`, or `runGenerateImagePipeline`).
-2. The Server Action reads the `.mthds` bundle from disk and calls `MthdsApiClient.executePipeline()` with the bundle TOML + inputs.
+2. The Server Action reads the `.mthds` bundle from disk and calls `PipelexApiClient.execute()` with the bundle TOML + inputs.
 3. The Pipelex API runs the pipe and returns loosely-typed output.
 4. A `parseXxx()` narrower in `src/types/` validates the output into a typed shape.
 5. The result is rendered, or a classified `PipelineError` is shown by `<ErrorDisplay>`.
@@ -81,41 +81,45 @@ Image **outputs** (the image example) come back as a URL — a storage URL or a 
 
 ## Make targets
 
-| Target              | Purpose                                                                |
-| ------------------- | ---------------------------------------------------------------------- |
-| `make dev`          | Start the Next.js dev server                                           |
-| `make build`        | Production build                                                       |
-| `make lint`         | ESLint                                                                 |
-| `make format`       | Prettier write                                                         |
-| `make format-check` | Prettier check (CI)                                                    |
-| `make typecheck`    | `tsc --noEmit`                                                         |
-| `make test`         | Vitest single pass (unit tests, no API call)                           |
-| `make agent-test`   | Vitest, silent on success (for AI agents)                              |
-| `make test-e2e`     | Playwright e2e — hits the real Pipelex API, needs a valid key          |
-| `make test-e2e-ui`  | Same, with the Playwright UI runner                                    |
-| `make check`        | lint + format-check + typecheck                                        |
-| `make all`          | check + test + build (does **not** run e2e — see `test-e2e`)           |
-| `make use-local`    | Pack & install sibling `../mthds-js` into `node_modules` (alias: `ul`) |
-| `make use-npm`      | Restore the npm-published `mthds` package (alias: `un`)                |
+| Target              | Purpose                                                                                             |
+| ------------------- | --------------------------------------------------------------------------------------------------- |
+| `make dev`          | Start the Next.js dev server                                                                        |
+| `make build`        | Production build                                                                                    |
+| `make lint`         | ESLint                                                                                              |
+| `make format`       | Prettier write                                                                                      |
+| `make format-check` | Prettier check (CI)                                                                                 |
+| `make typecheck`    | `tsc --noEmit`                                                                                      |
+| `make test`         | Vitest single pass (unit tests, no API call)                                                        |
+| `make agent-test`   | Vitest, silent on success (for AI agents)                                                           |
+| `make test-e2e`     | **Optional** Playwright e2e — live API, costs an LLM call (prompts first; auto-skips without a key) |
+| `make test-e2e-ui`  | Same, with the Playwright UI runner                                                                 |
+| `make check`        | lint + format-check + typecheck                                                                     |
+| `make all`          | check + test + build (does **not** run e2e — see `test-e2e`)                                        |
+| `make use-local`    | Pack & install sibling `../pipelex-sdk-js` into `node_modules` (alias: `ul`)                        |
+| `make use-npm`      | Restore the npm-published `@pipelex/sdk` package (alias: `un`)                                      |
 
-## End-to-end testing
+## End-to-end testing (optional)
 
-`make test-e2e` runs Playwright specs that open the dev server and exercise each of the three example tabs end-to-end — entity extraction, PDF summary, and image generation — asserting the expected output for each. The specs hit the **live** Pipelex API using `PIPELEX_API_KEY` from `.env.local`, so:
+The Playwright specs are **optional** — `make all` never runs them, and you can delete `e2e/` entirely if you don't want live tests. They open the dev server and exercise each example tab end-to-end, asserting the expected output.
 
-- It costs an LLM call per run.
-- It is intentionally excluded from `make all`.
+The three happy-path specs (`extract`, `summarize-pdf`, `generate-image`) hit the **live** Pipelex API using `PIPELEX_API_KEY` from `.env.local`, so they cost an LLM call each. To keep that deliberate and safe:
+
+- **They auto-skip without a key.** No `PIPELEX_API_KEY`? Those specs skip cleanly (you'll see them reported as skipped) instead of failing with an auth error — so a fresh fork can run `make test-e2e` before configuring credentials.
+- **`make test-e2e` prompts for confirmation** before spending, since it costs money. The prompt is skipped in CI / non-interactive shells; pass `CONFIRM=1 make test-e2e` to bypass it in scripts.
+- **It is excluded from `make all`.**
+- The fourth spec, `error-display`, tests the offline error UX — it needs **no** key, costs nothing, and runs out of the box.
 - First-time setup needs the browser binary: `npx playwright install chromium`.
 
-## Local SDK development (sibling `mthds-js` repo)
+## Local SDK development (sibling `pipelex-sdk-js` repo)
 
-If you have the [`mthds-js`](https://github.com/mthds-ai/mthds-js) repo checked out as a sibling directory (`../mthds-js`) and want this app to use it instead of the published npm package:
+If you have the [`pipelex-sdk-js`](https://github.com/Pipelex/pipelex-sdk-js) repo checked out as a sibling directory (`../pipelex-sdk-js`) and want this app to use it instead of the published npm package:
 
 ```bash
-make use-local   # builds ../mthds-js, packs it with `npm pack`, installs the tarball into node_modules/mthds
+make use-local   # builds ../pipelex-sdk-js, packs it with `npm pack`, installs the tarball into node_modules/@pipelex/sdk
 make use-npm     # restores the npm version
 ```
 
-Aliases: `make ul` / `make un`. **Re-run `make use-local` after every SDK edit** — the tarball is a snapshot, not a live link. We use a tarball install rather than a symlink because Next.js 16's Turbopack does not follow symlinked workspace packages (`Module not found: Can't resolve 'mthds'`).
+Aliases: `make ul` / `make un`. **Re-run `make use-local` after every SDK edit** — the tarball is a snapshot, not a live link. We use a tarball install rather than a symlink because Next.js 16's Turbopack does not follow symlinked workspace packages (`Module not found: Can't resolve '@pipelex/sdk'`).
 
 ## Environment variables
 

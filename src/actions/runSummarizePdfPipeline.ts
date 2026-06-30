@@ -54,7 +54,7 @@ export async function runSummarizePdfPipeline(input: {
   try {
     const bundle = await loadSummarizePdfBundle();
     const client = getPipelexClient();
-    const response = await client.executePipeline({
+    const response = await client.execute({
       pipe_code: "summarize_pdf",
       mthds_contents: [bundle],
       inputs: { document: buildDocumentInput(dataUrl, filename || "document.pdf") },

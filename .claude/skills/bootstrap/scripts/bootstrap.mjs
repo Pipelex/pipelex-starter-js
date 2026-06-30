@@ -42,10 +42,10 @@ export const RESET_VERSION = "0.1.0";
 // The two long-form description placeholders. README and CLAUDE.md carry the
 // same sentence modulo the leading article, so anchor each exactly.
 const README_DESCRIPTION =
-  "A minimal Next.js 16 starter that calls the [Pipelex](https://pipelex.com) API via the [`mthds`](https://www.npmjs.com/package/mthds) SDK to run AI methods (`.mthds` bundles) from a TypeScript app.";
+  "A minimal Next.js 16 starter that calls the [Pipelex](https://pipelex.com) API via the [`@pipelex/sdk`](https://www.npmjs.com/package/@pipelex/sdk) SDK to run AI methods (`.mthds` bundles) from a TypeScript app.";
 const CLAUDE_DESCRIPTION =
-  "Minimal Next.js 16 starter that calls the [Pipelex](https://pipelex.com) API via the [`mthds`](https://www.npmjs.com/package/mthds) SDK to run AI methods (`.mthds` bundles) from a TypeScript app.";
-const LAYOUT_DESCRIPTION = "Minimal Next.js app calling Pipelex via the mthds SDK.";
+  "Minimal Next.js 16 starter that calls the [Pipelex](https://pipelex.com) API via the [`@pipelex/sdk`](https://www.npmjs.com/package/@pipelex/sdk) SDK to run AI methods (`.mthds` bundles) from a TypeScript app.";
+const LAYOUT_DESCRIPTION = "Minimal Next.js app calling Pipelex via the @pipelex/sdk SDK.";
 
 // CLAUDE.md's template-only charter paragraph, stripped by --clean.
 const CHARTER_MARKER = "This repo is a **reference template**.";
