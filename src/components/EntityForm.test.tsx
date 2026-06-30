@@ -77,6 +77,7 @@ describe("EntityForm", () => {
     start.mockResolvedValueOnce({ ok: true, runId: "run-1" });
     poll.mockResolvedValueOnce({
       ok: false,
+      transient: false,
       error: { kind: "run_failed", title: "Run failed", message: "boom", details: "d" },
     });
 

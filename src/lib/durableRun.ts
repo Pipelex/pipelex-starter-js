@@ -1,5 +1,5 @@
 import { getPipelexClient } from "@/lib/pipelexClient";
-import { classifyPipelineError, type PipelineError } from "@/lib/errors";
+import { classifyPipelineError, type PipelineError, type PipelineErrorKind } from "@/lib/errors";
 import {
   RunFailedError,
   isTerminalRunStatus,
@@ -23,7 +23,20 @@ export type PollOutcome<T> =
       retryAfterSeconds: number | null;
     }
   | { ok: true; state: "completed"; output: T }
-  | { ok: false; error: PipelineError };
+  | { ok: false; error: PipelineError; transient: boolean };
+
+/**
+ * A poll tick that failed to *get a verdict* — a gateway 5xx or a network blip
+ * (`server_error` / `api_unreachable`) — is transient: the run is still
+ * executing server-side, so the client should keep polling rather than abandon
+ * it. Everything else is terminal: a classified application failure
+ * (`run_failed`, `lifecycle_unavailable`), a narrower's deterministic
+ * bad-output, or an auth/request error that retrying can't fix. Mirrors the
+ * SDK's own poller, which retries 503 and never fails on a transient hiccup.
+ */
+function isTransientPollError(kind: PipelineErrorKind): boolean {
+  return kind === "server_error" || kind === "api_unreachable";
+}
 
 /**
  * Start a pipeline the **durable** way — `POST /v1/start` (202) — and return
@@ -60,7 +73,10 @@ export async function startDurableRun(
  *                    `graph_spec` aren't written yet) → report `running` so the
  *                    client polls once more.
  * A thrown SDK error — including a narrower throwing `BadPipelineOutputError` /
- * `BadImageOutputError`, or `RunLifecycleUnavailableError` — is classified.
+ * `BadImageOutputError`, or `RunLifecycleUnavailableError` — is classified, and
+ * the failure carries a `transient` flag (see `isTransientPollError`) so the
+ * client poll loop can keep polling through a momentary 5xx/network blip
+ * instead of abandoning a run that is still completing server-side.
  */
 export async function pollDurableRun<T>(
   runId: string,
@@ -84,9 +100,11 @@ export async function pollDurableRun<T>(
       return { ok: true, state: "completed", output: parse(res.result) };
     }
     if (res.state === "failed") {
+      // A genuine run failure is terminal — never retried.
       return {
         ok: false,
         error: classifyPipelineError(new RunFailedError(res.message, runId, res.status), env()),
+        transient: false,
       };
     }
     // res.state === "running": terminal status but result artifacts mid-write.
@@ -98,6 +116,7 @@ export async function pollDurableRun<T>(
       retryAfterSeconds: res.retry_after_seconds ?? null,
     };
   } catch (err) {
-    return { ok: false, error: classifyPipelineError(err, env()) };
+    const error = classifyPipelineError(err, env());
+    return { ok: false, error, transient: isTransientPollError(error.kind) };
   }
 }

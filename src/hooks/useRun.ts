@@ -42,6 +42,14 @@ export interface UseRunConfig<TInput, TOutput> {
 const DEFAULT_INTERVAL_MS = 2000;
 const DEFAULT_MAX_DURATION_MS = 300_000;
 const TICK_MS = 250;
+/**
+ * How many *consecutive* transient poll failures (gateway 5xx, network blip, or
+ * a rejected Server Action call) to tolerate before giving up. The run keeps
+ * executing server-side, so a momentary hiccup must not abandon it — but a
+ * sustained outage should still surface the error rather than poll forever.
+ * Any verdict-bearing tick resets the streak.
+ */
+const MAX_TRANSIENT_POLL_FAILURES = 5;
 
 /**
  * Drive a pipeline run in either execution mode behind one state machine, so
@@ -129,17 +137,26 @@ export function useRun<TInput, TOutput>(
         setState({ phase: "done", output });
       };
 
-      if (mode === "blocking") {
-        blocking(input)
+      const runBlocking = (blockingInput: TInput) => {
+        blocking(blockingInput)
           .then((outcome) => {
             if (outcome.ok) succeed(outcome.output);
             else fail(outcome.error);
           })
           .catch((err) => fail(classifyTransportError(err)));
+      };
+
+      if (mode === "blocking") {
+        runBlocking(input);
         return;
       }
 
-      // Durable: start, then poll until terminal.
+      // Durable: start, then poll until terminal. A momentary 5xx/network blip
+      // on one tick must not abandon a run that is still completing
+      // server-side, so transient poll failures are retried within a bounded
+      // budget; only a terminal failure (or a sustained outage) ends the run.
+      let transientFailures = 0;
+
       const pollOnce = async (runId: string) => {
         if (!isCurrent()) return;
         // Ceiling: stop polling after maxDurationMs (the run continues server-side).
@@ -149,19 +166,38 @@ export function useRun<TInput, TOutput>(
           return;
         }
 
+        // A tick that failed to get a verdict: keep polling unless the streak
+        // exceeds the budget. Surface the degraded state so the UI shows we're
+        // struggling but still trying.
+        const onTransient = (error: PipelineError) => {
+          transientFailures += 1;
+          if (transientFailures > MAX_TRANSIENT_POLL_FAILURES) {
+            fail(error);
+            return;
+          }
+          setState((prev) => (prev.phase === "running" ? { ...prev, degraded: true } : prev));
+          pollTimerRef.current = setTimeout(() => void pollOnce(runId), intervalMs);
+        };
+
         let outcome: PollOutcome<TOutput>;
         try {
           outcome = await poll(runId);
         } catch (err) {
-          fail(classifyTransportError(err));
+          // The awaited Server Action call itself rejected (network drop, dev
+          // server crash, stale Server Action id). Treat as a transient blip.
+          if (!isCurrent()) return;
+          onTransient(classifyTransportError(err));
           return;
         }
         if (!isCurrent()) return;
 
         if (!outcome.ok) {
-          fail(outcome.error);
+          if (outcome.transient) onTransient(outcome.error);
+          else fail(outcome.error);
           return;
         }
+
+        transientFailures = 0; // a verdict-bearing tick clears the streak
         if (outcome.state === "completed") {
           succeed(outcome.output);
           return;
@@ -181,6 +217,16 @@ export function useRun<TInput, TOutput>(
         .then((outcome) => {
           if (!isCurrent()) return;
           if (!outcome.ok) {
+            // A bare self-hosted runner has no run store, so `start` fails with
+            // `lifecycle_unavailable`. Bare runners also have no ~30s gateway
+            // cap, so transparently fall back to the blocking path — the same
+            // durable-first / blocking-fallback policy the SDK's
+            // `startAndWaitForResult` uses. Keeps a fresh clone working against
+            // any backend without a manual mode switch.
+            if (outcome.error.kind === "lifecycle_unavailable") {
+              runBlocking(input);
+              return;
+            }
             fail(outcome.error);
             return;
           }

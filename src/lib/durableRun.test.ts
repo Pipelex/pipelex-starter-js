@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ApiUnreachableError, RunLifecycleUnavailableError } from "@pipelex/sdk";
+import { ApiResponseError, ApiUnreachableError, RunLifecycleUnavailableError } from "@pipelex/sdk";
 
 const start = vi.fn();
 const getRunStatus = vi.fn();
@@ -112,6 +112,7 @@ describe("pollDurableRun", () => {
     if (result.ok) return;
     expect(result.error.kind).toBe("run_failed");
     expect(result.error.message).toContain("pipe blew up");
+    expect(result.transient).toBe(false); // a real run failure is terminal
   });
 
   it("re-reports running on the mid-write race (terminal status, result still running)", async () => {
@@ -144,7 +145,7 @@ describe("pollDurableRun", () => {
     expect(result.error.kind).toBe("bad_response");
   });
 
-  it("classifies a thrown SDK error during polling", async () => {
+  it("classifies a thrown SDK error during polling as a transient api_unreachable", async () => {
     getRunStatus.mockRejectedValueOnce(
       new ApiUnreachableError("unreachable", "https://api.pipelex.com", "ENOTFOUND"),
     );
@@ -152,9 +153,31 @@ describe("pollDurableRun", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("api_unreachable");
+    expect(result.transient).toBe(true); // a network blip — keep polling
   });
 
-  it("classifies a RunLifecycleUnavailableError thrown during polling", async () => {
+  it("flags a 5xx gateway error during polling as a transient server_error", async () => {
+    getRunStatus.mockRejectedValueOnce(
+      new ApiResponseError(
+        "bad gateway",
+        "https://api.pipelex.com",
+        502,
+        "Bad Gateway",
+        "",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+      ),
+    );
+    const result = await pollDurableRun("run-1", parseEntities);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe("server_error");
+    expect(result.transient).toBe(true); // the run is still executing server-side
+  });
+
+  it("classifies a RunLifecycleUnavailableError thrown during polling as terminal", async () => {
     getRunStatus.mockRejectedValueOnce(
       new RunLifecycleUnavailableError("no run store", "http://localhost:8081"),
     );
@@ -162,5 +185,6 @@ describe("pollDurableRun", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("lifecycle_unavailable");
+    expect(result.transient).toBe(false); // retrying won't conjure a run store
   });
 });

@@ -71,6 +71,7 @@ describe("PdfForm", () => {
     start.mockResolvedValueOnce({ ok: true, runId: "run-1" });
     poll.mockResolvedValueOnce({
       ok: false,
+      transient: false,
       error: {
         kind: "auth_missing",
         title: "Pipelex API key missing",
@@ -96,6 +97,26 @@ describe("PdfForm", () => {
     fireEvent.click(screen.getByRole("button", { name: /summarize pdf/i }));
 
     expect(await screen.findByText(/Could not reach the server/i)).toBeInTheDocument();
+  });
+
+  it("clears a prior summary when the sample-PDF fetch fails", async () => {
+    durableCompletes({ title: "Invoice", docType: "invoice", keyPoints: ["Total $1,728"] });
+
+    render(<PdfForm />);
+    await selectFile(pdfFile());
+    fireEvent.click(screen.getByRole("button", { name: /summarize pdf/i }));
+    expect(await screen.findByText("Invoice")).toBeInTheDocument();
+
+    // The sample fetch now fails — the stale summary must not linger beside the
+    // new error (regression: clearing used to run only on the success path).
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new TypeError("Failed to fetch")));
+    try {
+      fireEvent.click(screen.getByRole("button", { name: /use sample pdf/i }));
+      expect(await screen.findByText(/Could not reach the server/i)).toBeInTheDocument();
+      expect(screen.queryByText("Invoice")).not.toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("accepts a .pdf when the browser reports an empty MIME type", async () => {

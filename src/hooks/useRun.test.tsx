@@ -100,6 +100,7 @@ describe("useRun — durable", () => {
     const start = vi.fn().mockResolvedValueOnce({ ok: true, runId: "run-1" });
     const poll = vi.fn().mockResolvedValueOnce({
       ok: false,
+      transient: false,
       error: { kind: "run_failed", title: "T", message: "m", details: "d" },
     });
     const cfg = makeCfg({ mode: "durable", start, poll });
@@ -108,6 +109,99 @@ describe("useRun — durable", () => {
     act(() => result.current.run("in"));
     await flush();
     expect(result.current.state).toMatchObject({ phase: "error", error: { kind: "run_failed" } });
+  });
+
+  it("retries a transient poll failure, then completes", async () => {
+    const start = vi.fn().mockResolvedValueOnce({ ok: true, runId: "run-1" });
+    const poll = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        transient: true,
+        error: { kind: "server_error", title: "T", message: "blip", details: "d" },
+      })
+      .mockResolvedValueOnce({ ok: true, state: "completed", output: { value: "done" } });
+    const cfg = makeCfg({ mode: "durable", start, poll, intervalMs: 1000 });
+    const { result } = renderHook(() => useRun(cfg));
+
+    act(() => result.current.run("in"));
+    await flush(); // start resolves; first poll → transient blip (run keeps going, degraded)
+    expect(result.current.state.phase).toBe("running");
+    expect(asRunning(result.current.state).degraded).toBe(true);
+
+    await flush(1000); // scheduled retry → completed
+    expect(result.current.state).toEqual({ phase: "done", output: { value: "done" } });
+    expect(poll).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats a rejected poll await as a transient blip and keeps polling", async () => {
+    const start = vi.fn().mockResolvedValueOnce({ ok: true, runId: "run-1" });
+    const poll = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce({ ok: true, state: "completed", output: { value: "recovered" } });
+    const cfg = makeCfg({ mode: "durable", start, poll, intervalMs: 1000 });
+    const { result } = renderHook(() => useRun(cfg));
+
+    act(() => result.current.run("in"));
+    await flush(); // first poll rejects → transient, still running
+    expect(result.current.state.phase).toBe("running");
+
+    await flush(1000); // retry → completed
+    expect(result.current.state).toEqual({ phase: "done", output: { value: "recovered" } });
+  });
+
+  it("gives up after a sustained streak of transient poll failures", async () => {
+    const start = vi.fn().mockResolvedValueOnce({ ok: true, runId: "run-1" });
+    const poll = vi.fn().mockResolvedValue({
+      ok: false,
+      transient: true,
+      error: { kind: "server_error", title: "T", message: "down", details: "d" },
+    });
+    // High ceiling so the consecutive-failure budget — not the wall clock — ends it.
+    const cfg = makeCfg({ mode: "durable", start, poll, intervalMs: 1000, maxDurationMs: 600_000 });
+    const { result } = renderHook(() => useRun(cfg));
+
+    act(() => result.current.run("in"));
+    await flush(); // first poll → transient #1
+    await flush(20_000); // keep ticking until the budget is exhausted
+    expect(result.current.state).toMatchObject({
+      phase: "error",
+      error: { kind: "server_error" },
+    });
+  });
+
+  it("falls back to blocking when durable start reports lifecycle_unavailable", async () => {
+    const start = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      error: { kind: "lifecycle_unavailable", title: "T", message: "m", details: "d" },
+    });
+    const blocking = vi.fn().mockResolvedValueOnce({ ok: true, output: { value: "fell-back" } });
+    const cfg = makeCfg({ mode: "durable", start, blocking });
+    const { result } = renderHook(() => useRun(cfg));
+
+    act(() => result.current.run("in"));
+    await flush(); // start → lifecycle_unavailable → blocking fallback → done
+    expect(blocking).toHaveBeenCalledWith("in");
+    expect(result.current.state).toEqual({ phase: "done", output: { value: "fell-back" } });
+  });
+
+  it("does not fall back on a non-lifecycle start failure", async () => {
+    const start = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      error: { kind: "auth_missing", title: "T", message: "m", details: "d" },
+    });
+    const blocking = vi.fn();
+    const cfg = makeCfg({ mode: "durable", start, blocking });
+    const { result } = renderHook(() => useRun(cfg));
+
+    act(() => result.current.run("in"));
+    await flush();
+    expect(blocking).not.toHaveBeenCalled();
+    expect(result.current.state).toMatchObject({
+      phase: "error",
+      error: { kind: "auth_missing" },
+    });
   });
 
   it("a rejected start await becomes a transport error", async () => {

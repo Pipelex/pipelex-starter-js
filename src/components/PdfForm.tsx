@@ -120,6 +120,11 @@ export function PdfForm() {
   }
 
   async function handleUseSample() {
+    // Clear any prior run result/error up-front: `acceptFile` resets too, but
+    // only on the success path — if the fetch below fails, an earlier summary
+    // would otherwise stay rendered next to the new error.
+    setFileError(null);
+    reset();
     try {
       const res = await fetch(SAMPLE_PDF_PATH);
       if (!res.ok) throw new Error(`Could not load the sample PDF (HTTP ${res.status})`);
