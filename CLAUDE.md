@@ -158,28 +158,29 @@ Enforced via Husky + lint-staged on commit.
 ### E2E (Playwright)
 
 - **Location**: `e2e/*.spec.ts`
-- **Spec hits the live Pipelex API** using `PIPELEX_API_KEY` from `.env.local` — costs an LLM call per run
+- **Optional, and gated.** The three live-API specs (`extract`, `summarize-pdf`, `generate-image`) hit the live Pipelex API using `PIPELEX_API_KEY` from `.env.local` and cost an LLM call each. Two guards make this safe: (1) they **auto-skip** when no key is set — `requireLiveApi()` in `e2e/liveApi.ts` calls `test.skip()`, and `playwright.config.ts` loads `.env.local` via `@next/env` so a configured key is visible to the runner; (2) `make test-e2e` **prompts for confirmation** before spending (the `confirm-live-e2e` target — skipped in CI / non-TTY shells, bypass with `CONFIRM=1`). The fourth spec, `error-display`, tests the offline error UX — it needs no key, is **not** guarded, and runs out of the box.
 - **Excluded from `make all`** — run explicitly with `make test-e2e`
 - **First-time setup**: `npx playwright install chromium`
-- **Excluded from**: `vitest.config.mts` (`exclude: ["e2e/**", ...]`) and `tsconfig.json` (`exclude: [..., "e2e"]`) so unit-test infra and Next's typecheck don't pick up Playwright specs
+- **Excluded from**: `vitest.config.mts` (`exclude: ["e2e/**", ...]`) and the base `tsconfig.json` (`exclude: [..., "e2e"]`) so unit-test infra and Next's build typecheck don't pick up Playwright specs
+- **Still type-checked and linted**, just not by the base config: `tsconfig.e2e.json` (a thin `extends` of the base, scoped to `e2e/**`) type-checks the specs via `make typecheck`, and `lint` (`eslint .`) covers the whole repo, e2e specs included — so `make all` lints exactly the files the pre-commit hook (lint-staged) does, and never passes while the commit gate fails. Keeping a dedicated e2e tsconfig out of the base is the mthds-js `tsconfig.test.json` pattern — it gives the specs a type/lint safety net without making Next's build choke on Playwright globals.
 
 ## Scripts (via Make)
 
-| Target              | Purpose                                                 |
-| ------------------- | ------------------------------------------------------- |
-| `make dev`          | Start the Next.js dev server                            |
-| `make build`        | Production build                                        |
-| `make lint`         | ESLint                                                  |
-| `make format`       | Prettier write                                          |
-| `make format-check` | Prettier check (CI)                                     |
-| `make typecheck`    | `tsc --noEmit`                                          |
-| `make test`         | Vitest single pass                                      |
-| `make agent-test`   | Vitest, silent on success (preferred for AI agents)     |
-| `make test-e2e`     | Playwright e2e (live API, costs an LLM call)            |
-| `make check`        | lint + format-check + typecheck                         |
-| `make all`          | check + test + build (does **not** include e2e)         |
-| `make use-local`    | Pack and install sibling `../mthds-js` (alias: `ul`)    |
-| `make use-npm`      | Restore the npm-published `mthds` package (alias: `un`) |
+| Target              | Purpose                                                                                        |
+| ------------------- | ---------------------------------------------------------------------------------------------- |
+| `make dev`          | Start the Next.js dev server                                                                   |
+| `make build`        | Production build                                                                               |
+| `make lint`         | ESLint                                                                                         |
+| `make format`       | Prettier write                                                                                 |
+| `make format-check` | Prettier check (CI)                                                                            |
+| `make typecheck`    | `tsc --noEmit` (app) + `tsc -p tsconfig.e2e.json` (e2e)                                        |
+| `make test`         | Vitest single pass                                                                             |
+| `make agent-test`   | Vitest, silent on success (preferred for AI agents)                                            |
+| `make test-e2e`     | Optional Playwright e2e (live API, costs an LLM call; prompts first, auto-skips without a key) |
+| `make check`        | lint + format-check + typecheck                                                                |
+| `make all`          | check + test + build (does **not** include e2e)                                                |
+| `make use-local`    | Pack and install sibling `../mthds-js` (alias: `ul`)                                           |
+| `make use-npm`      | Restore the npm-published `mthds` package (alias: `un`)                                        |
 
 ## Local SDK development (`use-local`)
 

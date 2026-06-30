@@ -1,8 +1,12 @@
 import { test, expect } from "@playwright/test";
+import { requireLiveApi } from "./liveApi";
 
 // This test hits the live Pipelex API configured by PIPELEX_API_URL +
 // PIPELEX_API_KEY in `.env.local`, and costs an image-generation call.
-// Image generation is slow, so the timeout is generous.
+// Image generation is slow, so the timeout is generous. It skips cleanly when
+// no key is set (see e2e/liveApi.ts).
+requireLiveApi();
+
 test("generates an image from a prompt", async ({ page }) => {
   test.setTimeout(180_000);
   await page.goto("/");

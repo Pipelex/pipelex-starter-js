@@ -1,4 +1,4 @@
-.PHONY: help run dev build start lint format format-check typecheck test test-watch test-e2e test-e2e-ui agent-test check clean install lock all use-local use-npm ul un
+.PHONY: help run dev build start lint format format-check typecheck test test-watch test-e2e test-e2e-ui confirm-live-e2e agent-test check clean install lock all use-local use-npm ul un
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -23,8 +23,9 @@ format: ## Format code with Prettier
 format-check: ## Check formatting (CI)
 	npm run format:check
 
-typecheck: ## Run TypeScript type checking
-	npx tsc --noEmit
+typecheck: ## Run TypeScript type checking (app + e2e specs)
+	npm run typecheck
+	npm run typecheck:e2e
 
 test: ## Run tests (single pass)
 	npm run test
@@ -32,10 +33,21 @@ test: ## Run tests (single pass)
 test-watch: ## Run tests in watch mode
 	npm run test:watch
 
-test-e2e: ## Run Playwright e2e tests (hits live Pipelex API — needs PIPELEX_API_KEY)
+# OPTIONAL. The live-API specs hit the real Pipelex API (cost an LLM call, need
+# PIPELEX_API_KEY) and auto-skip without a key. Confirmation gate guards against
+# accidental spend; skipped in CI / non-interactive shells, or pass CONFIRM=1.
+confirm-live-e2e:
+	@if [ -z "$$CI" ] && [ -z "$$CONFIRM" ] && [ -t 0 ]; then \
+		printf "⚠️  Playwright e2e runs against the LIVE Pipelex API and costs an LLM call per live spec.\n"; \
+		printf "Continue? [y/N] "; \
+		read ans; \
+		case "$$ans" in [yY]*) ;; *) echo "Aborted."; exit 1 ;; esac; \
+	fi
+
+test-e2e: confirm-live-e2e ## Run OPTIONAL Playwright e2e (LIVE API — needs PIPELEX_API_KEY, costs an LLM call; auto-skips without a key)
 	npm run test:e2e
 
-test-e2e-ui: ## Run Playwright e2e tests with the UI runner
+test-e2e-ui: confirm-live-e2e ## Same as test-e2e, with the Playwright UI runner
 	npm run test:e2e:ui
 
 agent-test: ## Run tests, silent on success (for agents)
