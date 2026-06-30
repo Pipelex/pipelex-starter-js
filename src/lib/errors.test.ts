@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ApiResponseError, ApiUnreachableError, ClientAuthenticationError } from "mthds/errors";
+import { ApiResponseError, ApiUnreachableError, ClientAuthenticationError } from "@pipelex/sdk";
 import { BadImageOutputError, BadPipelineOutputError } from "@/types/pipelineError";
 import { classifyPipelineError, classifyTransportError, type ClassifyEnv } from "./errors";
 
@@ -58,6 +58,7 @@ describe("classifyPipelineError — ApiResponseError 401/403", () => {
       undefined,
       "Invalid authentication token",
       undefined,
+      undefined,
     );
     const result = classifyPipelineError(err, {
       apiUrl: "https://api.pipelex.com",
@@ -78,6 +79,7 @@ describe("classifyPipelineError — ApiResponseError 401/403", () => {
       undefined,
       "Invalid authentication token",
       undefined,
+      undefined,
     );
     const result = classifyPipelineError(err, {
       apiUrl: "https://api.pipelex.com",
@@ -94,6 +96,7 @@ describe("classifyPipelineError — ApiResponseError 401/403", () => {
       403,
       "Forbidden",
       "",
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -114,6 +117,7 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
       "CredentialsError",
       "Missing OPENAI_API_KEY",
       undefined,
+      undefined,
     );
     const result = classifyPipelineError(err, LOCAL_ENV);
     expect(result.kind).toBe("server_error");
@@ -131,6 +135,7 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
       "",
       "PipeOperatorModelAvailabilityError",
       "no backend",
+      undefined,
       undefined,
     );
     const result = classifyPipelineError(err, LOCAL_ENV);
@@ -154,6 +159,7 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
         errorType,
         `${errorType} message`,
         undefined,
+        undefined,
       );
       const result = classifyPipelineError(err, LOCAL_ENV);
       expect(result.kind).toBe("server_error");
@@ -162,7 +168,17 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
   });
 
   it("falls through to generic server error for unknown errorType", () => {
-    const err = new ApiResponseError("...", "x", 500, "", "", "MysteryError", "boom", undefined);
+    const err = new ApiResponseError(
+      "...",
+      "x",
+      500,
+      "",
+      "",
+      "MysteryError",
+      "boom",
+      undefined,
+      undefined,
+    );
     const result = classifyPipelineError(err, LOCAL_ENV);
     expect(result.kind).toBe("server_error");
     expect(result.title).toContain("HTTP 500");
@@ -178,6 +194,7 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
       '{"detail":{"error_type":"X","message":"y"}}',
       "X",
       "y",
+      undefined,
       undefined,
     );
     const result = classifyPipelineError(err, LOCAL_ENV);
@@ -196,6 +213,7 @@ describe("classifyPipelineError — ApiResponseError 4xx (non-auth)", () => {
       "",
       undefined,
       "missing field 'foo'",
+      undefined,
       undefined,
     );
     const result = classifyPipelineError(err, LOCAL_ENV);
@@ -302,7 +320,17 @@ describe("classifyTransportError", () => {
 describe("classifyPipelineError — details truncation", () => {
   it("truncates very long response bodies", () => {
     const huge = "x".repeat(5000);
-    const err = new ApiResponseError("...", "x", 500, "", huge, undefined, undefined, undefined);
+    const err = new ApiResponseError(
+      "...",
+      "x",
+      500,
+      "",
+      huge,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
     const result = classifyPipelineError(err, LOCAL_ENV);
     expect(result.details).toContain("truncated");
     expect(result.details.length).toBeLessThan(huge.length + 200);

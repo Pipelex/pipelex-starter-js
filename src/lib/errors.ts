@@ -1,10 +1,11 @@
-// Import the SDK error classes from the client-safe `mthds/errors` subpath, not
-// the top-level `mthds` barrel. This module is bundled into the client (client
-// components import `classifyTransportError` + the `PipelineError` type from
-// here), and the top-level barrel pulls `MthdsApiClient` → `node:fs` into the
-// graph, which a client bundler cannot externalize. `mthds/errors` re-exports
-// only the exception classes and carries no Node built-ins.
-import { ApiResponseError, ApiUnreachableError, ClientAuthenticationError } from "mthds/errors";
+// Import the SDK error classes from the `@pipelex/sdk` barrel. This module is
+// bundled into the client (client components import `classifyTransportError`
+// and the `PipelineError` type from here), so it must carry no Node built-ins.
+// The barrel is client-safe: `PipelexApiClient` is fetch-based and nothing in
+// the graph pulls `node:fs`/`node:path`, so a client bundler handles it without
+// breaking `make build`. Only `pipelexClient.ts` (server-only) constructs the
+// client itself.
+import { ApiResponseError, ApiUnreachableError, ClientAuthenticationError } from "@pipelex/sdk";
 import { BadImageOutputError, BadPipelineOutputError } from "@/types/pipelineError";
 
 export type PipelineErrorKind =
@@ -201,7 +202,7 @@ function classifyClientAuth(err: ClientAuthenticationError, env: ClassifyEnv): P
     kind: "config_missing",
     title: "Pipelex API URL not configured",
     message:
-      "The mthds SDK needs PIPELEX_API_URL to know where to send pipeline requests, but it isn't set.",
+      "The @pipelex/sdk SDK needs PIPELEX_API_URL to know where to send pipeline requests, but it isn't set.",
     hint: {
       summary: "Copy .env.example to .env.local and fill it in:",
       code: "cp .env.example .env.local",

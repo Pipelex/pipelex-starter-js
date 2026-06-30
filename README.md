@@ -1,6 +1,6 @@
 # pipelex-starter-js
 
-A minimal Next.js 16 starter that calls the [Pipelex](https://pipelex.com) API via the [`mthds`](https://www.npmjs.com/package/mthds) SDK to run AI methods (`.mthds` bundles) from a TypeScript app.
+A minimal Next.js 16 starter that calls the [Pipelex](https://pipelex.com) API via the [`@pipelex/sdk`](https://www.npmjs.com/package/@pipelex/sdk) SDK to run AI methods (`.mthds` bundles) from a TypeScript app.
 
 It ships three demo pipelines, presented as tabs:
 
@@ -14,7 +14,7 @@ It ships three demo pipelines, presented as tabs:
 - **Tailwind CSS 3**
 - **Vitest 4** + Testing Library (happy-dom)
 - **ESLint 9** + **Prettier 3**, **Husky** + **lint-staged**
-- **`mthds`** SDK for Pipelex API calls
+- **`@pipelex/sdk`** SDK for Pipelex API calls
 
 ## Prerequisites
 
@@ -46,7 +46,7 @@ src/
   app/                        # Next.js App Router (layout, page, globals.css)
   actions/                    # 'use server' Server Actions — one per pipeline
   lib/
-    pipelexClient.ts          # MthdsApiClient singleton
+    pipelexClient.ts          # PipelexApiClient singleton
     loadBundle.ts             # reads the .mthds bundles from disk
     errors.ts                 # classifyPipelineError + PipelineError model
     fileEncoding.ts           # data-URL validation + Document input envelope
@@ -58,7 +58,7 @@ src/
 ## How it works
 
 1. The browser submits to a **Server Action** (`runHelloPipeline`, `runSummarizePdfPipeline`, or `runGenerateImagePipeline`).
-2. The Server Action reads the `.mthds` bundle from disk and calls `MthdsApiClient.execute()` with the bundle TOML + inputs.
+2. The Server Action reads the `.mthds` bundle from disk and calls `PipelexApiClient.execute()` with the bundle TOML + inputs.
 3. The Pipelex API runs the pipe and returns loosely-typed output.
 4. A `parseXxx()` narrower in `src/types/` validates the output into a typed shape.
 5. The result is rendered, or a classified `PipelineError` is shown by `<ErrorDisplay>`.
@@ -95,8 +95,8 @@ Image **outputs** (the image example) come back as a URL — a storage URL or a 
 | `make test-e2e-ui`  | Same, with the Playwright UI runner                                                                 |
 | `make check`        | lint + format-check + typecheck                                                                     |
 | `make all`          | check + test + build (does **not** run e2e — see `test-e2e`)                                        |
-| `make use-local`    | Pack & install sibling `../mthds-js` into `node_modules` (alias: `ul`)                              |
-| `make use-npm`      | Restore the npm-published `mthds` package (alias: `un`)                                             |
+| `make use-local`    | Pack & install sibling `../pipelex-sdk-js` into `node_modules` (alias: `ul`)                        |
+| `make use-npm`      | Restore the npm-published `@pipelex/sdk` package (alias: `un`)                                      |
 
 ## End-to-end testing (optional)
 
@@ -110,16 +110,16 @@ The three happy-path specs (`extract`, `summarize-pdf`, `generate-image`) hit th
 - The fourth spec, `error-display`, tests the offline error UX — it needs **no** key, costs nothing, and runs out of the box.
 - First-time setup needs the browser binary: `npx playwright install chromium`.
 
-## Local SDK development (sibling `mthds-js` repo)
+## Local SDK development (sibling `pipelex-sdk-js` repo)
 
-If you have the [`mthds-js`](https://github.com/mthds-ai/mthds-js) repo checked out as a sibling directory (`../mthds-js`) and want this app to use it instead of the published npm package:
+If you have the [`pipelex-sdk-js`](https://github.com/Pipelex/pipelex-sdk-js) repo checked out as a sibling directory (`../pipelex-sdk-js`) and want this app to use it instead of the published npm package:
 
 ```bash
-make use-local   # builds ../mthds-js, packs it with `npm pack`, installs the tarball into node_modules/mthds
+make use-local   # builds ../pipelex-sdk-js, packs it with `npm pack`, installs the tarball into node_modules/@pipelex/sdk
 make use-npm     # restores the npm version
 ```
 
-Aliases: `make ul` / `make un`. **Re-run `make use-local` after every SDK edit** — the tarball is a snapshot, not a live link. We use a tarball install rather than a symlink because Next.js 16's Turbopack does not follow symlinked workspace packages (`Module not found: Can't resolve 'mthds'`).
+Aliases: `make ul` / `make un`. **Re-run `make use-local` after every SDK edit** — the tarball is a snapshot, not a live link. We use a tarball install rather than a symlink because Next.js 16's Turbopack does not follow symlinked workspace packages (`Module not found: Can't resolve '@pipelex/sdk'`).
 
 ## Environment variables
 

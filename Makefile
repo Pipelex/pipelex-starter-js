@@ -66,10 +66,10 @@ lock: ## Regenerate package-lock.json without installing
 clean: ## Remove build artifacts and caches
 	rm -rf .next node_modules/.cache
 
-# ── Local mthds SDK development ────────────────────────────────────────────
-# By default, `make install` fetches the published `mthds` package from npm.
-# `make use-local` packs and installs the sibling ../mthds-js so you can
-# develop the SDK and the starter side-by-side. `make use-npm` restores the
+# ── Local Pipelex SDK development ──────────────────────────────────────────
+# By default, `make install` fetches the published `@pipelex/sdk` package from
+# npm. `make use-local` packs and installs the sibling ../pipelex-sdk-js so you
+# can develop the SDK and the starter side-by-side. `make use-npm` restores the
 # npm version.
 #
 # We use `npm pack` + tarball install rather than a symlink because Next.js
@@ -79,23 +79,23 @@ clean: ## Remove build artifacts and caches
 # Turbopack resolves correctly. Re-run `make use-local` after every SDK edit
 # to pick up changes.
 
-use-local: ## Pack and install ../mthds-js into node_modules for local SDK development
-	@if [ ! -d ../mthds-js ]; then \
-		echo "ERROR: ../mthds-js not found — expected as a sibling directory."; exit 1; \
+use-local: ## Pack and install ../pipelex-sdk-js into node_modules for local SDK development
+	@if [ ! -d ../pipelex-sdk-js ]; then \
+		echo "ERROR: ../pipelex-sdk-js not found — expected as a sibling directory."; exit 1; \
 	fi
-	@echo "Building ../mthds-js so dist/ is up-to-date..."
-	cd ../mthds-js && npm run build
-	@echo "Packing ../mthds-js into a tarball..."
-	@cd ../mthds-js && rm -f mthds-*.tgz && TARBALL=$$(npm pack --silent) && mv $$TARBALL /tmp/mthds-local.tgz
-	rm -rf node_modules/mthds
-	npm install /tmp/mthds-local.tgz --no-save --silent
-	@rm -f /tmp/mthds-local.tgz
-	@echo "Now using local ../mthds-js (tarball install). Re-run after every SDK edit. 'make use-npm' to switch back."
+	@echo "Building ../pipelex-sdk-js so dist/ is up-to-date..."
+	cd ../pipelex-sdk-js && npm run build
+	@echo "Packing ../pipelex-sdk-js into a tarball..."
+	@cd ../pipelex-sdk-js && rm -f pipelex-sdk-*.tgz && TARBALL=$$(npm pack --silent) && mv $$TARBALL /tmp/pipelex-sdk-local.tgz
+	rm -rf node_modules/@pipelex/sdk
+	npm install /tmp/pipelex-sdk-local.tgz --no-save --silent
+	@rm -f /tmp/pipelex-sdk-local.tgz
+	@echo "Now using local ../pipelex-sdk-js (tarball install). Re-run after every SDK edit. 'make use-npm' to switch back."
 
-use-npm: ## Restore the npm-published mthds package
-	rm -rf node_modules/mthds
-	npm install mthds
-	@echo "Restored npm-published mthds. Run 'make use-local' to switch back."
+use-npm: ## Restore the npm-published @pipelex/sdk package
+	rm -rf node_modules/@pipelex/sdk
+	npm install @pipelex/sdk
+	@echo "Restored npm-published @pipelex/sdk. Run 'make use-local' to switch back."
 
 ul: use-local ## Alias for use-local
 un: use-npm ## Alias for use-npm

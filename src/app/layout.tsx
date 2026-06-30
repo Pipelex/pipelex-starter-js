@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Pipelex Starter",
-  description: "Minimal Next.js app calling Pipelex via the mthds SDK.",
+  description: "Minimal Next.js app calling Pipelex via the @pipelex/sdk SDK.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

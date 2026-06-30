@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ApiUnreachableError } from "mthds/errors";
+import { ApiUnreachableError } from "@pipelex/sdk";
 
 const execute = vi.fn();
 

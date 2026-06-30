@@ -2,7 +2,7 @@
   "name": "pipelex-starter-js",
   "version": "0.1.1",
   "private": true,
-  "description": "Minimal Next.js starter that calls Pipelex via the mthds SDK to run AI methods.",
+  "description": "Minimal Next.js starter that calls Pipelex via the @pipelex/sdk SDK to run AI methods.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -19,8 +19,8 @@
     "prepare": "husky"
   },
   "dependencies": {
-    "mthds": "^0.13.1",
-    "next": "^16.1.6",
+    "@pipelex/sdk": "^0.1.4",
+    "next": "^16.2.9",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },
