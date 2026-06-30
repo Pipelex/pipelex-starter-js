@@ -1,53 +1,58 @@
 "use server";
 
-import { getPipelexClient } from "@/lib/pipelexClient";
 import { loadGenerateImageBundle } from "@/lib/loadBundle";
 import { parseGeneratedImage, type GeneratedImage } from "@/types/generateImagePipeline";
-import { classifyPipelineError, type PipelineError } from "@/lib/errors";
+import { executeBlockingRun, type BlockingOutcome } from "@/lib/blockingRun";
+import {
+  pollDurableRun,
+  startDurableRun,
+  type PollOutcome,
+  type StartOutcome,
+} from "@/lib/durableRun";
+import type { PipelineError } from "@/lib/errors";
+import type { StartOptions } from "@pipelex/sdk";
 
-export type RunGenerateImagePipelineResult =
-  | { ok: true; image: GeneratedImage }
-  | { ok: false; error: PipelineError };
+const PIPE_CODE = "generate_image";
+
+function emptyInputError(): PipelineError {
+  return {
+    kind: "bad_request",
+    title: "Prompt required",
+    message: "Describe the image you want to generate.",
+    details: "Empty input",
+  };
+}
+
+async function buildOptions(prompt: string): Promise<StartOptions> {
+  return {
+    pipe_code: PIPE_CODE,
+    mthds_contents: [await loadGenerateImageBundle()],
+    inputs: { image_prompt: prompt },
+  };
+}
 
 /**
- * Server Action: generate an image from a text prompt and return either the
- * generated image or a classified error. Same discriminated-union shape as
- * the other examples — structured failures survive the server→client
- * boundary, where thrown server-action errors would be stripped to digests.
+ * BLOCKING path: generate an image synchronously (`POST /v1/execute`). Image
+ * generation routinely outlives the hosted gateway's ~30s cap, so this is the
+ * example that best demonstrates `execute_timeout` — flip to Durable mode to
+ * actually get an image.
  */
-export async function runGenerateImagePipeline(
+export async function runGenerateImageBlocking(
   prompt: string,
-): Promise<RunGenerateImagePipelineResult> {
+): Promise<BlockingOutcome<GeneratedImage>> {
   const trimmed = prompt.trim();
-  if (!trimmed) {
-    return {
-      ok: false,
-      error: {
-        kind: "bad_request",
-        title: "Prompt required",
-        message: "Describe the image you want to generate.",
-        details: "Empty input",
-      },
-    };
-  }
+  if (!trimmed) return { ok: false, error: emptyInputError() };
+  return executeBlockingRun(() => buildOptions(trimmed), parseGeneratedImage);
+}
 
-  try {
-    const bundle = await loadGenerateImageBundle();
-    const client = getPipelexClient();
-    const response = await client.execute({
-      pipe_code: "generate_image",
-      mthds_contents: [bundle],
-      inputs: { image_prompt: trimmed },
-    });
-    const image = parseGeneratedImage(response.pipe_output);
-    return { ok: true, image };
-  } catch (err) {
-    return {
-      ok: false,
-      error: classifyPipelineError(err, {
-        apiUrl: process.env.PIPELEX_API_URL,
-        hasApiKey: Boolean(process.env.PIPELEX_API_KEY),
-      }),
-    };
-  }
+/** DURABLE path — start the image run and return its id to poll. */
+export async function startGenerateImageRun(prompt: string): Promise<StartOutcome> {
+  const trimmed = prompt.trim();
+  if (!trimmed) return { ok: false, error: emptyInputError() };
+  return startDurableRun(() => buildOptions(trimmed));
+}
+
+/** DURABLE path — poll one tick of a started image run by id. */
+export async function pollGenerateImageRun(runId: string): Promise<PollOutcome<GeneratedImage>> {
+  return pollDurableRun(runId, parseGeneratedImage);
 }

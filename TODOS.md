@@ -1,5 +1,14 @@
 # TODOS — Dual execution modes: blocking `execute` + durable start/poll with live status
 
+> **✅ STATUS: COMPLETE.** All phases (0–8) shipped. `make all` green (lint + format + typecheck + unit + build); `make test-e2e` green (4 live specs pass — durable extract/summarize/image with live status, **and** the blocking-image ~30s-cap demo — offline spec skips when the API is reachable).
+>
+> **Two live findings worth keeping:**
+>
+> 1. **`main_stuff` is the bare content** (confirmed against `api-dev`, both hello + image), NOT a `{ concept, content }` wrapper — so `findOutputContent`'s durable arm uses `main_stuff` directly, no unwrap. On the hosted durable path `graph_spec` is present and `pipe_output` is absent; the image returns a non-web `url` (`pipelex-storage://…`) plus a web `public_url` (signed S3), and the narrower validates `publicUrl ?? url`.
+> 2. **The blocking cap is an HTTP 502, not `PipelineExecuteTimeoutError`.** Behind the hosted gateway a synchronous `execute` over ~30s returns `ApiResponseError` 502 "the runner did not complete the request" (a response — the SDK's own timeout is longer). `executeBlockingRun` passes `{ blocking: true }` to `classifyPipelineError`, which maps a blocking-path 502/504 to `execute_timeout` (the "switch to Durable" guidance); durable-path 502s stay transient `server_error`s. The `PipelineExecuteTimeoutError` branch is kept for configs where the SDK timeout fires first.
+>
+> **Pre-existing bug fixed along the way:** `e2e/error-display.spec.ts`'s reachability gate probed `/health`, which 404s on the hosted gateway (only `/v1/*` is served) — so it ran the offline test against a live API. Switched the probe to the always-public `/v1/version`.
+
 **Goal.** Keep the existing **blocking** execution path (`client.execute(...)`) **and** add a **durable** path (`start` → poll) that shows **live status** in the UI. Let each example **switch between the two modes at runtime** via a small per-example toggle. Build it on **shared helpers + shared UI components** so all three examples (and future ones) inherit identical behavior.
 
 **Why both.** Durable runs survive the hosted gateway's ~30s synchronous cap and stream status; blocking is simpler and fine for short pipelines. Keeping both turns the template into a side-by-side teaching artifact: run the **image** example in blocking mode and watch it hit the 30s wall (a real, classified `PipelineExecuteTimeoutError`), then flip to durable and watch it stream status and succeed.
@@ -20,7 +29,7 @@
 6. **One narrower entry point, two arms — `findOutputContent(results, predicate)`.** Narrowers take `RunResults` and read `main_stuff ?? pipe_output`, but the two sources have different shapes so the helper branches:
    - **`main_stuff`** (durable hosted) = the **single main output stuff** directly → unwrap to its content and validate against the predicate. **No search.**
    - **`pipe_output`** (blocking `execute` + durable bare-runner) = the full `{ working_memory: { root } }` → **search** `root[*].content` for the entry matching the predicate (the existing logic).
-     The blocking `execute` response adapts into `{ pipeline_run_id, pipe_output }`, so blocking and durable-bare share the search arm. All three narrowers stay DRY behind this one helper; the predicate is both the search key (pipe_output arm) and the validator (main_stuff arm). **Limitation:** `RunResults` does **not** surface `working_memory.json` (only `main_stuff`/`graph_spec`/`pipe_output`). Fine here — every example wants the _main_ output — but a future durable pipeline that needs an _intermediate_ stuff can't reach the full working memory via the typed surface (would need an SDK addition upstream in `pipelex-sdk-js`).
+     The blocking `execute` response adapts into `{ pipeline_run_id, pipe_output }`, so blocking and durable-bare share the search arm. All three narrowers stay DRY behind this one helper; the predicate is both the search key (pipe*output arm) and the validator (main_stuff arm). **Limitation:** `RunResults` does **not** surface `working_memory.json` (only `main_stuff`/`graph_spec`/`pipe_output`). Fine here — every example wants the \_main* output — but a future durable pipeline that needs an _intermediate_ stuff can't reach the full working memory via the typed surface (would need an SDK addition upstream in `pipelex-sdk-js`).
 
 ---
 

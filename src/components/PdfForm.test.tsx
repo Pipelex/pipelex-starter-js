@@ -1,13 +1,27 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { PdfForm } from "./PdfForm";
-import { runSummarizePdfPipeline } from "@/actions/runSummarizePdfPipeline";
+import {
+  pollSummarizePdfRun,
+  runSummarizePdfBlocking,
+  startSummarizePdfRun,
+} from "@/actions/runSummarizePdfPipeline";
 
 vi.mock("@/actions/runSummarizePdfPipeline", () => ({
-  runSummarizePdfPipeline: vi.fn(),
+  runSummarizePdfBlocking: vi.fn(),
+  startSummarizePdfRun: vi.fn(),
+  pollSummarizePdfRun: vi.fn(),
 }));
 
-const mockedAction = vi.mocked(runSummarizePdfPipeline);
+const blocking = vi.mocked(runSummarizePdfBlocking);
+const start = vi.mocked(startSummarizePdfRun);
+const poll = vi.mocked(pollSummarizePdfRun);
+
+beforeEach(() => {
+  blocking.mockReset();
+  start.mockReset();
+  poll.mockReset();
+});
 
 function pdfFile(name = "doc.pdf") {
   return new File(["%PDF-1.4 fake pdf bytes"], name, { type: "application/pdf" });
@@ -20,16 +34,15 @@ async function selectFile(file: File) {
   await waitFor(() => expect(screen.getByRole("button", { name: /summarize pdf/i })).toBeEnabled());
 }
 
-describe("PdfForm", () => {
-  beforeEach(() => {
-    mockedAction.mockReset();
-  });
+/** A durable run that completes on the first poll (no setTimeout gap to bridge). */
+function durableCompletes(summary: { title: string; docType: string; keyPoints: string[] }) {
+  start.mockResolvedValueOnce({ ok: true, runId: "run-1" });
+  poll.mockResolvedValueOnce({ ok: true, state: "completed", output: summary });
+}
 
-  it("encodes a selected PDF to a data URL and renders the summary on success", async () => {
-    mockedAction.mockResolvedValueOnce({
-      ok: true,
-      summary: { title: "Invoice", docType: "invoice", keyPoints: ["Total $1,728"] },
-    });
+describe("PdfForm", () => {
+  it("encodes a selected PDF and renders the summary on success (durable)", async () => {
+    durableCompletes({ title: "Invoice", docType: "invoice", keyPoints: ["Total $1,728"] });
 
     render(<PdfForm />);
     await selectFile(pdfFile());
@@ -37,12 +50,12 @@ describe("PdfForm", () => {
 
     expect(await screen.findByText("Invoice")).toBeInTheDocument();
     // The action receives a serializable data URL + filename, never a File.
-    const arg = mockedAction.mock.calls[0][0];
+    const arg = start.mock.calls[0][0];
     expect(arg.dataUrl.startsWith("data:application/pdf;base64,")).toBe(true);
     expect(arg.filename).toBe("doc.pdf");
   });
 
-  it("rejects a non-PDF file client-side without calling the action", async () => {
+  it("rejects a non-PDF file client-side without calling any action", async () => {
     render(<PdfForm />);
     fireEvent.change(screen.getByLabelText(/pdf document/i), {
       target: { files: [new File(["x"], "photo.png", { type: "image/png" })] },
@@ -50,11 +63,13 @@ describe("PdfForm", () => {
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.getByText("Unsupported file type")).toBeInTheDocument();
-    expect(mockedAction).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+    expect(blocking).not.toHaveBeenCalled();
   });
 
-  it("renders the structured error when the action returns ok:false", async () => {
-    mockedAction.mockResolvedValueOnce({
+  it("renders the structured error when a poll returns ok:false", async () => {
+    start.mockResolvedValueOnce({ ok: true, runId: "run-1" });
+    poll.mockResolvedValueOnce({
       ok: false,
       error: {
         kind: "auth_missing",
@@ -72,21 +87,19 @@ describe("PdfForm", () => {
     expect(screen.getByText("Pipelex API key missing")).toBeInTheDocument();
   });
 
-  it("surfaces a transport_error when the awaited action rejects", async () => {
-    mockedAction.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+  it("surfaces a transport_error when the awaited blocking action rejects", async () => {
+    blocking.mockRejectedValueOnce(new TypeError("Failed to fetch"));
 
     render(<PdfForm />);
     await selectFile(pdfFile());
+    fireEvent.click(screen.getByRole("radio", { name: "Blocking" }));
     fireEvent.click(screen.getByRole("button", { name: /summarize pdf/i }));
 
     expect(await screen.findByText(/Could not reach the server/i)).toBeInTheDocument();
   });
 
   it("accepts a .pdf when the browser reports an empty MIME type", async () => {
-    mockedAction.mockResolvedValueOnce({
-      ok: true,
-      summary: { title: "Invoice", docType: "invoice", keyPoints: [] },
-    });
+    durableCompletes({ title: "Invoice", docType: "invoice", keyPoints: [] });
 
     render(<PdfForm />);
     const fileWithEmptyType = new File(["%PDF-1.4"], "report.pdf", { type: "" });
@@ -100,15 +113,12 @@ describe("PdfForm", () => {
 
     expect(await screen.findByText("Invoice")).toBeInTheDocument();
     // The empty MIME is normalized so the data URL carries application/pdf.
-    const arg = mockedAction.mock.calls[0][0];
+    const arg = start.mock.calls[0][0];
     expect(arg.dataUrl.startsWith("data:application/pdf;base64,")).toBe(true);
   });
 
   it("ignores a stale FileReader read when a newer file is selected", async () => {
-    mockedAction.mockResolvedValueOnce({
-      ok: true,
-      summary: { title: "Second", docType: "invoice", keyPoints: [] },
-    });
+    durableCompletes({ title: "Second", docType: "invoice", keyPoints: [] });
 
     // First-call FileReader stays pending; second-call resolves immediately.
     // If the stale guard is missing, the late first read overwrites filename
@@ -148,13 +158,12 @@ describe("PdfForm", () => {
       await waitFor(() => expect(screen.getByText(/Selected: second\.pdf/)).toBeInTheDocument());
       // Now let the stale first read finish — it must not overwrite state.
       pendingFirst.fire?.();
-      // Give the microtask a chance to run.
       await new Promise((r) => setTimeout(r, 0));
       expect(screen.getByText(/Selected: second\.pdf/)).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole("button", { name: /summarize pdf/i }));
       await screen.findByText("Second");
-      expect(mockedAction.mock.calls[0][0].filename).toBe("second.pdf");
+      expect(start.mock.calls[0][0].filename).toBe("second.pdf");
     } finally {
       (globalThis as unknown as { FileReader: typeof FileReader }).FileReader = RealFileReader;
     }

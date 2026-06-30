@@ -25,27 +25,35 @@ methods/
 public/
   sample-invoice.pdf          # sample PDF the PDF example loads out of the box
 src/
+  config.ts                   # ExecutionMode + DEFAULT_EXECUTION_MODE (client-safe)
   app/                        # Next.js App Router (layout, page, globals.css)
-  actions/                    # 'use server' Server Actions — one per pipeline
-    runHelloPipeline.ts
-    runSummarizePdfPipeline.ts
-    runGenerateImagePipeline.ts
+  actions/                    # 'use server' Server Actions — a trio per pipeline
+    runHelloPipeline.ts         # runHelloBlocking + startHelloRun + pollHelloRun
+    runSummarizePdfPipeline.ts  # …Blocking + start… + poll…
+    runGenerateImagePipeline.ts # …Blocking + start… + poll…
   lib/
     pipelexClient.ts          # PipelexApiClient singleton factory
     loadBundle.ts             # fs.readFile of the .mthds bundles
-    errors.ts                 # classifyPipelineError + PipelineError display model
+    blockingRun.ts            # executeBlockingRun — the blocking `execute` path (server)
+    durableRun.ts             # startDurableRun + pollDurableRun — the durable start/poll path (server)
+    runOutput.ts              # findOutputContent — main_stuff ?? pipe_output narrowing (pure)
+    errors.ts                 # classifyPipelineError + classifyTransportError + PipelineError model
     fileEncoding.ts           # data-URL validation + Document input envelope (server)
     clientFile.ts             # browser File → base64 data URL (client)
+  hooks/
+    useRun.ts                 # unified blocking|durable state machine (client)
   components/
     ExampleTabs.tsx           # client component — tab switcher for the 3 examples
-    EntityForm/PdfForm/ImageForm.tsx        # client components (per-example input)
+    EntityForm/PdfForm/ImageForm.tsx        # client components (per-example input, mode-agnostic)
+    ModeToggle.tsx            # client component — Blocking|Durable segmented control
+    RunStatus.tsx             # live-status card (spinner + status label + elapsed)
     EntityResult/PdfSummaryResult/ImageResult.tsx  # server components (render output)
     ErrorDisplay.tsx          # server component (renders classified PipelineError)
   types/
     pipelineError.ts          # BadPipelineOutputError + BadImageOutputError (tagged)
-    helloPipeline.ts          # ExtractedEntities + parseEntities()
-    summarizePipeline.ts      # DocumentSummary + parseDocumentSummary()
-    generateImagePipeline.ts  # GeneratedImage + parseGeneratedImage()
+    helloPipeline.ts          # ExtractedEntities + parseEntities(RunResults)
+    summarizePipeline.ts      # DocumentSummary + parseDocumentSummary(RunResults)
+    generateImagePipeline.ts  # GeneratedImage + parseGeneratedImage(RunResults)
 e2e/
   extract.spec.ts             # Playwright e2e (hits live API)
   summarize-pdf.spec.ts
@@ -55,56 +63,69 @@ e2e/
 ### What lives where
 
 - **`methods/`** — `.mthds` bundles (TOML). Treat them as first-class artifacts, not embedded strings. Use the `/mthds-build`, `/mthds-edit`, `/mthds-check`, `/mthds-run` skills from the `mthds-plugins` marketplace to author and validate them.
-- **`src/actions/`** — Server Actions (`"use server"`). The only place that calls the Pipelex SDK. Keep them thin: load bundle → call SDK → narrow output → return.
-- **`src/lib/`** — Server-side utilities. No React. Two deliberate client-touching exceptions: `errors.ts` (its types cross the server→client boundary, and `classifyTransportError` runs client-side), and `clientFile.ts` (a browser `FileReader` wrapper imported only by client components). `fileEncoding.ts` is pure (no React, no `process.env`) so it is safe to import from either side. Because `errors.ts` is bundled into the client, it imports the SDK error classes from **`@pipelex/sdk`**. That barrel is client-safe — `PipelexApiClient` is fetch-based and pulls no `node:fs` into the graph — so a client bundler handles it without breaking `make build`. Only `pipelexClient.ts` (server-only) constructs `PipelexApiClient` from `@pipelex/sdk`.
-- **`src/components/`** — React components. `"use client"` only when the component uses hooks, event handlers, or browser APIs.
-- **`src/types/`** — TS types and runtime narrowers (`parseXxx()`). Narrowers throw on shape mismatch; that's deliberate (system boundary).
+- **`src/actions/`** — Server Actions (`"use server"`). The only place that calls the Pipelex SDK. Each pipeline exports a **trio**: `run<Name>Blocking` (the blocking `execute` path), `start<Name>Run` + `poll<Name>Run` (the durable start/poll path). They are thin: pre-flight guard → build options → delegate to `executeBlockingRun` / `startDurableRun` / `pollDurableRun`.
+- **`src/lib/`** — Server-side utilities. No React. The two execution helpers `blockingRun.ts` and `durableRun.ts` are server-only (they construct the SDK client and read `process.env`); `runOutput.ts` is pure (just shape-narrowing). Deliberate client-touching exceptions: `errors.ts` (its types cross the server→client boundary, and `classifyTransportError` + `buildClientTimeoutError` run client-side), and `clientFile.ts` (a browser `FileReader` wrapper imported only by client components). `fileEncoding.ts` is pure (no React, no `process.env`) so it is safe to import from either side. Because `errors.ts` is bundled into the client, it imports the SDK error classes from **`@pipelex/sdk`**. That barrel is client-safe — `PipelexApiClient` is fetch-based and pulls no `node:fs` into the graph — so a client bundler handles it without breaking `make build`. Only `pipelexClient.ts` (server-only) constructs `PipelexApiClient` from `@pipelex/sdk`. The forms import `blockingRun`/`durableRun` **types only** (`import type`), so no server code leaks into the client bundle.
+- **`src/hooks/`** — `useRun<TInput,TOutput>`, the unified client state machine (`idle → running → done|error`) that dispatches blocking vs durable by `mode`. Holds the durable poll loop, the staleness token, the elapsed ticker, the wall-clock ceiling, and the `classifyTransportError` wrapping. Forms never branch on mode — they just call `run(input)`.
+- **`src/components/`** — React components. `"use client"` only when the component uses hooks, event handlers, or browser APIs (`ModeToggle` does; `RunStatus` is a pure render).
+- **`src/types/`** — TS types and runtime narrowers (`parseXxx(results: RunResults)`). Narrowers read the output via `findOutputContent` and throw on shape mismatch; that's deliberate (system boundary).
 
 ## Pipelex Integration Pattern
 
-The Server Action pattern: bundle on disk → SDK call → narrow → return discriminated union.
+**Two execution modes, one hook.** Every example runs in either mode, chosen per-example at runtime via a `<ModeToggle>`:
+
+- **Blocking** (`client.execute`) — one synchronous request. Simple, but behind the hosted gateway it is cut off at ~30s, so long pipelines surface a classified `execute_timeout` error. Use it to _see_ that limit.
+- **Durable** (`client.start` then poll) — survives the ~30s cap and streams coarse live status. Hosted-safe everywhere; the default (`NEXT_PUBLIC_EXECUTION_MODE`, defaults `"durable"`).
+
+The forms are **mode-agnostic** — they call `useRun({ mode, blocking, start, poll })` and render by `state.phase`. Only the unified hook knows which Server Actions to call.
 
 ```ts
-// src/actions/runHelloPipeline.ts
+// src/actions/runHelloPipeline.ts — a thin trio per pipeline
 "use server";
-import { getPipelexClient } from "@/lib/pipelexClient";
 import { loadHelloBundle } from "@/lib/loadBundle";
 import { parseEntities, type ExtractedEntities } from "@/types/helloPipeline";
-import { classifyPipelineError, type PipelineError } from "@/lib/errors";
+import { executeBlockingRun, type BlockingOutcome } from "@/lib/blockingRun";
+import { pollDurableRun, startDurableRun, type PollOutcome, type StartOutcome } from "@/lib/durableRun";
+import type { StartOptions } from "@pipelex/sdk";
 
-export type RunHelloPipelineResult =
-  | { ok: true; entities: ExtractedEntities }
-  | { ok: false; error: PipelineError };
+// `execute` and `start` take the same options, so one closure drives both.
+async function buildOptions(text: string): Promise<StartOptions> {
+  return { pipe_code: "extract_entities", mthds_contents: [await loadHelloBundle()], inputs: { text } };
+}
 
-export async function runHelloPipeline(text: string): Promise<RunHelloPipelineResult> {
-  try {
-    const bundle = await loadHelloBundle();
-    const response = await getPipelexClient().execute({
-      pipe_code: "extract_entities",
-      mthds_contents: [bundle],
-      inputs: { text: text.trim() },
-    });
-    return { ok: true, entities: parseEntities(response.pipe_output) };
-  } catch (err) {
-    return {
-      ok: false,
-      error: classifyPipelineError(err, {
-        apiUrl: process.env.PIPELEX_API_URL,
-        hasApiKey: Boolean(process.env.PIPELEX_API_KEY),
-      }),
-    };
-  }
+export async function runHelloBlocking(text: string): Promise<BlockingOutcome<ExtractedEntities>> {
+  const t = text.trim();
+  if (!t) return { ok: false, error: /* bad_request */ };
+  return executeBlockingRun(() => buildOptions(t), parseEntities);
+}
+export async function startHelloRun(text: string): Promise<StartOutcome> {
+  const t = text.trim();
+  if (!t) return { ok: false, error: /* bad_request */ };
+  return startDurableRun(() => buildOptions(t));
+}
+export async function pollHelloRun(runId: string): Promise<PollOutcome<ExtractedEntities>> {
+  return pollDurableRun(runId, parseEntities);
 }
 ```
+
+The shared helpers in `src/lib/` own the SDK call + `classifyPipelineError` (server-side, where the SDK error classes still `instanceof`-match): `executeBlockingRun` wraps `client.execute` and **adapts its response onto `RunResults`** (`{ pipeline_run_id, pipe_output }`) so one narrower serves both modes; `startDurableRun` wraps `client.start`; `pollDurableRun` does one `getRunStatus` (+ `getRunResult` on a terminal status) tick.
+
+**One narrower contract — `parseXxx(results: RunResults)` via `findOutputContent(results, predicate)`.** The two modes deliver output in different fields, so `findOutputContent` (`src/lib/runOutput.ts`) reads `main_stuff ?? pipe_output` over both shapes:
+
+- **`main_stuff`** (durable hosted) is the single main output's **content directly** (confirmed live — _not_ a `{ concept, content }` wrapper, _not_ a working-memory map) → validate against the predicate, no search.
+- **`pipe_output`** (blocking `execute`, adapted) is the full `{ working_memory: { root } }` → search `root[*].content` for the entry matching the predicate.
+
+The predicate does double duty: it's the search key in the `pipe_output` arm and the validator in the `main_stuff` arm. **Limitation:** `RunResults` does not surface `working_memory.json`, only `main_stuff` — fine here (every example wants the _main_ output), but a future durable pipeline needing an _intermediate_ stuff would need an SDK addition upstream in `pipelex-sdk-js`.
 
 Conventions:
 
 - **Bundle source**: ship `.mthds` files in the repo at `methods/<name>/main.mthds` and read them at request time with `fs.readFile`. Do **not** inline bundle TOML as a string in `.ts` — bundles are first-class.
 - **One client**: instantiate `PipelexApiClient` once via `getPipelexClient()`. Never `new PipelexApiClient()` directly in actions or components.
-- **Narrow at the boundary**: the SDK returns loosely-typed `pipe_output`. Always pass it through a `parseXxx()` narrower in `src/types/` that throws a tagged subclass of `Error` (e.g. `BadPipelineOutputError`) on shape mismatch. Do not `as` your way through.
-- **Return classified errors, don't throw across the server→client boundary**: server actions return `{ ok: true, ... } | { ok: false, error: PipelineError }`. Throwing works in dev but Next.js production builds strip server-action error messages to opaque digests, which destroys the developer-facing error UX. Wrap the SDK call in `try/catch`, hand the caught value to `classifyPipelineError(err, env)`, and return the structured error. Render it client-side with `<ErrorDisplay>`.
-- **Add new error kinds in `src/lib/errors.ts`**: extend `PipelineErrorKind`, add a branch in `classifyPipelineError`, and cover it in `src/lib/errors.test.ts` (table-driven). Keep `classifyPipelineError` pure — env passed in by caller, no `process.env` reads inside. Client-side rejections of awaited Server Actions go through `classifyTransportError` instead — the SDK error classes don't survive the server→client boundary, so they would never `instanceof`-match on the client. Pre-flight validation kinds (`file_too_large`, `unsupported_file_type`) are the exception: they are built inline by a Server Action _before_ the SDK call (there is no thrown error to classify), so they have no `classifyPipelineError` branch.
-- **Wrap awaited Server Action calls in `try/catch` on the client** and route catches through `classifyTransportError(err)`. Even though the action's own catch turns application errors into `{ ok: false, error }`, the await itself can still reject (network drop, dev server crash, stale Server Action ID after a deploy) — without the client-side catch, the rejection escapes `startTransition` and bypasses `<ErrorDisplay>` via React's error boundary.
+- **Narrow at the boundary**: the SDK returns loosely-typed output. Always pass the whole `RunResults` through a `parseXxx(results)` narrower in `src/types/` that reads it via `findOutputContent` and throws a tagged subclass of `Error` (e.g. `BadPipelineOutputError`) on shape mismatch. Do not `as` your way through. The narrower is the same for both modes — the blocking response is adapted onto `RunResults` so it flows through the `pipe_output` arm.
+- **Return classified errors, don't throw across the server→client boundary**: the shared helpers return `{ ok: true, ... } | { ok: false, error: PipelineError }`. Throwing works in dev but Next.js production builds strip server-action error messages to opaque digests, which destroys the developer-facing error UX. `executeBlockingRun` / `startDurableRun` / `pollDurableRun` wrap the SDK call in `try/catch`, hand the caught value to `classifyPipelineError(err, env)`, and return the structured error. Render it client-side with `<ErrorDisplay>`.
+- **Classification stays server-side, in the helpers.** `classifyPipelineError` `instanceof`-matches SDK error classes, which only exist server-side (they're stripped to opaque digests crossing the boundary) — so it runs inside the helpers, never on a poll/blocking result the client received. The durable `failed` poll constructs a `RunFailedError` from the result lookup and classifies it there too.
+- **Add new error kinds in `src/lib/errors.ts`**: extend `PipelineErrorKind`, add an `instanceof` branch in `classifyPipelineError` (import the class from `@pipelex/sdk`), and cover it in `src/lib/errors.test.ts`. Keep `classifyPipelineError` pure — env passed in by caller, no `process.env` reads inside. The dual-mode kinds (`execute_timeout`, `run_still_running`, `run_failed`, `run_timeout`, `lifecycle_unavailable`) follow this pattern. Two exceptions build a `PipelineError` inline (no thrown error to classify): pre-flight validation (`file_too_large`, `unsupported_file_type`, `bad_request`) in a Server Action, and the client-side poll ceiling (`buildClientTimeoutError`, kind `run_timeout`) in `useRun`.
+- **The blocking cap is a 502/504, not the SDK timeout (verified live).** Behind the hosted gateway, a synchronous `execute` that overruns ~30s comes back as `ApiResponseError` HTTP 502/504 ("the runner did not complete the request") — a _response_, so the SDK does **not** raise `PipelineExecuteTimeoutError` (its own client-side timeout is longer). `executeBlockingRun` passes `{ blocking: true }` to `classifyPipelineError`, which maps a blocking-path 502/504 to `execute_timeout` (the "switch to Durable" guidance). The `PipelineExecuteTimeoutError` branch is kept for configs where the SDK timeout fires first. A 502/504 on the **durable** poll path is left as a transient `server_error` — the `blocking` flag scopes the mapping.
+- **Transport-reject wrapping lives in `useRun`, not the forms.** Even though a helper's catch turns application errors into `{ ok: false, error }`, the awaited Server Action call itself can still reject (network drop, dev server crash, stale Server Action ID after a deploy). The hook wraps every awaited boundary (start, blocking, each poll) in `try/catch` → `classifyTransportError(err)`, so the rejection becomes a `<ErrorDisplay>` error instead of escaping to React's error boundary. Forms just call `run(input)`.
 
 ### File & image inputs
 
@@ -114,15 +135,15 @@ Text inputs are plain strings. File inputs (PDFs, images) take one extra step, d
 - **Validate, then build the envelope server-side.** The Server Action calls `validateDataUrl` (authoritative MIME + size gate) and `buildDocumentInput` (`src/lib/fileEncoding.ts`), which produces a Pipelex `Document` input: `{ concept: "Document", content: { url, filename, mime_type } }`. Images use the same shape with `concept: "Image"`. The Pipelex API decodes the base64 data URL server-side.
 - **Re-validate on the server.** The client may also pre-check for fast UX feedback, but that is trivially bypassed — the Server Action's `validateDataUrl` call is the real gate.
 - **Mind the Server Action body limit.** Next.js caps Server Action bodies at 1 MB by default; base64 inflates payloads ~37%. `next.config.js` raises `serverActions.bodySizeLimit`, and `MAX_PDF_BYTES` in `fileEncoding.ts` caps the raw file size with margin.
-- **File/image outputs come back as a URL** — a storage URL or a base64 data URL — in `pipe_output`. The `parseXxx()` narrower extracts it; render it directly in an `<img>` (see `ImageResult.tsx`).
+- **File/image outputs come back as a URL** — a storage URL or a base64 data URL — in the output content. On the hosted durable path the runtime returns both a non-web `url` (`pipelex-storage://…`) and a web `public_url` (a signed S3 URL); `parseGeneratedImage` keeps both and validates the one `<ImageResult>` actually displays (`publicUrl ?? url`), so a non-web `url` can't ship a silently-broken image. Render it directly in an `<img>` (see `ImageResult.tsx`).
 
 To add a new pipeline:
 
 1. Create `methods/<name>/main.mthds` (use `/mthds-build`).
 2. Add `loadXxxBundle()` in `src/lib/loadBundle.ts` (or one helper per bundle).
-3. Add the type + narrower (with a tagged error subclass) in `src/types/<name>.ts`.
-4. Add a Server Action in `src/actions/run<Name>Pipeline.ts` that returns a `Run<Name>PipelineResult` union and uses `classifyPipelineError` in the catch.
-5. Wire it from a component, render `<ErrorDisplay error={result.error} />` when `!result.ok`, and wrap the awaited action call in `try/catch` so transport-level rejections route through `classifyTransportError`. See `src/components/EntityForm.tsx` for the canonical pattern.
+3. Add the type + narrower `parseXxx(results: RunResults)` (via `findOutputContent`, throwing a tagged error subclass) in `src/types/<name>.ts`.
+4. Add the action **trio** in `src/actions/run<Name>Pipeline.ts` — `run<Name>Blocking` (→ `executeBlockingRun`), `start<Name>Run` (→ `startDurableRun`), `poll<Name>Run` (→ `pollDurableRun`) — sharing a `buildOptions` closure and the pre-flight guard.
+5. Wire it from a component: `useState<ExecutionMode>(DEFAULT_EXECUTION_MODE)`, `useRun({ mode, blocking, start, poll })`, then render `<ModeToggle>` (disabled while running), `<RunStatus>` while running, `<ErrorDisplay>` on error, and the result component on done — all keyed off `state.phase`. See `src/components/EntityForm.tsx` for the canonical pattern.
 
 ## Component Conventions
 
@@ -153,7 +174,8 @@ Enforced via Husky + lint-staged on commit.
 - **Library**: `@testing-library/react` + `@testing-library/jest-dom`
 - **Location**: co-located `.test.ts` / `.test.tsx` next to the source file
 - **Queries**: prefer accessible queries (`getByRole`, `getByLabelText`) over `getByTestId`
-- **Mocking the SDK**: mock `@/lib/pipelexClient` with `vi.mock`, returning `{ execute: vi.fn() }`. Do **not** mock the `@pipelex/sdk` package directly — it's harder to wire as a constructor and the indirection adds noise.
+- **Mocking the SDK**: mock `@/lib/pipelexClient` with `vi.mock`, returning the methods the code under test calls — `{ execute, start, getRunStatus, getRunResult }` (each a `vi.fn()`). Do **not** mock the `@pipelex/sdk` package directly — it's harder to wire as a constructor and the indirection adds noise. **Use `mockResolvedValueOnce`/`mockRejectedValueOnce`, not the persistent `mockResolvedValue`/`mockRejectedValue`, on these spies**: a persistent resolved mock followed by a rejected one on the same spy trips vitest's async-result tracking and reports a spurious unhandled rejection. (The persistent `vi.fn().mockResolvedValue(...)` on the `loadBundle` mock is fine — it's resolve-only.)
+- **Mocking the actions (form/hook tests)**: mock `@/actions/run<Name>Pipeline` returning `{ run<Name>Blocking, start<Name>Run, poll<Name>Run }` as `vi.fn()`s. `useRun`'s durable poll loop runs on `setTimeout`/`setInterval`, so durable form/hook tests use `vi.useFakeTimers()` and drive with `await vi.advanceTimersByTimeAsync(...)` inside `act()`, querying synchronously (`getByRole`/`getByText`) — `findBy`/`waitFor` conflict with fake timers. `PdfForm` keeps **real** timers (its `FileReader` encoding needs them) and has the durable poll complete on the first tick so `findBy` works.
 
 ### E2E (Playwright)
 
@@ -197,7 +219,7 @@ If `make format-check` fails, run `make format` to auto-fix and re-run `make all
 Other targets that matter:
 
 - **`make agent-test`** instead of `make test` when an AI agent runs the suite. It's silent on success; only failures hit the context.
-- **`make test-e2e`** before shipping changes that touch the SDK call path (`src/actions/`, `src/lib/pipelexClient.ts`, `src/lib/loadBundle.ts`, `src/lib/errors.ts`, `src/lib/fileEncoding.ts`, `methods/`). Unit tests mock the SDK; only e2e exercises the real API and the rendered error UX. Not part of `make all` (costs an LLM call per run).
+- **`make test-e2e`** before shipping changes that touch the SDK call path (`src/actions/`, `src/lib/pipelexClient.ts`, `src/lib/loadBundle.ts`, `src/lib/blockingRun.ts`, `src/lib/durableRun.ts`, `src/lib/runOutput.ts`, `src/lib/errors.ts`, `src/lib/fileEncoding.ts`, `src/hooks/useRun.ts`, `methods/`). Unit tests mock the SDK; only e2e exercises the real API, the durable poll loop, and the rendered error UX. Not part of `make all` (costs an LLM call per run).
 - **`make use-local`** after editing the sibling `../pipelex-sdk-js` SDK, before re-running tests or the dev server. The tarball install only refreshes when the target re-runs.
 
 ## Git Workflow

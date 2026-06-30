@@ -1,5 +1,7 @@
 # Follow-up: switch long-running pipelines to durable runs
 
+> **✅ Resolved.** Implemented as the dual-mode design in `TODOS.md`: both modes ship side by side behind a per-example `<ModeToggle>`, unified by the `useRun` hook. Durable (`start` + poll) is the default and survives the ~30s cap; blocking (`execute`) is kept to demonstrate the limit (a classified `execute_timeout`). One `findOutputContent` narrower reads `main_stuff ?? pipe_output`. See `CLAUDE.md` → "Pipelex Integration Pattern" for the canonical pattern. The notes below are the original problem statement, kept for context.
+
 **Source:** PR #7 review comment from `chatgpt-codex-connector` (P2) — "Switch image generation to durable runs."
 
 ## The problem

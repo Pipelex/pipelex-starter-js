@@ -6,6 +6,8 @@ import { requireLiveApi } from "./liveApi";
 // no key is set (see e2e/liveApi.ts).
 requireLiveApi();
 
+// Runs in the default execution mode (durable: start + poll). The form is
+// mode-agnostic, so this drives the same UI path a user gets out of the box.
 test("extracts entities from sample text", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("tab", { name: /text entities/i }).click();

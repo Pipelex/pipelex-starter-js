@@ -1,0 +1,168 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { renderHook, act } from "@testing-library/react";
+import { useRun, type RunState, type UseRunConfig } from "./useRun";
+
+type Out = { value: string };
+
+function makeCfg(overrides: Partial<UseRunConfig<string, Out>>): UseRunConfig<string, Out> {
+  return {
+    mode: "blocking",
+    blocking: vi.fn(),
+    start: vi.fn(),
+    poll: vi.fn(),
+    ...overrides,
+  };
+}
+
+/** Narrow `state` so tests can read mode-specific fields without casts. */
+function asRunning(state: RunState<Out>) {
+  if (state.phase !== "running") throw new Error(`expected running, got ${state.phase}`);
+  return state;
+}
+
+beforeEach(() => vi.useFakeTimers());
+afterEach(() => vi.useRealTimers());
+
+/** Advance fake timers + flush microtasks inside act(). */
+async function flush(ms = 0) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+}
+
+describe("useRun — blocking", () => {
+  it("run → running → done", async () => {
+    const blocking = vi.fn().mockResolvedValueOnce({ ok: true, output: { value: "x" } });
+    const cfg = makeCfg({ mode: "blocking", blocking });
+    const { result } = renderHook(() => useRun(cfg));
+
+    act(() => result.current.run("in"));
+    expect(result.current.state.phase).toBe("running");
+
+    await flush();
+    expect(result.current.state).toEqual({ phase: "done", output: { value: "x" } });
+    expect(blocking).toHaveBeenCalledWith("in");
+  });
+
+  it("run → {ok:false} → error", async () => {
+    const blocking = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      error: { kind: "bad_request", title: "T", message: "m", details: "d" },
+    });
+    const cfg = makeCfg({ mode: "blocking", blocking });
+    const { result } = renderHook(() => useRun(cfg));
+
+    act(() => result.current.run("in"));
+    await flush();
+    expect(result.current.state).toMatchObject({ phase: "error", error: { kind: "bad_request" } });
+  });
+
+  it("a rejected blocking await becomes a transport error (not a thrown boundary)", async () => {
+    const blocking = vi.fn().mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const cfg = makeCfg({ mode: "blocking", blocking });
+    const { result } = renderHook(() => useRun(cfg));
+
+    act(() => result.current.run("in"));
+    await flush();
+    expect(result.current.state).toMatchObject({
+      phase: "error",
+      error: { kind: "transport_error" },
+    });
+  });
+});
+
+describe("useRun — durable", () => {
+  it("start → poll running → poll completed → done", async () => {
+    const start = vi.fn().mockResolvedValueOnce({ ok: true, runId: "run-1" });
+    const poll = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        state: "running",
+        status: "RUNNING",
+        degraded: false,
+        retryAfterSeconds: null,
+      })
+      .mockResolvedValueOnce({ ok: true, state: "completed", output: { value: "done" } });
+    const cfg = makeCfg({ mode: "durable", start, poll });
+    const { result } = renderHook(() => useRun(cfg));
+
+    act(() => result.current.run("in"));
+    await flush(); // start resolves, first poll (running)
+    expect(asRunning(result.current.state).status).toBe("RUNNING");
+
+    await flush(2000); // scheduled second poll fires → completed
+    expect(result.current.state).toEqual({ phase: "done", output: { value: "done" } });
+    expect(start).toHaveBeenCalledWith("in");
+  });
+
+  it("a failed poll → error", async () => {
+    const start = vi.fn().mockResolvedValueOnce({ ok: true, runId: "run-1" });
+    const poll = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      error: { kind: "run_failed", title: "T", message: "m", details: "d" },
+    });
+    const cfg = makeCfg({ mode: "durable", start, poll });
+    const { result } = renderHook(() => useRun(cfg));
+
+    act(() => result.current.run("in"));
+    await flush();
+    expect(result.current.state).toMatchObject({ phase: "error", error: { kind: "run_failed" } });
+  });
+
+  it("a rejected start await becomes a transport error", async () => {
+    const start = vi.fn().mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const cfg = makeCfg({ mode: "durable", start });
+    const { result } = renderHook(() => useRun(cfg));
+
+    act(() => result.current.run("in"));
+    await flush();
+    expect(result.current.state).toMatchObject({
+      phase: "error",
+      error: { kind: "transport_error" },
+    });
+  });
+
+  it("discards a late poll result after unmount (staleness)", async () => {
+    const start = vi.fn().mockResolvedValueOnce({ ok: true, runId: "run-1" });
+    let resolvePoll: (value: unknown) => void = () => {};
+    const poll = vi.fn().mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePoll = resolve;
+        }),
+    );
+    const cfg = makeCfg({ mode: "durable", start, poll });
+    const { result, unmount } = renderHook(() => useRun(cfg));
+
+    act(() => result.current.run("in"));
+    await flush(); // start resolves; first poll is pending
+    expect(result.current.state.phase).toBe("running");
+
+    unmount();
+    // Resolve the pending poll AFTER unmount — the staleness token must discard it.
+    await act(async () => {
+      resolvePoll({ ok: true, state: "completed", output: { value: "late" } });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.state.phase).toBe("running"); // never advanced to done
+  });
+
+  it("stops polling after maxDurationMs and reports a run_timeout", async () => {
+    const start = vi.fn().mockResolvedValueOnce({ ok: true, runId: "run-1" });
+    const poll = vi.fn().mockResolvedValue({
+      ok: true,
+      state: "running",
+      status: "RUNNING",
+      degraded: false,
+      retryAfterSeconds: null,
+    });
+    const cfg = makeCfg({ mode: "durable", start, poll, intervalMs: 1000, maxDurationMs: 5000 });
+    const { result } = renderHook(() => useRun(cfg));
+
+    act(() => result.current.run("in"));
+    await flush(); // first poll
+    await flush(10_000); // keep polling until the ceiling trips
+    expect(result.current.state).toMatchObject({ phase: "error", error: { kind: "run_timeout" } });
+  });
+});

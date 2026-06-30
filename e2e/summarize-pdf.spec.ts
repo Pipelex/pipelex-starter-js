@@ -8,6 +8,7 @@ import { requireLiveApi } from "./liveApi";
 // key is set (see e2e/liveApi.ts).
 requireLiveApi();
 
+// Runs in the default execution mode (durable: start + poll).
 test("summarizes the sample PDF", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("tab", { name: /pdf summary/i }).click();

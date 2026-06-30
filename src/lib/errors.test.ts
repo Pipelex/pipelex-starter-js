@@ -1,7 +1,21 @@
 import { describe, it, expect } from "vitest";
-import { ApiResponseError, ApiUnreachableError, ClientAuthenticationError } from "@pipelex/sdk";
+import {
+  ApiResponseError,
+  ApiUnreachableError,
+  ClientAuthenticationError,
+  PipelineExecuteTimeoutError,
+  RunFailedError,
+  RunLifecycleUnavailableError,
+  RunStillRunningError,
+  RunTimeoutError,
+} from "@pipelex/sdk";
 import { BadImageOutputError, BadPipelineOutputError } from "@/types/pipelineError";
-import { classifyPipelineError, classifyTransportError, type ClassifyEnv } from "./errors";
+import {
+  buildClientTimeoutError,
+  classifyPipelineError,
+  classifyTransportError,
+  type ClassifyEnv,
+} from "./errors";
 
 const LOCAL_ENV: ClassifyEnv = { apiUrl: "http://localhost:8081", hasApiKey: true };
 const CLOUD_ENV: ClassifyEnv = { apiUrl: "https://api.pipelex.com", hasApiKey: true };
@@ -289,6 +303,99 @@ describe("classifyPipelineError — unknown fallback", () => {
     const result = classifyPipelineError("a string was thrown", LOCAL_ENV);
     expect(result.kind).toBe("unknown");
     expect(result.details).toContain("a string was thrown");
+  });
+});
+
+describe("classifyPipelineError — run-lifecycle errors", () => {
+  it("classifies PipelineExecuteTimeoutError into execute_timeout pointing at Durable mode", () => {
+    const result = classifyPipelineError(new PipelineExecuteTimeoutError(31_000), LOCAL_ENV);
+    expect(result.kind).toBe("execute_timeout");
+    expect(result.title).toMatch(/30s/);
+    expect(result.hint?.summary).toMatch(/Durable/i);
+  });
+
+  it("maps a blocking-path 502/504 gateway response to execute_timeout", () => {
+    for (const status of [502, 504]) {
+      const err = new ApiResponseError(
+        `API POST /v1/execute failed (${status})`,
+        "https://api.pipelex.com",
+        status,
+        status === 502 ? "Bad Gateway" : "Gateway Timeout",
+        "",
+        undefined,
+        "The runner did not complete the request (/execute).",
+        undefined,
+        undefined,
+      );
+      const result = classifyPipelineError(err, CLOUD_ENV, { blocking: true });
+      expect(result.kind).toBe("execute_timeout");
+      expect(result.message).toMatch(/30s/);
+      expect(result.hint?.summary).toMatch(/Durable/i);
+      expect(result.details).toContain("The runner did not complete the request");
+    }
+  });
+
+  it("leaves a durable-path (non-blocking) 502 as a generic server_error", () => {
+    const err = new ApiResponseError(
+      "API GET /v1/runs/run-1/status failed (502)",
+      "https://api.pipelex.com",
+      502,
+      "Bad Gateway",
+      "",
+      undefined,
+      "Bad Gateway",
+      undefined,
+      undefined,
+    );
+    const result = classifyPipelineError(err, CLOUD_ENV);
+    expect(result.kind).toBe("server_error");
+  });
+
+  it("classifies RunStillRunningError into run_still_running", () => {
+    const result = classifyPipelineError(
+      new RunStillRunningError("still running", "run-1", 5, "/v1/runs/run-1"),
+      LOCAL_ENV,
+    );
+    expect(result.kind).toBe("run_still_running");
+    expect(result.message).toContain("run-1");
+    expect(result.details).toContain("Retry-After: 5s");
+    expect(result.details).toContain("/v1/runs/run-1");
+  });
+
+  it("classifies RunFailedError into run_failed with the failure message", () => {
+    const result = classifyPipelineError(new RunFailedError("boom", "run-1", "FAILED"), LOCAL_ENV);
+    expect(result.kind).toBe("run_failed");
+    expect(result.message).toContain("boom");
+    expect(result.details).toContain("run run-1 ended FAILED");
+  });
+
+  it("classifies RunTimeoutError into run_timeout", () => {
+    const result = classifyPipelineError(
+      new RunTimeoutError("timed out", "run-1", 1_200_000),
+      LOCAL_ENV,
+    );
+    expect(result.kind).toBe("run_timeout");
+    expect(result.message).toContain("run-1");
+  });
+
+  it("classifies RunLifecycleUnavailableError into lifecycle_unavailable pointing at Blocking mode", () => {
+    const result = classifyPipelineError(
+      new RunLifecycleUnavailableError("no run store", "http://localhost:8081"),
+      LOCAL_ENV,
+    );
+    expect(result.kind).toBe("lifecycle_unavailable");
+    expect(result.message).toContain("http://localhost:8081");
+    expect(result.hint?.summary).toMatch(/Blocking/i);
+    expect(result.hint?.code).toContain("PIPELEX_API_URL");
+  });
+});
+
+describe("buildClientTimeoutError", () => {
+  it("builds a run_timeout error from the client poll ceiling", () => {
+    const result = buildClientTimeoutError(150_000);
+    expect(result.kind).toBe("run_timeout");
+    expect(result.title).toMatch(/Stopped waiting/i);
+    expect(result.message).toContain("150s");
   });
 });
 

@@ -1,3 +1,5 @@
+import type { RunResults } from "@pipelex/sdk";
+import { findOutputContent } from "@/lib/runOutput";
 import { BadPipelineOutputError } from "@/types/pipelineError";
 
 export type ExtractedEntities = {
@@ -11,44 +13,20 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 /**
- * Narrow the SDK's loosely-typed `pipe_output` into our ExtractedEntities shape.
- * Throws `BadPipelineOutputError` on shape mismatch — this is a system boundary
- * (LLM output → typed app), so failures are real bugs we want surfaced.
+ * Narrow a run's output into our ExtractedEntities shape. Takes `RunResults`
+ * (durable `main_stuff` or the adapted blocking `pipe_output`) and reads the
+ * main output content via `findOutputContent`. Throws `BadPipelineOutputError`
+ * on shape mismatch — this is a system boundary (LLM output → typed app), so
+ * failures are real bugs we want surfaced (the poll/blocking catch classifies
+ * them).
  */
-export function parseEntities(pipeOutput: unknown): ExtractedEntities {
-  if (!pipeOutput || typeof pipeOutput !== "object") {
-    throw new BadPipelineOutputError("Expected pipe_output to be an object");
+export function parseEntities(results: RunResults): ExtractedEntities {
+  const content = findOutputContent(results, (c) => "people" in c && "orgs" in c && "dates" in c);
+  if (!content) {
+    throw new BadPipelineOutputError("Could not find ExtractedEntities in the run output");
   }
 
-  const workingMemory = (pipeOutput as { working_memory?: unknown }).working_memory;
-  if (!workingMemory || typeof workingMemory !== "object") {
-    throw new BadPipelineOutputError("Expected pipe_output.working_memory to be an object");
-  }
-
-  const root = (workingMemory as { root?: unknown }).root;
-  if (!root || typeof root !== "object") {
-    throw new BadPipelineOutputError("Expected pipe_output.working_memory.root to be an object");
-  }
-
-  const entries = Object.values(root as Record<string, unknown>);
-  const candidate = entries
-    .map((entry) => {
-      if (!entry || typeof entry !== "object") return null;
-      const content = (entry as { content?: unknown }).content;
-      return content && typeof content === "object" ? (content as Record<string, unknown>) : null;
-    })
-    .find(
-      (content) =>
-        content !== null && "people" in content && "orgs" in content && "dates" in content,
-    );
-
-  if (!candidate) {
-    throw new BadPipelineOutputError(
-      "Could not find ExtractedEntities in pipe_output.working_memory",
-    );
-  }
-
-  const { people, orgs, dates } = candidate;
+  const { people, orgs, dates } = content;
   if (!isStringArray(people) || !isStringArray(orgs) || !isStringArray(dates)) {
     throw new BadPipelineOutputError("ExtractedEntities fields must each be an array of strings");
   }
