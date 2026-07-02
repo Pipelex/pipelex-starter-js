@@ -61,6 +61,15 @@ export interface PipelineError {
   title: string;
   /** 1–2 sentences explaining what happened in plain language. */
   message: string;
+  /**
+   * The verbatim message the Pipelex API returned, when our `message` is a
+   * *re-framing* of it (e.g. a runtime-vocabulary error we restate in the
+   * starter's own terms). Rendered as its own block next to our interpretation
+   * so the template demonstrates raw-API-response vs. handled-error UX side by
+   * side. Omitted when our `message` already is the server's text (no value in
+   * showing it twice).
+   */
+  apiMessage?: string;
   hint?: ErrorHint;
   /** Raw technical info for the collapsible "Technical details" section. */
   details: string;
@@ -135,8 +144,8 @@ function classifyUnreachable(err: ApiUnreachableError, env: ClassifyEnv): Pipeli
     title: "Pipelex API not reachable",
     message: `Tried to reach ${url}${codeSuffix}, but the request did not get a response. Check the URL and your network connection.`,
     hint: {
-      summary: "Verify PIPELEX_API_URL in .env.local points to a reachable API.",
-      code: `PIPELEX_API_URL=${url}`,
+      summary: "Verify PIPELEX_BASE_URL in .env.local points to a reachable API.",
+      code: `PIPELEX_BASE_URL=${url}`,
       codeLanguage: "env",
     },
     details: baseDetails,
@@ -144,8 +153,20 @@ function classifyUnreachable(err: ApiUnreachableError, env: ClassifyEnv): Pipeli
 }
 
 function classifyResponse(err: ApiResponseError, env: ClassifyEnv): PipelineError {
+  // `/start` reached a backend that *has* the route but whose orchestrator is
+  // blocking-only (the in-process `direct` mode), so it refused the durable
+  // start with a 400. Surface it in durable-execution terms — see
+  // `classifyStartRequiresAsync` — instead of letting the raw runtime-vocabulary
+  // server message fall through as a generic `bad_request`.
+  if (err.errorType === START_REQUIRES_ASYNC_ORCHESTRATION) {
+    return classifyStartRequiresAsync(err);
+  }
+
   const detailsLines = [
     `${err.name}: HTTP ${err.status} ${err.statusText}`.trim(),
+    // Always surface which endpoint was hit — URLs change often in dev, and a
+    // 4xx/5xx otherwise gives no hint about *which* backend rejected the call.
+    err.apiUrl ? `API URL: ${err.apiUrl}` : null,
     err.errorType ? `error_type: ${err.errorType}` : null,
     err.serverMessage ? `server message: ${err.serverMessage}` : null,
     err.responseBody ? `body: ${truncate(err.responseBody, 2000)}` : null,
@@ -251,7 +272,7 @@ function classifyClientAuth(err: ClientAuthenticationError, env: ClassifyEnv): P
     kind: "config_missing",
     title: "Pipelex API URL not configured",
     message:
-      "The @pipelex/sdk SDK needs PIPELEX_API_URL to know where to send pipeline requests, but it isn't set.",
+      "The @pipelex/sdk SDK needs PIPELEX_BASE_URL to know where to send pipeline requests, but it isn't set.",
     hint: {
       summary: "Copy .env.example to .env.local and fill it in:",
       code: "cp .env.example .env.local",
@@ -339,6 +360,49 @@ function classifyRunTimeout(err: RunTimeoutError): PipelineError {
   };
 }
 
+/**
+ * The pipelex-api `error_type` for a `/start` refused because the deployment's
+ * orchestrator can't run asynchronously (blocking-only `direct` mode). A
+ * contract value on the problem body, surfaced by the SDK as `err.errorType`.
+ */
+const START_REQUIRES_ASYNC_ORCHESTRATION = "StartRequiresAsyncOrchestration";
+
+/**
+ * `/start` hit a backend whose orchestrator is blocking-only (the in-process
+ * `direct` mode), so the durable start is refused with a 400. Same consumer
+ * meaning as a bare runner with no run store (`classifyLifecycleUnavailable`,
+ * a 404): durable execution isn't available here — switch to Blocking. The
+ * server says it in runtime terms ("orchestration mode", "fire-and-forget");
+ * we re-frame it as *durable execution* (the word the starter uses) and route
+ * it to the `lifecycle_unavailable` kind so the UI doesn't show the raw
+ * runtime message as a generic bad request. The root cause differs from the
+ * 404 case (the route exists; the orchestrator just can't go async), so the
+ * copy is tailored rather than shared.
+ */
+function classifyStartRequiresAsync(err: ApiResponseError): PipelineError {
+  const url = err.apiUrl || "(unknown)";
+  return {
+    kind: "lifecycle_unavailable",
+    title: "Durable runs aren't available on this API",
+    message: `${url} accepts runs but runs them synchronously — it's a blocking-only "direct" deployment — so durable execution (start + poll) isn't available here. Durable mode needs an async-capable backend such as the hosted Pipelex API.`,
+    // Show the runtime's own wording verbatim alongside our re-framing.
+    apiMessage: err.serverMessage,
+    hint: {
+      summary:
+        "Switch this example to Blocking mode (it works against any runner), or point PIPELEX_BASE_URL at an async-capable API:",
+      code: "PIPELEX_BASE_URL=https://api.pipelex.com",
+      codeLanguage: "env",
+    },
+    details: [
+      `${err.name}: HTTP ${err.status} ${err.statusText}`.trim(),
+      err.apiUrl ? `API URL: ${err.apiUrl}` : null,
+      `error_type: ${err.errorType}`,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  };
+}
+
 function classifyLifecycleUnavailable(
   err: RunLifecycleUnavailableError,
   env: ClassifyEnv,
@@ -350,8 +414,8 @@ function classifyLifecycleUnavailable(
     message: `${url} doesn't serve the durable run lifecycle (start + poll) — it looks like a bare pipelex-api runner with no run store. Durable mode needs the hosted Pipelex API.`,
     hint: {
       summary:
-        "Switch this example to Blocking mode (it works against any runner), or point PIPELEX_API_URL at the hosted API:",
-      code: "PIPELEX_API_URL=https://api.pipelex.com",
+        "Switch this example to Blocking mode (it works against any runner), or point PIPELEX_BASE_URL at the hosted API:",
+      code: "PIPELEX_BASE_URL=https://api.pipelex.com",
       codeLanguage: "env",
     },
     details: `${err.name}: ${err.message}`,
@@ -377,7 +441,7 @@ function classifyBadImageOutput(err: BadImageOutputError): PipelineError {
         "The pipeline generated an image, but the Pipelex API returned a URL a browser can't load — typically a file:// path on the API server's disk. This happens when the API uses the local file storage provider.",
       hint: {
         summary:
-          "Configure the Pipelex API with an S3 or GCP storage provider so it returns presigned HTTPS URLs, or point PIPELEX_API_URL at the hosted API. Set this in pipelex-api's .pipelex/pipelex.toml:",
+          "Configure the Pipelex API with an S3 or GCP storage provider so it returns presigned HTTPS URLs, or point PIPELEX_BASE_URL at the hosted API. Set this in pipelex-api's .pipelex/pipelex.toml:",
         code: '[storage]\nmethod = "s3"  # or "gcp"',
         codeLanguage: "env",
         docs: { label: "Pipelex storage configuration", href: "https://docs.pipelex.com/" },

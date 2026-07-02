@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { requireLiveApi } from "./liveApi";
 
-// These tests hit the live Pipelex API configured by PIPELEX_API_URL +
+// These tests hit the live Pipelex API configured by PIPELEX_BASE_URL +
 // PIPELEX_API_KEY in `.env.local`, and cost an image-generation call. Image
 // generation is slow, so the timeouts are generous. They skip cleanly when no
 // key is set (see e2e/liveApi.ts).

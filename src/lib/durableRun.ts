@@ -9,7 +9,7 @@ import {
 } from "@pipelex/sdk";
 
 function env() {
-  return { apiUrl: process.env.PIPELEX_API_URL, hasApiKey: Boolean(process.env.PIPELEX_API_KEY) };
+  return { apiUrl: process.env.PIPELEX_BASE_URL, hasApiKey: Boolean(process.env.PIPELEX_API_KEY) };
 }
 
 export type StartOutcome = { ok: true; runId: string } | { ok: false; error: PipelineError };

@@ -215,7 +215,7 @@ import { classifyPipelineError, type PipelineError } from "@/lib/errors";
 import type { StartOptions, RunResults } from "@pipelex/sdk"; // StartOptions ≡ RunOptions structurally
 
 function env() {
-  return { apiUrl: process.env.PIPELEX_API_URL, hasApiKey: Boolean(process.env.PIPELEX_API_KEY) };
+  return { apiUrl: process.env.PIPELEX_BASE_URL, hasApiKey: Boolean(process.env.PIPELEX_API_KEY) };
 }
 export type BlockingOutcome<T> = { ok: true; output: T } | { ok: false; error: PipelineError };
 
@@ -249,7 +249,7 @@ import {
 } from "@pipelex/sdk";
 
 function env() {
-  return { apiUrl: process.env.PIPELEX_API_URL, hasApiKey: Boolean(process.env.PIPELEX_API_KEY) };
+  return { apiUrl: process.env.PIPELEX_BASE_URL, hasApiKey: Boolean(process.env.PIPELEX_API_KEY) };
 }
 export type StartOutcome = { ok: true; runId: string } | { ok: false; error: PipelineError };
 export type PollOutcome<T> =
@@ -452,7 +452,7 @@ export async function pollHelloRun(runId: string): Promise<PollOutcome<Extracted
 
 `main_stuff` = the single main output stuff (working memory is a separate, non-exposed artifact). Just confirm the wrapper.
 
-- [ ] With a live hosted key (`PIPELEX_API_KEY` set, `PIPELEX_API_URL` unset → `api.pipelex.com`), run a throwaway probe (scratchpad or temp e2e — do NOT commit): load `methods/hello/main.mthds`, `client.start({ pipe_code:"extract_entities", mthds_contents:[bundle], inputs:{ text:"..." } })`, poll `getRunResult` to `completed`, `console.dir(res.result.main_stuff, { depth: null })`.
+- [ ] With a live hosted key (`PIPELEX_API_KEY` set, `PIPELEX_BASE_URL` unset → `api.pipelex.com`), run a throwaway probe (scratchpad or temp e2e — do NOT commit): load `methods/hello/main.mthds`, `client.start({ pipe_code:"extract_entities", mthds_contents:[bundle], inputs:{ text:"..." } })`, poll `getRunResult` to `completed`, `console.dir(res.result.main_stuff, { depth: null })`.
 - [ ] Confirm the `main_stuff` wrapper: tick one —
   - [ ] `{ concept, content: { people, orgs, dates } }` (DictStuff wrapper → unwrap `.content`)
   - [ ] `{ people, orgs, dates }` (bare content → use directly)

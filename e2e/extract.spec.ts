@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { requireLiveApi } from "./liveApi";
 
-// This test hits the live Pipelex API configured by PIPELEX_API_URL +
+// This test hits the live Pipelex API configured by PIPELEX_BASE_URL +
 // PIPELEX_API_KEY in `.env.local`, and costs an LLM call. It skips cleanly when
 // no key is set (see e2e/liveApi.ts).
 requireLiveApi();

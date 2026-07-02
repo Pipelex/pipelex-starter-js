@@ -6,7 +6,7 @@
 
 ## The problem
 
-The migration to `@pipelex/sdk` wired every server action to `client.execute(...)`, which hits the blocking `POST /v1/execute` path. Behind the **hosted gateway** (`api.pipelex.com`, the default when `PIPELEX_API_URL` is unset), synchronous requests are cut off at **~30s**. Long-running pipelines exceed that ceiling and surface as a timeout error instead of returning a result.
+The migration to `@pipelex/sdk` wired every server action to `client.execute(...)`, which hits the blocking `POST /v1/execute` path. Behind the **hosted gateway** (`api.pipelex.com`, the default when `PIPELEX_BASE_URL` is unset), synchronous requests are cut off at **~30s**. Long-running pipelines exceed that ceiling and surface as a timeout error instead of returning a result.
 
 Image generation is the clear offender: `e2e/generate-image.spec.ts` already allows up to **150s** for the run. So with the default hosted setup, the image example fails rather than returning an image.
 

@@ -171,25 +171,15 @@ describe("useRun — durable", () => {
     });
   });
 
-  it("falls back to blocking when durable start reports lifecycle_unavailable", async () => {
+  it("surfaces lifecycle_unavailable from start as an error — never a silent blocking fallback", async () => {
     const start = vi.fn().mockResolvedValueOnce({
       ok: false,
-      error: { kind: "lifecycle_unavailable", title: "T", message: "m", details: "d" },
-    });
-    const blocking = vi.fn().mockResolvedValueOnce({ ok: true, output: { value: "fell-back" } });
-    const cfg = makeCfg({ mode: "durable", start, blocking });
-    const { result } = renderHook(() => useRun(cfg));
-
-    act(() => result.current.run("in"));
-    await flush(); // start → lifecycle_unavailable → blocking fallback → done
-    expect(blocking).toHaveBeenCalledWith("in");
-    expect(result.current.state).toEqual({ phase: "done", output: { value: "fell-back" } });
-  });
-
-  it("does not fall back on a non-lifecycle start failure", async () => {
-    const start = vi.fn().mockResolvedValueOnce({
-      ok: false,
-      error: { kind: "auth_missing", title: "T", message: "m", details: "d" },
+      error: {
+        kind: "lifecycle_unavailable",
+        title: "Durable runs aren't available on this API",
+        message: "http://localhost:8081 doesn't serve the durable run lifecycle",
+        details: "d",
+      },
     });
     const blocking = vi.fn();
     const cfg = makeCfg({ mode: "durable", start, blocking });
@@ -197,10 +187,10 @@ describe("useRun — durable", () => {
 
     act(() => result.current.run("in"));
     await flush();
-    expect(blocking).not.toHaveBeenCalled();
+    expect(blocking).not.toHaveBeenCalled(); // the backend's lack of durable support must be visible
     expect(result.current.state).toMatchObject({
       phase: "error",
-      error: { kind: "auth_missing" },
+      error: { kind: "lifecycle_unavailable" },
     });
   });
 

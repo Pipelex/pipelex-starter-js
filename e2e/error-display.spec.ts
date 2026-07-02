@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
 // Verifies the developer-friendly error UX when the Pipelex API isn't reachable.
-// Runs against whatever PIPELEX_API_URL the dev server is using; the default
+// Runs against whatever PIPELEX_BASE_URL the dev server is using; the default
 // .env in this repo points at http://127.0.0.1:8081 with no API there, which
 // is the "I just cloned the starter" failure mode this UX is designed for.
 //
@@ -18,7 +18,7 @@ import { test, expect } from "@playwright/test";
 // run this offline test against a live API.
 test.describe("offline-API error display", () => {
   test.beforeAll(async () => {
-    const apiUrl = process.env.PIPELEX_API_URL ?? "http://127.0.0.1:8081";
+    const apiUrl = process.env.PIPELEX_BASE_URL ?? "http://127.0.0.1:8081";
     let reachable = false;
     try {
       const res = await fetch(`${apiUrl.replace(/\/+$/, "")}/v1/version`, {

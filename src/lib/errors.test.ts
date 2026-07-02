@@ -45,7 +45,7 @@ describe("classifyPipelineError — ApiUnreachableError", () => {
     const result = classifyPipelineError(err, CLOUD_ENV);
     expect(result.kind).toBe("api_unreachable");
     expect(result.message).toContain("https://api.pipelex.com");
-    expect(result.hint?.summary).toMatch(/PIPELEX_API_URL/);
+    expect(result.hint?.summary).toMatch(/PIPELEX_BASE_URL/);
     expect(result.hint?.code).toContain("https://api.pipelex.com");
   });
 
@@ -199,10 +199,10 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
     expect(result.message).toContain("boom");
   });
 
-  it("includes errorType and serverMessage in details", () => {
+  it("includes the endpoint URL, errorType, and serverMessage in details", () => {
     const err = new ApiResponseError(
       "...",
-      "x",
+      "http://localhost:9999",
       500,
       "Internal Server Error",
       '{"detail":{"error_type":"X","message":"y"}}',
@@ -212,6 +212,7 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
       undefined,
     );
     const result = classifyPipelineError(err, LOCAL_ENV);
+    expect(result.details).toContain("API URL: http://localhost:9999");
     expect(result.details).toContain("error_type: X");
     expect(result.details).toContain("server message: y");
   });
@@ -234,6 +235,32 @@ describe("classifyPipelineError — ApiResponseError 4xx (non-auth)", () => {
     expect(result.kind).toBe("bad_request");
     expect(result.title).toContain("HTTP 422");
     expect(result.message).toBe("missing field 'foo'");
+  });
+
+  it("reframes a 400 StartRequiresAsyncOrchestration as a durable-execution error, keeping the API's own message", () => {
+    const apiMsg =
+      "Orchestration mode 'direct' cannot honor fire-and-forget delivery: /start requires an async-capable orchestration, and this deployment has none. Use /execute (synchronous) instead.";
+    const err = new ApiResponseError(
+      "...",
+      "http://localhost:8000",
+      400,
+      "Bad Request",
+      "",
+      "StartRequiresAsyncOrchestration",
+      apiMsg,
+      undefined,
+      undefined,
+    );
+    const result = classifyPipelineError(err, LOCAL_ENV);
+    // Re-framed into the starter's vocabulary (durable execution), not a generic bad_request.
+    expect(result.kind).toBe("lifecycle_unavailable");
+    expect(result.title).toContain("Durable");
+    expect(result.message).toContain("http://localhost:8000");
+    expect(result.message).toMatch(/durable execution/i);
+    // The API's verbatim message is preserved separately for the template to show.
+    expect(result.apiMessage).toBe(apiMsg);
+    expect(result.hint?.code).toContain("PIPELEX_BASE_URL");
+    expect(result.details).toContain("error_type: StartRequiresAsyncOrchestration");
   });
 });
 
@@ -386,7 +413,7 @@ describe("classifyPipelineError — run-lifecycle errors", () => {
     expect(result.kind).toBe("lifecycle_unavailable");
     expect(result.message).toContain("http://localhost:8081");
     expect(result.hint?.summary).toMatch(/Blocking/i);
-    expect(result.hint?.code).toContain("PIPELEX_API_URL");
+    expect(result.hint?.code).toContain("PIPELEX_BASE_URL");
   });
 });
 

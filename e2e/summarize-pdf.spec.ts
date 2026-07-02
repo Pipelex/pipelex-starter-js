@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { requireLiveApi } from "./liveApi";
 
-// This test hits the live Pipelex API configured by PIPELEX_API_URL +
+// This test hits the live Pipelex API configured by PIPELEX_BASE_URL +
 // PIPELEX_API_KEY in `.env.local`, and costs an LLM call. It uses the sample
 // PDF shipped in public/ — the "Use sample PDF" button runs it through the
 // same encode→Server Action path as a real upload. It skips cleanly when no

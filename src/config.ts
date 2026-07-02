@@ -19,9 +19,10 @@ export type ExecutionMode = "blocking" | "durable";
 /**
  * Default mode for every example's `<ModeToggle>`. Durable is hosted-safe, so
  * it is the right default; flip an example to blocking to demonstrate the cap.
- * Against a bare self-hosted runner (no run store) durable isn't a dead-end:
- * `useRun` transparently falls back to the blocking path when `start` reports
- * `lifecycle_unavailable`, so a fresh clone works against any backend.
+ * Against a bare self-hosted runner with no run store, durable surfaces an
+ * explicit `lifecycle_unavailable` error (naming the endpoint URL and pointing
+ * at Blocking mode) rather than silently downgrading — the developer should
+ * know their backend doesn't support durable execution.
  *
  * `NEXT_PUBLIC_` env vars are inlined at build time, so this is safe to read on
  * the client. An unrecognized value falls back to `durable`.

@@ -6,7 +6,7 @@ import { classifyPipelineError, type PipelineError } from "@/lib/errors";
 import type { RunResults, StartOptions } from "@pipelex/sdk";
 
 function env() {
-  return { apiUrl: process.env.PIPELEX_API_URL, hasApiKey: Boolean(process.env.PIPELEX_API_KEY) };
+  return { apiUrl: process.env.PIPELEX_BASE_URL, hasApiKey: Boolean(process.env.PIPELEX_API_KEY) };
 }
 
 export type BlockingOutcome<T> = { ok: true; output: T } | { ok: false; error: PipelineError };

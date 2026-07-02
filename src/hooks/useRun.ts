@@ -137,17 +137,13 @@ export function useRun<TInput, TOutput>(
         setState({ phase: "done", output });
       };
 
-      const runBlocking = (blockingInput: TInput) => {
-        blocking(blockingInput)
+      if (mode === "blocking") {
+        blocking(input)
           .then((outcome) => {
             if (outcome.ok) succeed(outcome.output);
             else fail(outcome.error);
           })
           .catch((err) => fail(classifyTransportError(err)));
-      };
-
-      if (mode === "blocking") {
-        runBlocking(input);
         return;
       }
 
@@ -217,16 +213,10 @@ export function useRun<TInput, TOutput>(
         .then((outcome) => {
           if (!isCurrent()) return;
           if (!outcome.ok) {
-            // A bare self-hosted runner has no run store, so `start` fails with
-            // `lifecycle_unavailable`. Bare runners also have no ~30s gateway
-            // cap, so transparently fall back to the blocking path — the same
-            // durable-first / blocking-fallback policy the SDK's
-            // `startAndWaitForResult` uses. Keeps a fresh clone working against
-            // any backend without a manual mode switch.
-            if (outcome.error.kind === "lifecycle_unavailable") {
-              runBlocking(input);
-              return;
-            }
+            // Includes `lifecycle_unavailable` (a bare runner with no run
+            // store): surface it as an explicit error — never silently
+            // downgrade durable to blocking. The classified error names the
+            // endpoint URL and points the user at Blocking mode.
             fail(outcome.error);
             return;
           }
