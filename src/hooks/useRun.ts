@@ -162,6 +162,17 @@ export function useRun<TInput, TOutput>(
           return;
         }
 
+        // Schedule the next tick, capped to the time remaining before the
+        // ceiling — a large Retry-After must not leave the UI "running" past
+        // maxDurationMs; the capped tick lands on the ceiling check above.
+        const scheduleNext = (baseDelayMs: number) => {
+          const remainingMs = Math.max(0, maxDurationMs - (Date.now() - startedAtRef.current));
+          pollTimerRef.current = setTimeout(
+            () => void pollOnce(runId),
+            Math.min(baseDelayMs, remainingMs),
+          );
+        };
+
         // A tick that failed to get a verdict: keep polling unless the streak
         // exceeds the budget. Surface the degraded state so the UI shows we're
         // struggling but still trying.
@@ -172,7 +183,7 @@ export function useRun<TInput, TOutput>(
             return;
           }
           setState((prev) => (prev.phase === "running" ? { ...prev, degraded: true } : prev));
-          pollTimerRef.current = setTimeout(() => void pollOnce(runId), intervalMs);
+          scheduleNext(intervalMs);
         };
 
         let outcome: PollOutcome<TOutput>;
@@ -205,8 +216,7 @@ export function useRun<TInput, TOutput>(
             ? { ...prev, status: outcome.status, degraded: outcome.degraded }
             : prev,
         );
-        const delay = Math.max(intervalMs, (outcome.retryAfterSeconds ?? 0) * 1000);
-        pollTimerRef.current = setTimeout(() => void pollOnce(runId), delay);
+        scheduleNext(Math.max(intervalMs, (outcome.retryAfterSeconds ?? 0) * 1000));
       };
 
       start(input)

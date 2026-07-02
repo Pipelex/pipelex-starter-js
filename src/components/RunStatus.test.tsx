@@ -28,6 +28,13 @@ describe("RunStatus", () => {
     expect(screen.getByText(/1\.0s/)).toBeInTheDocument();
   });
 
+  it("hides the ticking elapsed counter from assistive tech", () => {
+    // The counter updates every 250ms inside the polite live region; it must be
+    // aria-hidden so screen readers only announce meaningful status changes.
+    render(<RunStatus status="RUNNING" elapsedMs={2300} degraded={false} />);
+    expect(screen.getByText(/2\.3s/)).toHaveAttribute("aria-hidden", "true");
+  });
+
   it("shows a degraded note when degraded", () => {
     render(<RunStatus status="RUNNING" elapsedMs={0} degraded={true} />);
     expect(screen.getByText(/degraded/i)).toBeInTheDocument();

@@ -232,6 +232,26 @@ describe("useRun — durable", () => {
     expect(result.current.state.phase).toBe("running"); // never advanced to done
   });
 
+  it("honors the ceiling even when Retry-After schedules beyond it", async () => {
+    const start = vi.fn().mockResolvedValueOnce({ ok: true, runId: "run-1" });
+    // A huge Retry-After must not push the next tick past the ceiling: the
+    // delay is capped to the time remaining, so the timeout stays strict.
+    const poll = vi.fn().mockResolvedValue({
+      ok: true,
+      state: "running",
+      status: "RUNNING",
+      degraded: false,
+      retryAfterSeconds: 600,
+    });
+    const cfg = makeCfg({ mode: "durable", start, poll, intervalMs: 1000, maxDurationMs: 5000 });
+    const { result } = renderHook(() => useRun(cfg));
+
+    act(() => result.current.run("in"));
+    await flush(); // first poll → running, next tick scheduled
+    await flush(5000); // reach the ceiling — far before the 600s Retry-After
+    expect(result.current.state).toMatchObject({ phase: "error", error: { kind: "run_timeout" } });
+  });
+
   it("stops polling after maxDurationMs and reports a run_timeout", async () => {
     const start = vi.fn().mockResolvedValueOnce({ ok: true, runId: "run-1" });
     const poll = vi.fn().mockResolvedValue({

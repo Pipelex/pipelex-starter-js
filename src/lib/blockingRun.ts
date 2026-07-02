@@ -1,13 +1,10 @@
 import { getPipelexClient } from "@/lib/pipelexClient";
 import { classifyPipelineError, type PipelineError } from "@/lib/errors";
+import { readClassifyEnv } from "@/lib/serverEnv";
 // StartOptions ≡ RunOptions structurally (both `RunRequest & ExtensionOptions`),
 // so the same `buildOptions` closure drives `execute` (blocking) and `start`
 // (durable).
 import type { RunResults, StartOptions } from "@pipelex/sdk";
-
-function env() {
-  return { apiUrl: process.env.PIPELEX_BASE_URL, hasApiKey: Boolean(process.env.PIPELEX_API_KEY) };
-}
 
 export type BlockingOutcome<T> = { ok: true; output: T } | { ok: false; error: PipelineError };
 
@@ -41,6 +38,6 @@ export async function executeBlockingRun<T>(
     return { ok: true, output: parse(adapted) };
   } catch (err) {
     // `blocking: true` maps the gateway's 502/504 cap response to execute_timeout.
-    return { ok: false, error: classifyPipelineError(err, env(), { blocking: true }) };
+    return { ok: false, error: classifyPipelineError(err, readClassifyEnv(), { blocking: true }) };
   }
 }

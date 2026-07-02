@@ -49,7 +49,10 @@ export function RunStatus({ status, elapsedMs, degraded }: RunStatusProps) {
       <div className="space-y-0.5">
         <p className="font-medium">
           {status ? `${statusLabel(status)}… ` : "Running… "}
-          <span className="font-normal text-blue-700">{seconds}s</span>
+          {/* aria-hidden: ticks every 250ms — announcing it would drown the live region. */}
+          <span aria-hidden="true" className="font-normal text-blue-700">
+            {seconds}s
+          </span>
         </p>
         {degraded && (
           <p className="text-xs text-blue-700">

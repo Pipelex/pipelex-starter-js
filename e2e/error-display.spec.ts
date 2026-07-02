@@ -1,9 +1,11 @@
 import { test, expect } from "@playwright/test";
+import { HOSTED_API_BASE_URL } from "./liveApi";
 
 // Verifies the developer-friendly error UX when the Pipelex API isn't reachable.
-// Runs against whatever PIPELEX_BASE_URL the dev server is using; the default
-// .env in this repo points at http://127.0.0.1:8081 with no API there, which
-// is the "I just cloned the starter" failure mode this UX is designed for.
+// Runs against whatever PIPELEX_BASE_URL the dev server is using — e.g. a
+// local instance from `.env.local` that isn't actually running, which is the
+// "I pointed the starter at my own API and it's down" failure mode this UX is
+// designed for.
 //
 // In the default durable mode this exercises the `start` call failing with an
 // unreachable API — the classification (api_unreachable) is identical to the
@@ -18,7 +20,11 @@ import { test, expect } from "@playwright/test";
 // run this offline test against a live API.
 test.describe("offline-API error display", () => {
   test.beforeAll(async () => {
-    const apiUrl = process.env.PIPELEX_BASE_URL ?? "http://127.0.0.1:8081";
+    // Probe the SAME URL the app will use: the bare PipelexApiClient falls
+    // back to the SDK's hosted default when PIPELEX_BASE_URL is unset, so the
+    // probe must too — otherwise this spec runs while the app hits a live
+    // (hosted) API and renders an auth error instead of api_unreachable.
+    const apiUrl = process.env.PIPELEX_BASE_URL ?? HOSTED_API_BASE_URL;
     let reachable = false;
     try {
       const res = await fetch(`${apiUrl.replace(/\/+$/, "")}/v1/version`, {

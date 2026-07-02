@@ -1,5 +1,6 @@
 import { getPipelexClient } from "@/lib/pipelexClient";
 import { classifyPipelineError, type PipelineError, type PipelineErrorKind } from "@/lib/errors";
+import { readClassifyEnv } from "@/lib/serverEnv";
 import {
   RunFailedError,
   isTerminalRunStatus,
@@ -7,10 +8,6 @@ import {
   type RunStatus,
   type StartOptions,
 } from "@pipelex/sdk";
-
-function env() {
-  return { apiUrl: process.env.PIPELEX_BASE_URL, hasApiKey: Boolean(process.env.PIPELEX_API_KEY) };
-}
 
 export type StartOutcome = { ok: true; runId: string } | { ok: false; error: PipelineError };
 
@@ -55,7 +52,7 @@ export async function startDurableRun(
     const { pipeline_run_id } = await getPipelexClient().start(options);
     return { ok: true, runId: pipeline_run_id };
   } catch (err) {
-    return { ok: false, error: classifyPipelineError(err, env()) };
+    return { ok: false, error: classifyPipelineError(err, readClassifyEnv()) };
   }
 }
 
@@ -103,7 +100,10 @@ export async function pollDurableRun<T>(
       // A genuine run failure is terminal — never retried.
       return {
         ok: false,
-        error: classifyPipelineError(new RunFailedError(res.message, runId, res.status), env()),
+        error: classifyPipelineError(
+          new RunFailedError(res.message, runId, res.status),
+          readClassifyEnv(),
+        ),
         transient: false,
       };
     }
@@ -116,7 +116,7 @@ export async function pollDurableRun<T>(
       retryAfterSeconds: res.retry_after_seconds ?? null,
     };
   } catch (err) {
-    const error = classifyPipelineError(err, env());
+    const error = classifyPipelineError(err, readClassifyEnv());
     return { ok: false, error, transient: isTransientPollError(error.kind) };
   }
 }
