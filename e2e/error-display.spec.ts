@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { HOSTED_API_BASE_URL } from "./liveApi";
+import { DEFAULT_API_BASE_URL } from "@pipelex/sdk";
 
 // Verifies the developer-friendly error UX when the Pipelex API isn't reachable.
 // Runs against whatever PIPELEX_BASE_URL the dev server is using — e.g. a
@@ -24,7 +24,7 @@ test.describe("offline-API error display", () => {
     // back to the SDK's hosted default when PIPELEX_BASE_URL is unset, so the
     // probe must too — otherwise this spec runs while the app hits a live
     // (hosted) API and renders an auth error instead of api_unreachable.
-    const apiUrl = process.env.PIPELEX_BASE_URL ?? HOSTED_API_BASE_URL;
+    const apiUrl = process.env.PIPELEX_BASE_URL ?? DEFAULT_API_BASE_URL;
     let reachable = false;
     try {
       const res = await fetch(`${apiUrl.replace(/\/+$/, "")}/v1/version`, {

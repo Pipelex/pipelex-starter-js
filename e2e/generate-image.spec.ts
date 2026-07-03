@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
-import { HOSTED_API_BASE_URL, requireLiveApi } from "./liveApi";
+import { DEFAULT_API_BASE_URL } from "@pipelex/sdk";
+import { requireLiveApi } from "./liveApi";
 
 // These tests hit the live Pipelex API configured by PIPELEX_BASE_URL +
 // PIPELEX_API_KEY in `.env.local`, and cost an image-generation call. Image
@@ -34,7 +35,7 @@ test("blocking mode: demonstrates the ~30s hosted cap with a timeout error", asy
   // env-suffixed gateways, e.g. api-dev / api-staging). A self-hosted runner
   // has no such cap — blocking mode may simply succeed there — so this spec
   // only makes sense against a hosted gateway.
-  const baseUrl = (process.env.PIPELEX_BASE_URL ?? HOSTED_API_BASE_URL).replace(/\/+$/, "");
+  const baseUrl = (process.env.PIPELEX_BASE_URL ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
   test.skip(
     !/^https:\/\/api(-\w+)?\.pipelex\.com$/.test(baseUrl),
     "Hosted gateway only: self-hosted deployments may not enforce the ~30s blocking cap.",
