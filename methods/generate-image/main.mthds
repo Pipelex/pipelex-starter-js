@@ -7,5 +7,5 @@ type        = "PipeImgGen"
 description = "Generate an image from a user-provided text prompt"
 inputs      = { image_prompt = "Text" }
 output      = "Image"
-model       = "gpt-image-1-mini"
+model       = "gpt-image-2"
 prompt      = "$image_prompt"

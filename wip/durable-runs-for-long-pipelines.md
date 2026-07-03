@@ -1,10 +1,12 @@
 # Follow-up: switch long-running pipelines to durable runs
 
+> **✅ Resolved.** Implemented as the dual-mode design in `TODOS.md`: both modes ship side by side behind a per-example `<ModeToggle>`, unified by the `useRun` hook. Durable (`start` + poll) is the default and survives the ~30s cap; blocking (`execute`) is kept to demonstrate the limit (a classified `execute_timeout`). One `findOutputContent` narrower reads `main_stuff ?? pipe_output`. See `CLAUDE.md` → "Pipelex Integration Pattern" for the canonical pattern. The notes below are the original problem statement, kept for context.
+
 **Source:** PR #7 review comment from `chatgpt-codex-connector` (P2) — "Switch image generation to durable runs."
 
 ## The problem
 
-The migration to `@pipelex/sdk` wired every server action to `client.execute(...)`, which hits the blocking `POST /v1/execute` path. Behind the **hosted gateway** (`api.pipelex.com`, the default when `PIPELEX_API_URL` is unset), synchronous requests are cut off at **~30s**. Long-running pipelines exceed that ceiling and surface as a timeout error instead of returning a result.
+The migration to `@pipelex/sdk` wired every server action to `client.execute(...)`, which hits the blocking `POST /v1/execute` path. Behind the **hosted gateway** (`api.pipelex.com`, the default when `PIPELEX_BASE_URL` is unset), synchronous requests are cut off at **~30s**. Long-running pipelines exceed that ceiling and surface as a timeout error instead of returning a result.
 
 Image generation is the clear offender: `e2e/generate-image.spec.ts` already allows up to **150s** for the run. So with the default hosted setup, the image example fails rather than returning an image.
 

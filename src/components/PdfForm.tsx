@@ -1,17 +1,24 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
-import { runSummarizePdfPipeline } from "@/actions/runSummarizePdfPipeline";
+import { useRef, useState } from "react";
+import {
+  pollSummarizePdfRun,
+  runSummarizePdfBlocking,
+  startSummarizePdfRun,
+} from "@/actions/runSummarizePdfPipeline";
 import { fileToDataUrl } from "@/lib/clientFile";
 import {
   MAX_PDF_BYTES,
   fileInputErrorToPipelineError,
   type FileInputError,
 } from "@/lib/fileEncoding";
-import type { DocumentSummary } from "@/types/summarizePipeline";
 import { classifyTransportError, type PipelineError } from "@/lib/errors";
+import { DEFAULT_EXECUTION_MODE, type ExecutionMode } from "@/config";
+import { useRun } from "@/hooks/useRun";
 import { PdfSummaryResult } from "./PdfSummaryResult";
 import { ErrorDisplay } from "./ErrorDisplay";
+import { ModeToggle } from "./ModeToggle";
+import { RunStatus } from "./RunStatus";
 
 const SAMPLE_PDF_PATH = "/sample-invoice.pdf";
 
@@ -33,8 +40,8 @@ function inferPdfMime(file: File): string {
 
 /**
  * Fast client-side check so we don't base64-encode a huge or wrong-typed
- * file just to have the server reject it. `runSummarizePdfPipeline`
- * re-validates the data URL authoritatively — this is UX, not a gate.
+ * file just to have the server reject it. The Server Action re-validates the
+ * data URL authoritatively — this is UX, not a gate.
  */
 function checkFile(file: File): FileInputError | null {
   const mime = inferPdfMime(file);
@@ -56,25 +63,36 @@ function checkFile(file: File): FileInputError | null {
 export function PdfForm() {
   const [filename, setFilename] = useState<string | null>(null);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
-  const [summary, setSummary] = useState<DocumentSummary | null>(null);
-  const [error, setError] = useState<PipelineError | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [mode, setMode] = useState<ExecutionMode>(DEFAULT_EXECUTION_MODE);
+  // File-selection errors (wrong type, too large, FileReader failure) live
+  // separately from the run state: they happen *before* a run, so there is no
+  // useRun error to carry them. The run's own error comes from `state`.
+  const [fileError, setFileError] = useState<PipelineError | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Bumped on every `acceptFile` call; lets us ignore a stale FileReader read
   // when the user picks a second file before the first finishes encoding.
   const selectionTokenRef = useRef(0);
 
+  const { state, run, reset } = useRun({
+    mode,
+    blocking: runSummarizePdfBlocking,
+    start: startSummarizePdfRun,
+    poll: pollSummarizePdfRun,
+  });
+
+  const running = state.phase === "running";
+
   /** Validate, then base64-encode a chosen PDF into a data URL for submission. */
   async function acceptFile(file: File) {
     const token = ++selectionTokenRef.current;
     const isCurrent = () => selectionTokenRef.current === token;
-    setSummary(null);
-    setError(null);
-    const fileError = checkFile(file);
-    if (fileError) {
+    setFileError(null);
+    reset(); // clear any prior run result/error so only the new selection shows
+    const fileCheck = checkFile(file);
+    if (fileCheck) {
       setFilename(null);
       setDataUrl(null);
-      setError(fileInputErrorToPipelineError(fileError, file.name));
+      setFileError(fileInputErrorToPipelineError(fileCheck, file.name));
       return;
     }
     // Normalize an empty MIME (see `inferPdfMime`) so the encoded data URL
@@ -92,7 +110,7 @@ export function PdfForm() {
       if (!isCurrent()) return;
       setFilename(null);
       setDataUrl(null);
-      setError(classifyTransportError(err));
+      setFileError(classifyTransportError(err));
     }
   }
 
@@ -102,8 +120,11 @@ export function PdfForm() {
   }
 
   async function handleUseSample() {
-    setSummary(null);
-    setError(null);
+    // Clear any prior run result/error up-front: `acceptFile` resets too, but
+    // only on the success path — if the fetch below fails, an earlier summary
+    // would otherwise stay rendered next to the new error.
+    setFileError(null);
+    reset();
     try {
       const res = await fetch(SAMPLE_PDF_PATH);
       if (!res.ok) throw new Error(`Could not load the sample PDF (HTTP ${res.status})`);
@@ -112,31 +133,15 @@ export function PdfForm() {
       await acceptFile(new File([blob], "sample-invoice.pdf", { type: "application/pdf" }));
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (err) {
-      setError(classifyTransportError(err));
+      setFileError(classifyTransportError(err));
     }
   }
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!dataUrl) return;
-    setSummary(null);
-    setError(null);
-    startTransition(async () => {
-      try {
-        const result = await runSummarizePdfPipeline({
-          dataUrl,
-          filename: filename ?? "document.pdf",
-        });
-        if (result.ok) {
-          setSummary(result.summary);
-        } else {
-          setError(result.error);
-        }
-      } catch (err) {
-        // Transport-layer failure — see the matching comment in EntityForm.
-        setError(classifyTransportError(err));
-      }
-    });
+    setFileError(null);
+    run({ dataUrl, filename: filename ?? "document.pdf" });
   }
 
   return (
@@ -151,32 +156,36 @@ export function PdfForm() {
           type="file"
           accept="application/pdf"
           onChange={handleFileChange}
-          disabled={pending}
+          disabled={running}
           className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-slate-700"
         />
         <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={handleUseSample}
-            disabled={pending}
+            disabled={running}
             className="text-xs font-medium text-blue-700 underline disabled:opacity-50"
           >
             Use sample PDF
           </button>
           {filename && <span className="text-xs text-slate-500">Selected: {filename}</span>}
         </div>
+        <ModeToggle value={mode} onChange={setMode} disabled={running} />
         <button
           type="submit"
-          disabled={pending || !dataUrl}
+          disabled={running || !dataUrl}
           className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {pending ? "Summarizing…" : "Summarize PDF"}
+          {running ? "Summarizing…" : "Summarize PDF"}
         </button>
       </form>
 
-      {error && <ErrorDisplay error={error} />}
-
-      {summary && <PdfSummaryResult summary={summary} />}
+      {running && (
+        <RunStatus status={state.status} elapsedMs={state.elapsedMs} degraded={state.degraded} />
+      )}
+      {fileError && <ErrorDisplay error={fileError} />}
+      {!fileError && state.phase === "error" && <ErrorDisplay error={state.error} />}
+      {state.phase === "done" && <PdfSummaryResult summary={state.output} />}
     </div>
   );
 }

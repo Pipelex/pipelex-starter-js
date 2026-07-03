@@ -1,6 +1,5 @@
 "use server";
 
-import { getPipelexClient } from "@/lib/pipelexClient";
 import { loadSummarizePdfBundle } from "@/lib/loadBundle";
 import {
   MAX_PDF_BYTES,
@@ -9,65 +8,68 @@ import {
   validateDataUrl,
 } from "@/lib/fileEncoding";
 import { parseDocumentSummary, type DocumentSummary } from "@/types/summarizePipeline";
-import { classifyPipelineError, type PipelineError } from "@/lib/errors";
+import { executeBlockingRun, type BlockingOutcome } from "@/lib/blockingRun";
+import {
+  pollDurableRun,
+  startDurableRun,
+  type PollOutcome,
+  type StartOutcome,
+} from "@/lib/durableRun";
+import type { PipelineError } from "@/lib/errors";
+import type { StartOptions } from "@pipelex/sdk";
 
-export type RunSummarizePdfPipelineResult =
-  | { ok: true; summary: DocumentSummary }
-  | { ok: false; error: PipelineError };
+const PIPE_CODE = "summarize_pdf";
+
+/** Serializable PDF input — encoded client-side by `fileToDataUrl` (no `File`). */
+type SummarizePdfInput = { dataUrl: string; filename: string };
 
 /**
- * Server Action: summarize an uploaded PDF.
- *
- * The PDF arrives as a base64 data URL — encoded client-side by
- * `fileToDataUrl`, because Server Actions only accept serializable
- * arguments (a `File` would not survive the boundary). File-size and
- * MIME problems are caught here as authoritative pre-flight validation and
- * returned inline; they never reach `classifyPipelineError`, which only
- * handles thrown SDK errors.
+ * Empty-input + authoritative file pre-flight, shared by both paths. The PDF
+ * arrives as a base64 data URL; size/MIME are validated here (the client's own
+ * check is just UX). Returns the error to short-circuit with, or null to proceed.
  */
-export async function runSummarizePdfPipeline(input: {
-  dataUrl: string;
-  filename: string;
-}): Promise<RunSummarizePdfPipelineResult> {
-  const { dataUrl, filename } = input;
-
-  if (!dataUrl) {
+function preflight(input: SummarizePdfInput): PipelineError | null {
+  if (!input.dataUrl) {
     return {
-      ok: false,
-      error: {
-        kind: "bad_request",
-        title: "PDF required",
-        message: "Choose a PDF file (or use the sample) to summarize.",
-        details: "Empty file input",
-      },
+      kind: "bad_request",
+      title: "PDF required",
+      message: "Choose a PDF file (or use the sample) to summarize.",
+      details: "Empty file input",
     };
   }
-
-  const fileError = validateDataUrl(dataUrl, {
+  const fileError = validateDataUrl(input.dataUrl, {
     allowedMimes: ["application/pdf"],
     maxBytes: MAX_PDF_BYTES,
   });
-  if (fileError) {
-    return { ok: false, error: fileInputErrorToPipelineError(fileError, filename) };
-  }
+  if (fileError) return fileInputErrorToPipelineError(fileError, input.filename);
+  return null;
+}
 
-  try {
-    const bundle = await loadSummarizePdfBundle();
-    const client = getPipelexClient();
-    const response = await client.execute({
-      pipe_code: "summarize_pdf",
-      mthds_contents: [bundle],
-      inputs: { document: buildDocumentInput(dataUrl, filename || "document.pdf") },
-    });
-    const summary = parseDocumentSummary(response.pipe_output);
-    return { ok: true, summary };
-  } catch (err) {
-    return {
-      ok: false,
-      error: classifyPipelineError(err, {
-        apiUrl: process.env.PIPELEX_API_URL,
-        hasApiKey: Boolean(process.env.PIPELEX_API_KEY),
-      }),
-    };
-  }
+async function buildOptions(input: SummarizePdfInput): Promise<StartOptions> {
+  return {
+    pipe_code: PIPE_CODE,
+    mthds_contents: [await loadSummarizePdfBundle()],
+    inputs: { document: buildDocumentInput(input.dataUrl, input.filename || "document.pdf") },
+  };
+}
+
+/** BLOCKING path: summarize an uploaded PDF synchronously (`POST /v1/execute`). */
+export async function runSummarizePdfBlocking(
+  input: SummarizePdfInput,
+): Promise<BlockingOutcome<DocumentSummary>> {
+  const error = preflight(input);
+  if (error) return { ok: false, error };
+  return executeBlockingRun(() => buildOptions(input), parseDocumentSummary);
+}
+
+/** DURABLE path — start the summarize run and return its id to poll. */
+export async function startSummarizePdfRun(input: SummarizePdfInput): Promise<StartOutcome> {
+  const error = preflight(input);
+  if (error) return { ok: false, error };
+  return startDurableRun(() => buildOptions(input));
+}
+
+/** DURABLE path — poll one tick of a started summarize run by id. */
+export async function pollSummarizePdfRun(runId: string): Promise<PollOutcome<DocumentSummary>> {
+  return pollDurableRun(runId, parseDocumentSummary);
 }

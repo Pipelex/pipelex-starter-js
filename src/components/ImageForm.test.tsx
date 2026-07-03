@@ -1,13 +1,35 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { ImageForm } from "./ImageForm";
-import { runGenerateImagePipeline } from "@/actions/runGenerateImagePipeline";
+import {
+  pollGenerateImageRun,
+  runGenerateImageBlocking,
+  startGenerateImageRun,
+} from "@/actions/runGenerateImagePipeline";
 
 vi.mock("@/actions/runGenerateImagePipeline", () => ({
-  runGenerateImagePipeline: vi.fn(),
+  runGenerateImageBlocking: vi.fn(),
+  startGenerateImageRun: vi.fn(),
+  pollGenerateImageRun: vi.fn(),
 }));
 
-const mockedAction = vi.mocked(runGenerateImagePipeline);
+const blocking = vi.mocked(runGenerateImageBlocking);
+const start = vi.mocked(startGenerateImageRun);
+const poll = vi.mocked(pollGenerateImageRun);
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  blocking.mockReset();
+  start.mockReset();
+  poll.mockReset();
+});
+afterEach(() => vi.useRealTimers());
+
+async function flush(ms = 0) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+}
 
 function submitForm() {
   const form = screen.getByLabelText(/image prompt/i).closest("form");
@@ -15,56 +37,56 @@ function submitForm() {
   fireEvent.submit(form);
 }
 
-describe("ImageForm", () => {
-  beforeEach(() => {
-    mockedAction.mockReset();
-  });
+const IMAGE = {
+  url: "https://cdn.example/x.png",
+  publicUrl: null,
+  mimeType: "image/png",
+  caption: null,
+};
 
-  it("renders the generated image on success", async () => {
-    mockedAction.mockResolvedValueOnce({
-      ok: true,
-      image: {
-        url: "https://cdn.example/x.png",
-        publicUrl: null,
-        mimeType: "image/png",
-        caption: null,
-      },
-    });
+describe("ImageForm", () => {
+  it("durable mode (default): renders the generated image", async () => {
+    start.mockResolvedValueOnce({ ok: true, runId: "run-1" });
+    poll.mockResolvedValueOnce({ ok: true, state: "completed", output: IMAGE });
 
     render(<ImageForm />);
     submitForm();
 
-    expect(await screen.findByRole("img", { name: /generated image/i })).toBeInTheDocument();
+    await flush();
+    expect(screen.getByRole("img", { name: /generated image/i })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("renders the structured error when the action returns ok:false", async () => {
-    mockedAction.mockResolvedValueOnce({
+  it("blocking mode demonstrates the ~30s cap (execute_timeout error)", async () => {
+    blocking.mockResolvedValueOnce({
       ok: false,
       error: {
-        kind: "server_error",
-        title: "Image model unavailable",
-        message: "no backend",
-        details: "ApiResponseError: HTTP 500",
+        kind: "execute_timeout",
+        title: "Pipeline exceeded the ~30s blocking limit",
+        message: "The blocking request ran for ~30s before the hosted gateway cut it off.",
+        hint: { summary: "Switch this example to Durable mode." },
+        details: "PipelineExecuteTimeoutError",
       },
     });
 
     render(<ImageForm />);
+    fireEvent.click(screen.getByRole("radio", { name: "Blocking" }));
     submitForm();
 
-    expect(await screen.findByRole("alert")).toBeInTheDocument();
-    expect(screen.getByText("Image model unavailable")).toBeInTheDocument();
+    await flush();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText(/exceeded the ~30s/i)).toBeInTheDocument();
+    expect(start).not.toHaveBeenCalled();
   });
 
-  it("surfaces a transport_error when the awaited action rejects", async () => {
-    // Regression guard, mirroring EntityForm: a rejected await inside
-    // startTransition must route through <ErrorDisplay>, not React's boundary.
-    mockedAction.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+  it("surfaces a transport_error when the awaited blocking action rejects", async () => {
+    blocking.mockRejectedValueOnce(new TypeError("Failed to fetch"));
 
     render(<ImageForm />);
+    fireEvent.click(screen.getByRole("radio", { name: "Blocking" }));
     submitForm();
 
-    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    await flush();
     expect(screen.getByText(/Could not reach the server/i)).toBeInTheDocument();
     expect(screen.getByText(/Failed to fetch/i)).toBeInTheDocument();
   });

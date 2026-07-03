@@ -16,6 +16,17 @@ export function ErrorDisplay({ error }: ErrorDisplayProps) {
         <p className="mt-1 text-red-800">{error.message}</p>
       </div>
 
+      {error.apiMessage && (
+        <figure className="rounded-md border border-red-200 bg-white/70 p-3">
+          <figcaption className="text-xs font-medium uppercase tracking-wide text-red-700">
+            What the Pipelex API returned
+          </figcaption>
+          <blockquote className="mt-1 border-l-2 border-red-300 pl-3 italic text-red-800">
+            {error.apiMessage}
+          </blockquote>
+        </figure>
+      )}
+
       {error.hint && (
         <div className="rounded-md border border-red-200 bg-white p-3">
           <p className="font-medium text-slate-800">{error.hint.summary}</p>
