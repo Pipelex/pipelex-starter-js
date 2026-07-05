@@ -21,15 +21,11 @@ const OPTIONS = {
 
 describe("executeBlockingRun", () => {
   it("calls execute with the built options, adapts the response to RunResults, and narrows it", async () => {
+    // `execute` returns a PipelexExecuteResult whose `.main_stuff` the SDK has already
+    // resolved out of the working memory — the blocking path reads it like the durable one.
     execute.mockResolvedValueOnce({
       pipeline_run_id: "run-1",
-      pipe_output: {
-        pipeline_run_id: "run-1",
-        working_memory: {
-          root: { e: { content: { people: ["Ada"], orgs: [], dates: [] } } },
-          aliases: {},
-        },
-      },
+      main_stuff: { people: ["Ada"], orgs: [], dates: [] },
     });
 
     const result = await executeBlockingRun(async () => OPTIONS, parseEntities);
@@ -71,10 +67,7 @@ describe("executeBlockingRun", () => {
   it("classifies a narrower throw (image content with no URL) as bad_image_output", async () => {
     execute.mockResolvedValueOnce({
       pipeline_run_id: "run-1",
-      pipe_output: {
-        pipeline_run_id: "run-1",
-        working_memory: { root: { img: { content: { caption: "no url" } } }, aliases: {} },
-      },
+      main_stuff: { caption: "no url" },
     });
     const result = await executeBlockingRun(async () => OPTIONS, parseGeneratedImage);
     expect(result.ok).toBe(false);

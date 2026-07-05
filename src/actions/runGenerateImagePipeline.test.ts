@@ -28,16 +28,8 @@ const PARSED = {
   caption: null,
 };
 
-const BLOCKING_RESPONSE = {
-  pipeline_run_id: "run-1",
-  pipe_output: {
-    pipeline_run_id: "run-1",
-    working_memory: {
-      root: { image: { concept: "native.Image", content: IMAGE_CONTENT } },
-      aliases: {},
-    },
-  },
-};
+// Blocking execute returns a PipelexExecuteResult with the resolved `main_stuff`.
+const BLOCKING_RESPONSE = { pipeline_run_id: "run-1", main_stuff: IMAGE_CONTENT };
 
 beforeEach(() => {
   execute.mockReset();
@@ -68,13 +60,7 @@ describe("runGenerateImageBlocking", () => {
   });
 
   it("classifies a missing image URL as bad_image_output", async () => {
-    execute.mockResolvedValueOnce({
-      pipeline_run_id: "run-1",
-      pipe_output: {
-        pipeline_run_id: "run-1",
-        working_memory: { root: { image: { content: { caption: "no url" } } }, aliases: {} },
-      },
-    });
+    execute.mockResolvedValueOnce({ pipeline_run_id: "run-1", main_stuff: { caption: "no url" } });
     const result = await runGenerateImageBlocking("a red bicycle");
     expect(result.ok).toBe(false);
     if (result.ok) return;

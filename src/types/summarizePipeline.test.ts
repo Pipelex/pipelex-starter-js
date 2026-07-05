@@ -2,22 +2,13 @@ import { describe, it, expect } from "vitest";
 import type { RunResults } from "@pipelex/sdk";
 import { parseDocumentSummary } from "./summarizePipeline";
 
+/** Both paths deliver the resolved output on `main_stuff` (the SDK digs it out on the blocking path too). */
 function mainStuff(content: unknown): RunResults {
   return { pipeline_run_id: "run-123", main_stuff: content };
 }
 
-function pipeOutput(content: unknown): RunResults {
-  return {
-    pipeline_run_id: "run-123",
-    pipe_output: {
-      working_memory: { root: { summary: { concept: "X", content } }, aliases: {} },
-      pipeline_run_id: "run-123",
-    },
-  };
-}
-
 describe("parseDocumentSummary", () => {
-  it("extracts a DocumentSummary from durable main_stuff (snake→camel)", () => {
+  it("extracts a DocumentSummary from main_stuff (snake→camel)", () => {
     const result = parseDocumentSummary(
       mainStuff({
         title: "Q1 Revenue Report",
@@ -32,13 +23,6 @@ describe("parseDocumentSummary", () => {
     });
   });
 
-  it("extracts a DocumentSummary from blocking pipe_output", () => {
-    const result = parseDocumentSummary(
-      pipeOutput({ title: "Memo", doc_type: "memo", key_points: ["one"] }),
-    );
-    expect(result).toEqual({ title: "Memo", docType: "memo", keyPoints: ["one"] });
-  });
-
   it("accepts an empty key_points list", () => {
     const result = parseDocumentSummary(
       mainStuff({ title: "Memo", doc_type: "memo", key_points: [] }),
@@ -46,8 +30,9 @@ describe("parseDocumentSummary", () => {
     expect(result.keyPoints).toEqual([]);
   });
 
-  it("throws when neither main_stuff nor pipe_output is present", () => {
-    expect(() => parseDocumentSummary({ pipeline_run_id: "x" })).toThrow();
+  it("throws when main_stuff is not the expected object (a list output / scalar)", () => {
+    expect(() => parseDocumentSummary(mainStuff(null))).toThrow();
+    expect(() => parseDocumentSummary(mainStuff([{ title: "T" }]))).toThrow();
   });
 
   it("throws when no output content matches the DocumentSummary shape", () => {

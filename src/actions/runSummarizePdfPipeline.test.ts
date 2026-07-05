@@ -24,13 +24,8 @@ const PDF_DATA_URL = "data:application/pdf;base64,JVBERi0xLjQK";
 const SUMMARY = { title: "Invoice", doc_type: "invoice", key_points: ["Total $1,728"] };
 const PARSED = { title: "Invoice", docType: "invoice", keyPoints: ["Total $1,728"] };
 
-const BLOCKING_RESPONSE = {
-  pipeline_run_id: "run-1",
-  pipe_output: {
-    pipeline_run_id: "run-1",
-    working_memory: { root: { s: { content: SUMMARY } }, aliases: {} },
-  },
-};
+// Blocking execute returns a PipelexExecuteResult with the resolved `main_stuff`.
+const BLOCKING_RESPONSE = { pipeline_run_id: "run-1", main_stuff: SUMMARY };
 
 const DOC_INPUT = {
   document: {

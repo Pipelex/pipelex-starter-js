@@ -25,15 +25,9 @@ beforeEach(() => {
 
 const ENTITIES = { people: ["Ada"], orgs: ["ACME"], dates: ["1843"] };
 
-// Blocking execute returns the `{ working_memory: { root } }` shape.
-const BLOCKING_RESPONSE = {
-  pipeline_run_id: "run-1",
-  pipe_output: {
-    pipeline_run_id: "run-1",
-    working_memory: { root: { e: { content: ENTITIES } }, aliases: {} },
-  },
-};
-// Durable completed result returns the bare `main_stuff` content.
+// Blocking execute returns a PipelexExecuteResult with the resolved `main_stuff`.
+const BLOCKING_RESPONSE = { pipeline_run_id: "run-1", main_stuff: ENTITIES };
+// Durable completed result returns the same bare `main_stuff` content.
 const COMPLETED_RESULT = { pipeline_run_id: "run-1", main_stuff: ENTITIES };
 
 describe("runHelloBlocking", () => {

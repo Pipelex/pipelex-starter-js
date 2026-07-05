@@ -3,24 +3,15 @@ import type { RunResults } from "@pipelex/sdk";
 import { parseGeneratedImage } from "./generateImagePipeline";
 import { BadImageOutputError } from "./pipelineError";
 
+/** Both paths deliver the resolved output on `main_stuff` (the SDK digs it out on the blocking path too). */
 function mainStuff(content: unknown): RunResults {
   return { pipeline_run_id: "run-123", main_stuff: content };
 }
 
-function pipeOutput(content: unknown): RunResults {
-  return {
-    pipeline_run_id: "run-123",
-    pipe_output: {
-      working_memory: { root: { image: { concept: "native.Image", content } }, aliases: {} },
-      pipeline_run_id: "run-123",
-    },
-  };
-}
-
 describe("parseGeneratedImage", () => {
-  it("extracts an image with a remote URL from blocking pipe_output", () => {
+  it("extracts an image with a remote URL and web public_url", () => {
     const result = parseGeneratedImage(
-      pipeOutput({
+      mainStuff({
         url: "https://storage.pipelex.com/generated/abc.png",
         public_url: "https://cdn.pipelex.com/abc.png",
         mime_type: "image/png",
@@ -99,7 +90,10 @@ describe("parseGeneratedImage", () => {
     }
   });
 
-  it("throws when neither main_stuff nor pipe_output is present", () => {
-    expect(() => parseGeneratedImage({ pipeline_run_id: "x" })).toThrow(BadImageOutputError);
+  it("throws when main_stuff is not the expected object (a list output / scalar)", () => {
+    expect(() => parseGeneratedImage(mainStuff(null))).toThrow(BadImageOutputError);
+    expect(() => parseGeneratedImage(mainStuff([{ url: "https://x" }]))).toThrow(
+      BadImageOutputError,
+    );
   });
 });

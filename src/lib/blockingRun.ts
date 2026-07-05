@@ -17,9 +17,12 @@ export type BlockingOutcome<T> = { ok: true; output: T } | { ok: false; error: P
  * `PipelineExecuteTimeoutError`; that (and every other SDK error) is caught and
  * classified, so the caller always gets a structured `BlockingOutcome`.
  *
- * The execute response is adapted onto `RunResults` (`main_stuff` undefined,
- * `pipe_output` carried through) so the SAME narrower serves blocking and
- * durable — `findOutputContent` falls to the `pipe_output` search arm here.
+ * The execute response already carries the resolved main output on `.main_stuff`
+ * (the SDK digs it out of the working memory), so it adapts onto `RunResults`
+ * with the SAME resolved `main_stuff` the durable path delivers — one narrower,
+ * one accessor, no `pipe_output` search. A completed run that named no locatable
+ * main stuff throws `MissingMainStuffError` on that access, which the catch below
+ * classifies like any other SDK error.
  */
 export async function executeBlockingRun<T>(
   buildOptions: () => Promise<StartOptions>,
@@ -30,10 +33,7 @@ export async function executeBlockingRun<T>(
     const response = await getPipelexClient().execute(options);
     const adapted: RunResults = {
       pipeline_run_id: response.pipeline_run_id,
-      // `DictPipeOutput` is the concrete `{ working_memory, pipeline_run_id }`;
-      // `RunResults.pipe_output` is the looser `Record<string, unknown>` the
-      // narrower's search arm reads. Widen through `unknown` (no index sig).
-      pipe_output: response.pipe_output as unknown as Record<string, unknown>,
+      main_stuff: response.main_stuff,
     };
     return { ok: true, output: parse(adapted) };
   } catch (err) {
