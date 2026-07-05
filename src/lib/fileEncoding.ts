@@ -97,14 +97,14 @@ export function fileInputErrorToPipelineError(
   };
 }
 
-/** A Pipelex `Document` input envelope, as accepted by `executePipeline`. */
+/** A Pipelex `Document` input envelope, as accepted by `execute`. */
 export type DocumentInput = {
   concept: "Document";
   content: { url: string; filename: string; mime_type: string };
 };
 
 /**
- * Build the `Document` input envelope for `executePipeline`. The Pipelex API
+ * Build the `Document` input envelope for `execute`. The Pipelex API
  * decodes the base64 data URL server-side and uploads it to storage, so the
  * app never has to host the file itself.
  */

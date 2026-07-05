@@ -1,7 +1,21 @@
 import { describe, it, expect } from "vitest";
-import { ApiResponseError, ApiUnreachableError, ClientAuthenticationError } from "mthds";
+import {
+  ApiResponseError,
+  ApiUnreachableError,
+  ClientAuthenticationError,
+  PipelineExecuteTimeoutError,
+  RunFailedError,
+  RunLifecycleUnavailableError,
+  RunStillRunningError,
+  RunTimeoutError,
+} from "@pipelex/sdk";
 import { BadImageOutputError, BadPipelineOutputError } from "@/types/pipelineError";
-import { classifyPipelineError, classifyTransportError, type ClassifyEnv } from "./errors";
+import {
+  buildClientTimeoutError,
+  classifyPipelineError,
+  classifyTransportError,
+  type ClassifyEnv,
+} from "./errors";
 
 const LOCAL_ENV: ClassifyEnv = { apiUrl: "http://localhost:8081", hasApiKey: true };
 const CLOUD_ENV: ClassifyEnv = { apiUrl: "https://api.pipelex.com", hasApiKey: true };
@@ -31,7 +45,7 @@ describe("classifyPipelineError — ApiUnreachableError", () => {
     const result = classifyPipelineError(err, CLOUD_ENV);
     expect(result.kind).toBe("api_unreachable");
     expect(result.message).toContain("https://api.pipelex.com");
-    expect(result.hint?.summary).toMatch(/PIPELEX_API_URL/);
+    expect(result.hint?.summary).toMatch(/PIPELEX_BASE_URL/);
     expect(result.hint?.code).toContain("https://api.pipelex.com");
   });
 
@@ -57,6 +71,8 @@ describe("classifyPipelineError — ApiResponseError 401/403", () => {
       JSON.stringify({ detail: "Invalid authentication token" }),
       undefined,
       "Invalid authentication token",
+      undefined,
+      undefined,
     );
     const result = classifyPipelineError(err, {
       apiUrl: "https://api.pipelex.com",
@@ -76,6 +92,8 @@ describe("classifyPipelineError — ApiResponseError 401/403", () => {
       JSON.stringify({ detail: "Invalid authentication token" }),
       undefined,
       "Invalid authentication token",
+      undefined,
+      undefined,
     );
     const result = classifyPipelineError(err, {
       apiUrl: "https://api.pipelex.com",
@@ -86,7 +104,17 @@ describe("classifyPipelineError — ApiResponseError 401/403", () => {
   });
 
   it("treats 403 like 401", () => {
-    const err = new ApiResponseError("forbidden", "x", 403, "Forbidden", "", undefined, undefined);
+    const err = new ApiResponseError(
+      "forbidden",
+      "x",
+      403,
+      "Forbidden",
+      "",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
     const result = classifyPipelineError(err, { apiUrl: "x", hasApiKey: true });
     expect(result.kind).toBe("auth_invalid");
   });
@@ -102,6 +130,8 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
       "",
       "CredentialsError",
       "Missing OPENAI_API_KEY",
+      undefined,
+      undefined,
     );
     const result = classifyPipelineError(err, LOCAL_ENV);
     expect(result.kind).toBe("server_error");
@@ -119,6 +149,8 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
       "",
       "PipeOperatorModelAvailabilityError",
       "no backend",
+      undefined,
+      undefined,
     );
     const result = classifyPipelineError(err, LOCAL_ENV);
     expect(result.kind).toBe("server_error");
@@ -132,7 +164,17 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
       "PipelexInterpreterError",
       "MthdsDecodeError",
     ]) {
-      const err = new ApiResponseError("...", "x", 500, "", "", errorType, `${errorType} message`);
+      const err = new ApiResponseError(
+        "...",
+        "x",
+        500,
+        "",
+        "",
+        errorType,
+        `${errorType} message`,
+        undefined,
+        undefined,
+      );
       const result = classifyPipelineError(err, LOCAL_ENV);
       expect(result.kind).toBe("server_error");
       expect(result.title).toContain("pipeline definition");
@@ -140,24 +182,37 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
   });
 
   it("falls through to generic server error for unknown errorType", () => {
-    const err = new ApiResponseError("...", "x", 500, "", "", "MysteryError", "boom");
+    const err = new ApiResponseError(
+      "...",
+      "x",
+      500,
+      "",
+      "",
+      "MysteryError",
+      "boom",
+      undefined,
+      undefined,
+    );
     const result = classifyPipelineError(err, LOCAL_ENV);
     expect(result.kind).toBe("server_error");
     expect(result.title).toContain("HTTP 500");
     expect(result.message).toContain("boom");
   });
 
-  it("includes errorType and serverMessage in details", () => {
+  it("includes the endpoint URL, errorType, and serverMessage in details", () => {
     const err = new ApiResponseError(
       "...",
-      "x",
+      "http://localhost:9999",
       500,
       "Internal Server Error",
       '{"detail":{"error_type":"X","message":"y"}}',
       "X",
       "y",
+      undefined,
+      undefined,
     );
     const result = classifyPipelineError(err, LOCAL_ENV);
+    expect(result.details).toContain("API URL: http://localhost:9999");
     expect(result.details).toContain("error_type: X");
     expect(result.details).toContain("server message: y");
   });
@@ -173,11 +228,39 @@ describe("classifyPipelineError — ApiResponseError 4xx (non-auth)", () => {
       "",
       undefined,
       "missing field 'foo'",
+      undefined,
+      undefined,
     );
     const result = classifyPipelineError(err, LOCAL_ENV);
     expect(result.kind).toBe("bad_request");
     expect(result.title).toContain("HTTP 422");
     expect(result.message).toBe("missing field 'foo'");
+  });
+
+  it("reframes a 400 StartRequiresAsyncOrchestration as a durable-execution error, keeping the API's own message", () => {
+    const apiMsg =
+      "Orchestration mode 'direct' cannot honor fire-and-forget delivery: /start requires an async-capable orchestration, and this deployment has none. Use /execute (synchronous) instead.";
+    const err = new ApiResponseError(
+      "...",
+      "http://localhost:8000",
+      400,
+      "Bad Request",
+      "",
+      "StartRequiresAsyncOrchestration",
+      apiMsg,
+      undefined,
+      undefined,
+    );
+    const result = classifyPipelineError(err, LOCAL_ENV);
+    // Re-framed into the starter's vocabulary (durable execution), not a generic bad_request.
+    expect(result.kind).toBe("lifecycle_unavailable");
+    expect(result.title).toContain("Durable");
+    expect(result.message).toContain("http://localhost:8000");
+    expect(result.message).toMatch(/durable execution/i);
+    // The API's verbatim message is preserved separately for the template to show.
+    expect(result.apiMessage).toBe(apiMsg);
+    expect(result.hint?.code).toContain("PIPELEX_BASE_URL");
+    expect(result.details).toContain("error_type: StartRequiresAsyncOrchestration");
   });
 });
 
@@ -250,6 +333,99 @@ describe("classifyPipelineError — unknown fallback", () => {
   });
 });
 
+describe("classifyPipelineError — run-lifecycle errors", () => {
+  it("classifies PipelineExecuteTimeoutError into execute_timeout pointing at Durable mode", () => {
+    const result = classifyPipelineError(new PipelineExecuteTimeoutError(31_000), LOCAL_ENV);
+    expect(result.kind).toBe("execute_timeout");
+    expect(result.title).toMatch(/30s/);
+    expect(result.hint?.summary).toMatch(/Durable/i);
+  });
+
+  it("maps a blocking-path 502/504 gateway response to execute_timeout", () => {
+    for (const status of [502, 504]) {
+      const err = new ApiResponseError(
+        `API POST /v1/execute failed (${status})`,
+        "https://api.pipelex.com",
+        status,
+        status === 502 ? "Bad Gateway" : "Gateway Timeout",
+        "",
+        undefined,
+        "The runner did not complete the request (/execute).",
+        undefined,
+        undefined,
+      );
+      const result = classifyPipelineError(err, CLOUD_ENV, { blocking: true });
+      expect(result.kind).toBe("execute_timeout");
+      expect(result.message).toMatch(/30s/);
+      expect(result.hint?.summary).toMatch(/Durable/i);
+      expect(result.details).toContain("The runner did not complete the request");
+    }
+  });
+
+  it("leaves a durable-path (non-blocking) 502 as a generic server_error", () => {
+    const err = new ApiResponseError(
+      "API GET /v1/runs/run-1/status failed (502)",
+      "https://api.pipelex.com",
+      502,
+      "Bad Gateway",
+      "",
+      undefined,
+      "Bad Gateway",
+      undefined,
+      undefined,
+    );
+    const result = classifyPipelineError(err, CLOUD_ENV);
+    expect(result.kind).toBe("server_error");
+  });
+
+  it("classifies RunStillRunningError into run_still_running", () => {
+    const result = classifyPipelineError(
+      new RunStillRunningError("still running", "run-1", 5, "/v1/runs/run-1"),
+      LOCAL_ENV,
+    );
+    expect(result.kind).toBe("run_still_running");
+    expect(result.message).toContain("run-1");
+    expect(result.details).toContain("Retry-After: 5s");
+    expect(result.details).toContain("/v1/runs/run-1");
+  });
+
+  it("classifies RunFailedError into run_failed with the failure message", () => {
+    const result = classifyPipelineError(new RunFailedError("boom", "run-1", "FAILED"), LOCAL_ENV);
+    expect(result.kind).toBe("run_failed");
+    expect(result.message).toContain("boom");
+    expect(result.details).toContain("run run-1 ended FAILED");
+  });
+
+  it("classifies RunTimeoutError into run_timeout", () => {
+    const result = classifyPipelineError(
+      new RunTimeoutError("timed out", "run-1", 1_200_000),
+      LOCAL_ENV,
+    );
+    expect(result.kind).toBe("run_timeout");
+    expect(result.message).toContain("run-1");
+  });
+
+  it("classifies RunLifecycleUnavailableError into lifecycle_unavailable pointing at Blocking mode", () => {
+    const result = classifyPipelineError(
+      new RunLifecycleUnavailableError("no run store", "http://localhost:8081"),
+      LOCAL_ENV,
+    );
+    expect(result.kind).toBe("lifecycle_unavailable");
+    expect(result.message).toContain("http://localhost:8081");
+    expect(result.hint?.summary).toMatch(/Blocking/i);
+    expect(result.hint?.code).toContain("PIPELEX_BASE_URL");
+  });
+});
+
+describe("buildClientTimeoutError", () => {
+  it("builds a run_timeout error from the client poll ceiling", () => {
+    const result = buildClientTimeoutError(150_000);
+    expect(result.kind).toBe("run_timeout");
+    expect(result.title).toMatch(/Stopped waiting/i);
+    expect(result.message).toContain("150s");
+  });
+});
+
 describe("classifyTransportError", () => {
   it("returns transport_error for fetch-style TypeError rejections", () => {
     const err = new TypeError("Failed to fetch");
@@ -278,7 +454,17 @@ describe("classifyTransportError", () => {
 describe("classifyPipelineError — details truncation", () => {
   it("truncates very long response bodies", () => {
     const huge = "x".repeat(5000);
-    const err = new ApiResponseError("...", "x", 500, "", huge, undefined, undefined);
+    const err = new ApiResponseError(
+      "...",
+      "x",
+      500,
+      "",
+      huge,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
     const result = classifyPipelineError(err, LOCAL_ENV);
     expect(result.details).toContain("truncated");
     expect(result.details.length).toBeLessThan(huge.length + 200);

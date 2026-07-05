@@ -1,85 +1,107 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ApiUnreachableError } from "mthds";
+import { ApiUnreachableError } from "@pipelex/sdk";
 
-const executePipeline = vi.fn();
+const execute = vi.fn();
+const start = vi.fn();
+const getRunStatus = vi.fn();
+const getRunResult = vi.fn();
 
 vi.mock("@/lib/loadBundle", () => ({
   loadHelloBundle: vi.fn().mockResolvedValue("DUMMY_BUNDLE_TOML"),
 }));
 
 vi.mock("@/lib/pipelexClient", () => ({
-  getPipelexClient: () => ({ executePipeline }),
+  getPipelexClient: () => ({ execute, start, getRunStatus, getRunResult }),
 }));
 
-import { runHelloPipeline } from "./runHelloPipeline";
+import { pollHelloRun, runHelloBlocking, startHelloRun } from "./runHelloPipeline";
 
 beforeEach(() => {
-  executePipeline.mockReset();
+  execute.mockReset();
+  start.mockReset();
+  getRunStatus.mockReset();
+  getRunResult.mockReset();
 });
 
-describe("runHelloPipeline", () => {
-  it("calls the SDK with the bundle, pipe code, and trimmed input on success", async () => {
-    executePipeline.mockResolvedValue({
-      pipeline_run_id: "run-1",
-      pipe_output: {
-        pipeline_run_id: "run-1",
-        working_memory: {
-          root: {
-            entities: { content: { people: ["Ada"], orgs: ["ACME"], dates: ["1843"] } },
-          },
-          aliases: {},
-        },
-      },
-    });
+const ENTITIES = { people: ["Ada"], orgs: ["ACME"], dates: ["1843"] };
 
-    const result = await runHelloPipeline("  hello world  ");
+// Blocking execute returns a PipelexExecuteResult with the resolved `main_stuff`.
+const BLOCKING_RESPONSE = { pipeline_run_id: "run-1", main_stuff: ENTITIES };
+// Durable completed result returns the same bare `main_stuff` content.
+const COMPLETED_RESULT = { pipeline_run_id: "run-1", main_stuff: ENTITIES };
 
-    expect(executePipeline).toHaveBeenCalledWith({
+describe("runHelloBlocking", () => {
+  it("calls execute with the bundle, pipe code, and trimmed input; returns narrowed output", async () => {
+    execute.mockResolvedValueOnce(BLOCKING_RESPONSE);
+    const result = await runHelloBlocking("  hello world  ");
+    expect(execute).toHaveBeenCalledWith({
       pipe_code: "extract_entities",
       mthds_contents: ["DUMMY_BUNDLE_TOML"],
       inputs: { text: "hello world" },
     });
-    expect(result).toEqual({
-      ok: true,
-      entities: { people: ["Ada"], orgs: ["ACME"], dates: ["1843"] },
-    });
+    expect(result).toEqual({ ok: true, output: ENTITIES });
   });
 
   it("returns a bad_request error on empty input without calling the SDK", async () => {
-    const result = await runHelloPipeline("   ");
+    const result = await runHelloBlocking("   ");
     expect(result).toEqual({
       ok: false,
-      error: expect.objectContaining({
-        kind: "bad_request",
-        title: "Input required",
-      }),
+      error: expect.objectContaining({ kind: "bad_request", title: "Input required" }),
     });
-    expect(executePipeline).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("classifies SDK errors into a structured PipelineError", async () => {
-    executePipeline.mockRejectedValue(
-      new ApiUnreachableError(
-        "Could not reach Pipelex API at http://localhost:8081 (ECONNREFUSED)",
-        "http://localhost:8081",
-        "ECONNREFUSED",
-      ),
+    execute.mockRejectedValueOnce(
+      new ApiUnreachableError("unreachable", "http://localhost:8081", "ECONNREFUSED"),
     );
-
-    const result = await runHelloPipeline("some text");
-
+    const result = await runHelloBlocking("some text");
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("api_unreachable");
-    expect(result.error.title).toBe("Pipelex API not reachable");
+  });
+});
+
+describe("startHelloRun", () => {
+  it("calls start with the bundle, pipe code, and trimmed input; returns the run id", async () => {
+    start.mockResolvedValueOnce({ pipeline_run_id: "run-1" });
+    const result = await startHelloRun("  hello  ");
+    expect(start).toHaveBeenCalledWith({
+      pipe_code: "extract_entities",
+      mthds_contents: ["DUMMY_BUNDLE_TOML"],
+      inputs: { text: "hello" },
+    });
+    expect(result).toEqual({ ok: true, runId: "run-1" });
   });
 
-  it("classifies unknown errors with the unknown fallback", async () => {
-    executePipeline.mockRejectedValue(new Error("API down"));
-    const result = await runHelloPipeline("some text");
+  it("returns a bad_request error on empty input without calling start", async () => {
+    const result = await startHelloRun("   ");
     expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.kind).toBe("unknown");
-    expect(result.error.details).toContain("API down");
+    expect(start).not.toHaveBeenCalled();
+  });
+});
+
+describe("pollHelloRun", () => {
+  it("narrows the completed durable result (main_stuff)", async () => {
+    getRunStatus.mockResolvedValueOnce({ status: "COMPLETED", degraded: false });
+    getRunResult.mockResolvedValueOnce({
+      state: "completed",
+      pipeline_run_id: "run-1",
+      result: COMPLETED_RESULT,
+    });
+    const result = await pollHelloRun("run-1");
+    expect(getRunStatus).toHaveBeenCalledWith("run-1");
+    expect(result).toEqual({ ok: true, state: "completed", output: ENTITIES });
+  });
+
+  it("reports running while the status is non-terminal", async () => {
+    getRunStatus.mockResolvedValueOnce({
+      status: "RUNNING",
+      degraded: false,
+      retry_after_seconds: null,
+    });
+    const result = await pollHelloRun("run-1");
+    expect(result).toMatchObject({ ok: true, state: "running", status: "RUNNING" });
+    expect(getRunResult).not.toHaveBeenCalled();
   });
 });

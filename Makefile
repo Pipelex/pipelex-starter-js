@@ -1,4 +1,4 @@
-.PHONY: help run dev build start lint format format-check typecheck test test-watch test-e2e test-e2e-ui agent-test check clean install lock all use-local use-npm ul un
+.PHONY: help run dev build start lint format format-check typecheck test test-watch test-e2e test-e2e-ui confirm-live-e2e agent-test check clean install lock all use-local use-npm ul un
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -23,8 +23,9 @@ format: ## Format code with Prettier
 format-check: ## Check formatting (CI)
 	npm run format:check
 
-typecheck: ## Run TypeScript type checking
-	npx tsc --noEmit
+typecheck: ## Run TypeScript type checking (app + e2e specs)
+	npm run typecheck
+	npm run typecheck:e2e
 
 test: ## Run tests (single pass)
 	npm run test
@@ -32,10 +33,21 @@ test: ## Run tests (single pass)
 test-watch: ## Run tests in watch mode
 	npm run test:watch
 
-test-e2e: ## Run Playwright e2e tests (hits live Pipelex API — needs PIPELEX_API_KEY)
+# OPTIONAL. The live-API specs hit the real Pipelex API (cost an LLM call, need
+# PIPELEX_API_KEY) and auto-skip without a key. Confirmation gate guards against
+# accidental spend; skipped in CI / non-interactive shells, or pass CONFIRM=1.
+confirm-live-e2e:
+	@if [ -z "$$CI" ] && [ -z "$$CONFIRM" ] && [ -t 0 ]; then \
+		printf "⚠️  Playwright e2e runs against the LIVE Pipelex API and costs an LLM call per live spec.\n"; \
+		printf "Continue? [y/N] "; \
+		read ans; \
+		case "$$ans" in [yY]*) ;; *) echo "Aborted."; exit 1 ;; esac; \
+	fi
+
+test-e2e: confirm-live-e2e ## Run OPTIONAL Playwright e2e (LIVE API — needs PIPELEX_API_KEY, costs an LLM call; auto-skips without a key)
 	npm run test:e2e
 
-test-e2e-ui: ## Run Playwright e2e tests with the UI runner
+test-e2e-ui: confirm-live-e2e ## Same as test-e2e, with the Playwright UI runner
 	npm run test:e2e:ui
 
 agent-test: ## Run tests, silent on success (for agents)
@@ -54,10 +66,10 @@ lock: ## Regenerate package-lock.json without installing
 clean: ## Remove build artifacts and caches
 	rm -rf .next node_modules/.cache
 
-# ── Local mthds SDK development ────────────────────────────────────────────
-# By default, `make install` fetches the published `mthds` package from npm.
-# `make use-local` packs and installs the sibling ../mthds-js so you can
-# develop the SDK and the starter side-by-side. `make use-npm` restores the
+# ── Local Pipelex SDK development ──────────────────────────────────────────
+# By default, `make install` fetches the published `@pipelex/sdk` package from
+# npm. `make use-local` packs and installs the sibling ../pipelex-sdk-js so you
+# can develop the SDK and the starter side-by-side. `make use-npm` restores the
 # npm version.
 #
 # We use `npm pack` + tarball install rather than a symlink because Next.js
@@ -67,23 +79,23 @@ clean: ## Remove build artifacts and caches
 # Turbopack resolves correctly. Re-run `make use-local` after every SDK edit
 # to pick up changes.
 
-use-local: ## Pack and install ../mthds-js into node_modules for local SDK development
-	@if [ ! -d ../mthds-js ]; then \
-		echo "ERROR: ../mthds-js not found — expected as a sibling directory."; exit 1; \
+use-local: ## Pack and install ../pipelex-sdk-js into node_modules for local SDK development
+	@if [ ! -d ../pipelex-sdk-js ]; then \
+		echo "ERROR: ../pipelex-sdk-js not found — expected as a sibling directory."; exit 1; \
 	fi
-	@echo "Building ../mthds-js so dist/ is up-to-date..."
-	cd ../mthds-js && npm run build
-	@echo "Packing ../mthds-js into a tarball..."
-	@cd ../mthds-js && rm -f mthds-*.tgz && TARBALL=$$(npm pack --silent) && mv $$TARBALL /tmp/mthds-local.tgz
-	rm -rf node_modules/mthds
-	npm install /tmp/mthds-local.tgz --no-save --silent
-	@rm -f /tmp/mthds-local.tgz
-	@echo "Now using local ../mthds-js (tarball install). Re-run after every SDK edit. 'make use-npm' to switch back."
+	@echo "Building ../pipelex-sdk-js so dist/ is up-to-date..."
+	cd ../pipelex-sdk-js && npm run build
+	@echo "Packing ../pipelex-sdk-js into a tarball..."
+	@cd ../pipelex-sdk-js && rm -f pipelex-sdk-*.tgz && TARBALL=$$(npm pack --silent) && mv $$TARBALL /tmp/pipelex-sdk-local.tgz
+	rm -rf node_modules/@pipelex/sdk
+	npm install /tmp/pipelex-sdk-local.tgz --no-save --silent
+	@rm -f /tmp/pipelex-sdk-local.tgz
+	@echo "Now using local ../pipelex-sdk-js (tarball install). Re-run after every SDK edit. 'make use-npm' to switch back."
 
-use-npm: ## Restore the npm-published mthds package
-	rm -rf node_modules/mthds
-	npm install mthds
-	@echo "Restored npm-published mthds. Run 'make use-local' to switch back."
+use-npm: ## Restore the npm-published @pipelex/sdk package
+	rm -rf node_modules/@pipelex/sdk
+	npm install @pipelex/sdk
+	@echo "Restored npm-published @pipelex/sdk. Run 'make use-local' to switch back."
 
 ul: use-local ## Alias for use-local
 un: use-npm ## Alias for use-npm

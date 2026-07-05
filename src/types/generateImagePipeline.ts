@@ -1,3 +1,5 @@
+import type { RunResults } from "@pipelex/sdk";
+import { findOutputContent } from "@/lib/runOutput";
 import { BadImageOutputError } from "@/types/pipelineError";
 
 export type GeneratedImage = {
@@ -26,52 +28,32 @@ function urlScheme(value: string): string | null {
 }
 
 /**
- * Narrow the SDK's loosely-typed `pipe_output` into our GeneratedImage
- * shape. Throws `BadImageOutputError` when no entry carries a usable image
- * URL — distinct from `BadPipelineOutputError` so the error UI can speak to
- * image generation specifically.
+ * Narrow a run's output into our GeneratedImage shape. Takes `RunResults` and
+ * reads the main output via `findOutputContent`. Throws `BadImageOutputError`
+ * when no entry carries a usable image URL — distinct from
+ * `BadPipelineOutputError` so the error UI can speak to image generation
+ * specifically.
  *
  * Also rejects an image URL whose scheme a browser can't render (`file://`,
  * `pipelex-storage://`, …): `<ImageResult>` would otherwise drop it straight
- * into an `<img>` and produce a silently-broken image. This happens when the
- * Pipelex API uses local file storage — see `classifyPipelineError`.
+ * into an `<img>` and produce a silently-broken image. On the hosted durable
+ * path the runtime returns both a non-web `url` (`pipelex-storage://…`) and a
+ * web `public_url` (a signed S3 URL); we validate the one that will actually
+ * render — `publicUrl ?? url` — so a usable `url` can't save a broken
+ * `publicUrl` and vice-versa.
  */
-export function parseGeneratedImage(pipeOutput: unknown): GeneratedImage {
-  if (!pipeOutput || typeof pipeOutput !== "object") {
-    throw new BadImageOutputError("Expected pipe_output to be an object");
-  }
-
-  const workingMemory = (pipeOutput as { working_memory?: unknown }).working_memory;
-  if (!workingMemory || typeof workingMemory !== "object") {
-    throw new BadImageOutputError("Expected pipe_output.working_memory to be an object");
-  }
-
-  const root = (workingMemory as { root?: unknown }).root;
-  if (!root || typeof root !== "object") {
-    throw new BadImageOutputError("Expected pipe_output.working_memory.root to be an object");
-  }
-
-  const candidate = Object.values(root as Record<string, unknown>)
-    .map((entry) => {
-      if (!entry || typeof entry !== "object") return null;
-      const content = (entry as { content?: unknown }).content;
-      return content && typeof content === "object" ? (content as Record<string, unknown>) : null;
-    })
-    .find(
-      (content) => content !== null && typeof content.url === "string" && content.url.length > 0,
-    );
-
+export function parseGeneratedImage(results: RunResults): GeneratedImage {
+  const candidate = findOutputContent(
+    results,
+    (c) => typeof c.url === "string" && (c.url as string).length > 0,
+  );
   if (!candidate) {
-    throw new BadImageOutputError(
-      "Could not find a generated image with a URL in pipe_output.working_memory",
-    );
+    throw new BadImageOutputError("Could not find a generated image with a URL in the run output");
   }
 
   const url = candidate.url as string;
   const publicUrl = optionalString(candidate.public_url);
 
-  // Validate the URL `<ImageResult>` will actually render — it displays
-  // `publicUrl ?? url`, so a usable `url` can't save a broken `publicUrl`.
   const displayUrl = publicUrl ?? url;
   const scheme = urlScheme(displayUrl);
   if (scheme === null || !WEB_RENDERABLE_SCHEMES.includes(scheme)) {

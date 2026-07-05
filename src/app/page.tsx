@@ -7,8 +7,8 @@ export default function Home() {
         <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Pipelex Starter</h1>
         <p className="mt-2 text-sm text-slate-600">
           A minimal Next.js app that calls the Pipelex API via the{" "}
-          <code className="rounded bg-slate-200 px-1.5 py-0.5 text-xs">mthds</code> SDK. Three
-          examples: text entity extraction, PDF summarization, and image generation.
+          <code className="rounded bg-slate-200 px-1.5 py-0.5 text-xs">@pipelex/sdk</code> SDK.
+          Three examples: text entity extraction, PDF summarization, and image generation.
         </p>
       </header>
       <ExampleTabs />

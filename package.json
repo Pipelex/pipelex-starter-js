@@ -1,15 +1,17 @@
 {
   "name": "pipelex-starter-js",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
-  "description": "Minimal Next.js starter that calls Pipelex via the mthds SDK to run AI methods.",
+  "description": "Minimal Next.js starter that calls Pipelex via the @pipelex/sdk SDK to run AI methods.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint src/",
-    "format": "prettier --write --no-error-on-unmatched-pattern \"src/**/*.{ts,tsx,css}\" \".claude/skills/bootstrap/scripts/*.mjs\"",
-    "format:check": "prettier --check --no-error-on-unmatched-pattern \"src/**/*.{ts,tsx,css}\" \".claude/skills/bootstrap/scripts/*.mjs\"",
+    "lint": "eslint .",
+    "format": "prettier --write --no-error-on-unmatched-pattern \"**/*.{ts,tsx,mts,mjs,js,css,json,md}\" \".claude/skills/bootstrap/scripts/*.mjs\"",
+    "format:check": "prettier --check --no-error-on-unmatched-pattern \"**/*.{ts,tsx,mts,mjs,js,css,json,md}\" \".claude/skills/bootstrap/scripts/*.mjs\"",
+    "typecheck": "tsc --noEmit",
+    "typecheck:e2e": "tsc -p tsconfig.e2e.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
@@ -17,8 +19,8 @@
     "prepare": "husky"
   },
   "dependencies": {
-    "mthds": "^0.7.1",
-    "next": "^16.1.6",
+    "@pipelex/sdk": "^0.3.0",
+    "next": "^16.2.9",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },
@@ -55,6 +57,6 @@
     ]
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   }
 }
