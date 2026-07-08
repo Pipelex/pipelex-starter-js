@@ -19,7 +19,7 @@ This repo is a **reference template**. Keep it small, clear, and high-quality �
 
 ```
 methods/
-  hello/main.mthds            # text → entities pipeline (TOML)
+  extract-entities/main.mthds            # text → entities pipeline (TOML)
   summarize-pdf/main.mthds    # PDF Document → structured summary
   generate-image/main.mthds   # text prompt → image (gpt-image-1-mini)
 public/
@@ -28,7 +28,7 @@ src/
   config.ts                   # ExecutionMode + DEFAULT_EXECUTION_MODE (client-safe)
   app/                        # Next.js App Router (layout, page, globals.css)
   actions/                    # 'use server' Server Actions — a trio per pipeline
-    runHelloPipeline.ts         # runHelloBlocking + startHelloRun + pollHelloRun
+    runExtractEntitiesPipeline.ts         # runExtractEntitiesBlocking + startExtractEntitiesRun + pollExtractEntitiesRun
     runSummarizePdfPipeline.ts  # …Blocking + start… + poll…
     runGenerateImagePipeline.ts # …Blocking + start… + poll…
   lib/
@@ -52,7 +52,7 @@ src/
     ErrorDisplay.tsx          # server component (renders classified PipelineError)
   types/
     pipelineError.ts          # BadPipelineOutputError + BadImageOutputError (tagged)
-    helloPipeline.ts          # ExtractedEntities + parseEntities(RunResults)
+    extractEntitiesPipeline.ts          # ExtractedEntities + parseEntities(RunResults)
     summarizePipeline.ts      # DocumentSummary + parseDocumentSummary(RunResults)
     generateImagePipeline.ts  # GeneratedImage + parseGeneratedImage(RunResults)
 e2e/
@@ -80,30 +80,30 @@ e2e/
 The forms are **mode-agnostic** — they call `useRun({ mode, blocking, start, poll })` and render by `state.phase`. Only the unified hook knows which Server Actions to call.
 
 ```ts
-// src/actions/runHelloPipeline.ts — a thin trio per pipeline
+// src/actions/runExtractEntitiesPipeline.ts — a thin trio per pipeline
 "use server";
-import { loadHelloBundle } from "@/lib/loadBundle";
-import { parseEntities, type ExtractedEntities } from "@/types/helloPipeline";
+import { loadExtractEntitiesBundle } from "@/lib/loadBundle";
+import { parseEntities, type ExtractedEntities } from "@/types/extractEntitiesPipeline";
 import { executeBlockingRun, type BlockingOutcome } from "@/lib/blockingRun";
 import { pollDurableRun, startDurableRun, type PollOutcome, type StartOutcome } from "@/lib/durableRun";
 import type { StartOptions } from "@pipelex/sdk";
 
 // `execute` and `start` take the same options, so one closure drives both.
 async function buildOptions(text: string): Promise<StartOptions> {
-  return { pipe_code: "extract_entities", mthds_contents: [await loadHelloBundle()], inputs: { text } };
+  return { pipe_code: "extract_entities", mthds_contents: [await loadExtractEntitiesBundle()], inputs: { text } };
 }
 
-export async function runHelloBlocking(text: string): Promise<BlockingOutcome<ExtractedEntities>> {
+export async function runExtractEntitiesBlocking(text: string): Promise<BlockingOutcome<ExtractedEntities>> {
   const t = text.trim();
   if (!t) return { ok: false, error: /* bad_request */ };
   return executeBlockingRun(() => buildOptions(t), parseEntities);
 }
-export async function startHelloRun(text: string): Promise<StartOutcome> {
+export async function startExtractEntitiesRun(text: string): Promise<StartOutcome> {
   const t = text.trim();
   if (!t) return { ok: false, error: /* bad_request */ };
   return startDurableRun(() => buildOptions(t));
 }
-export async function pollHelloRun(runId: string): Promise<PollOutcome<ExtractedEntities>> {
+export async function pollExtractEntitiesRun(runId: string): Promise<PollOutcome<ExtractedEntities>> {
   return pollDurableRun(runId, parseEntities);
 }
 ```

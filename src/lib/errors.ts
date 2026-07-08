@@ -463,7 +463,7 @@ function classifyBundleMissing(err: unknown): PipelineError {
   return {
     kind: "bundle_load_failed",
     title: "Pipeline bundle not found",
-    message: `Could not read the .mthds bundle from disk (${e.code ?? "fs error"}). The starter ships with extract_entities.mthds — make sure it's still there.`,
+    message: `Could not read the .mthds bundle from disk (${e.code ?? "fs error"}). The starter ships with methods/extract-entities/main.mthds — make sure it's still there.`,
     details: `${e.name}: ${e.message}`,
   };
 }

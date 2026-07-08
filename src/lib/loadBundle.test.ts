@@ -1,11 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { loadGenerateImageBundle, loadHelloBundle, loadSummarizePdfBundle } from "./loadBundle";
+import {
+  loadGenerateImageBundle,
+  loadExtractEntitiesBundle,
+  loadSummarizePdfBundle,
+} from "./loadBundle";
 
-describe("loadHelloBundle", () => {
-  it("reads the hello bundle TOML from disk", async () => {
-    const bundle = await loadHelloBundle();
+describe("loadExtractEntitiesBundle", () => {
+  it("reads the extract-entities bundle TOML from disk", async () => {
+    const bundle = await loadExtractEntitiesBundle();
     expect(bundle.length).toBeGreaterThan(0);
-    expect(bundle).toContain('domain      = "hello"');
+    expect(bundle).toContain('domain      = "extract_entities"');
     expect(bundle).toContain("[pipe.extract_entities]");
     expect(bundle).toContain("[concept.ExtractedEntities]");
   });
