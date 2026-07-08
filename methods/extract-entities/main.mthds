@@ -1,4 +1,4 @@
-domain      = "hello"
+domain      = "extract_entities"
 description = "Extract people, organizations, and dates from a piece of text."
 main_pipe   = "extract_entities"
 
@@ -6,9 +6,9 @@ main_pipe   = "extract_entities"
 description = "Named entities extracted from a piece of text."
 
 [concept.ExtractedEntities.structure]
-people = { type = "list", description = "Names of people mentioned in the text", required = true }
-orgs   = { type = "list", description = "Names of organizations mentioned in the text", required = true }
-dates  = { type = "list", description = "Dates or time references mentioned in the text", required = true }
+people = { type = "list", item_type = "text", description = "Names of people mentioned in the text", required = true }
+orgs   = { type = "list", item_type = "text", description = "Names of organizations mentioned in the text", required = true }
+dates  = { type = "list", item_type = "text", description = "Dates or time references mentioned in the text", required = true }
 
 [pipe.extract_entities]
 type = "PipeLLM"

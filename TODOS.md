@@ -4,7 +4,7 @@
 >
 > **Two live findings worth keeping:**
 >
-> 1. **`main_stuff` is the bare content** (confirmed against `api-dev`, both hello + image), NOT a `{ concept, content }` wrapper — so `findOutputContent`'s durable arm uses `main_stuff` directly, no unwrap. On the hosted durable path `graph_spec` is present and `pipe_output` is absent; the image returns a non-web `url` (`pipelex-storage://…`) plus a web `public_url` (signed S3), and the narrower validates `publicUrl ?? url`.
+> 1. **`main_stuff` is the bare content** (confirmed against `api-dev`, both extract-entities + image), NOT a `{ concept, content }` wrapper — so `findOutputContent`'s durable arm uses `main_stuff` directly, no unwrap. On the hosted durable path `graph_spec` is present and `pipe_output` is absent; the image returns a non-web `url` (`pipelex-storage://…`) plus a web `public_url` (signed S3), and the narrower validates `publicUrl ?? url`.
 > 2. **The blocking cap is an HTTP 502, not `PipelineExecuteTimeoutError`.** Behind the hosted gateway a synchronous `execute` over ~30s returns `ApiResponseError` 502 "the runner did not complete the request" (a response — the SDK's own timeout is longer). `executeBlockingRun` passes `{ blocking: true }` to `classifyPipelineError`, which maps a blocking-path 502/504 to `execute_timeout` (the "switch to Durable" guidance); durable-path 502s stay transient `server_error`s. The `PipelineExecuteTimeoutError` branch is kept for configs where the SDK timeout fires first.
 >
 > **Pre-existing bug fixed along the way:** `e2e/error-display.spec.ts`'s reachability gate probed `/health`, which 404s on the hosted gateway (only `/v1/*` is served) — so it ran the offline test against a live API. Switched the probe to the always-public `/v1/version`.
@@ -158,19 +158,19 @@ Durable mode:
 
 ### Files that change
 
-| File                                                              | Change                                                                                                                                                                                                                                        |
-| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/actions/runHelloPipeline.ts`                                 | Export `runHelloBlocking(text)` (the kept `execute` path, body adapted to `RunResults`+shared helper), `startHelloRun(text)`, `pollHelloRun(runId)`. Keep the empty-input `bad_request` guard in both `runHelloBlocking` and `startHelloRun`. |
-| `src/actions/runSummarizePdfPipeline.ts`                          | Same trio. Keep the `validateDataUrl` + `fileInputErrorToPipelineError` pre-flight in both `*Blocking` and `start*`.                                                                                                                          |
-| `src/actions/runGenerateImagePipeline.ts`                         | Same trio.                                                                                                                                                                                                                                    |
-| `src/types/helloPipeline.ts`                                      | `parseEntities(results: RunResults)` via `findOutputContent`.                                                                                                                                                                                 |
-| `src/types/summarizePipeline.ts`                                  | `parseDocumentSummary(results: RunResults)`; keep `doc_type`→`docType`, `key_points`→`keyPoints`.                                                                                                                                             |
-| `src/types/generateImagePipeline.ts`                              | `parseGeneratedImage(results: RunResults)`; keep `BadImageOutputError` + `WEB_RENDERABLE_SCHEMES`.                                                                                                                                            |
-| `src/lib/errors.ts`                                               | New `PipelineErrorKind`s + `classifyPipelineError` branches for the durable/blocking error classes above.                                                                                                                                     |
-| `src/components/EntityForm.tsx` / `PdfForm.tsx` / `ImageForm.tsx` | Add `useState<ExecutionMode>`, render `<ModeToggle>`; replace `useTransition`+single-await with `useRun`; render `<RunStatus>` while running.                                                                                                 |
-| Tests (Phase 6)                                                   | Action tests (both modes), form tests (both modes + toggle), `errors.test.ts`; new tests for `blockingRun`, `durableRun`, `runOutput`, `useRun`, `RunStatus`, `ModeToggle`.                                                                   |
-| `CLAUDE.md`                                                       | Update "Pipelex Integration Pattern" (dual-mode), "To add a new pipeline" steps, project structure, testing/mock notes.                                                                                                                       |
-| `wip/durable-runs-for-long-pipelines.md`                          | Mark resolved / point at this plan once shipped.                                                                                                                                                                                              |
+| File                                                              | Change                                                                                                                                                                                                                                                                                          |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/actions/runExtractEntitiesPipeline.ts`                       | Export `runExtractEntitiesBlocking(text)` (the kept `execute` path, body adapted to `RunResults`+shared helper), `startExtractEntitiesRun(text)`, `pollExtractEntitiesRun(runId)`. Keep the empty-input `bad_request` guard in both `runExtractEntitiesBlocking` and `startExtractEntitiesRun`. |
+| `src/actions/runSummarizePdfPipeline.ts`                          | Same trio. Keep the `validateDataUrl` + `fileInputErrorToPipelineError` pre-flight in both `*Blocking` and `start*`.                                                                                                                                                                            |
+| `src/actions/runGenerateImagePipeline.ts`                         | Same trio.                                                                                                                                                                                                                                                                                      |
+| `src/types/extractEntitiesPipeline.ts`                            | `parseEntities(results: RunResults)` via `findOutputContent`.                                                                                                                                                                                                                                   |
+| `src/types/summarizePipeline.ts`                                  | `parseDocumentSummary(results: RunResults)`; keep `doc_type`→`docType`, `key_points`→`keyPoints`.                                                                                                                                                                                               |
+| `src/types/generateImagePipeline.ts`                              | `parseGeneratedImage(results: RunResults)`; keep `BadImageOutputError` + `WEB_RENDERABLE_SCHEMES`.                                                                                                                                                                                              |
+| `src/lib/errors.ts`                                               | New `PipelineErrorKind`s + `classifyPipelineError` branches for the durable/blocking error classes above.                                                                                                                                                                                       |
+| `src/components/EntityForm.tsx` / `PdfForm.tsx` / `ImageForm.tsx` | Add `useState<ExecutionMode>`, render `<ModeToggle>`; replace `useTransition`+single-await with `useRun`; render `<RunStatus>` while running.                                                                                                                                                   |
+| Tests (Phase 6)                                                   | Action tests (both modes), form tests (both modes + toggle), `errors.test.ts`; new tests for `blockingRun`, `durableRun`, `runOutput`, `useRun`, `RunStatus`, `ModeToggle`.                                                                                                                     |
+| `CLAUDE.md`                                                       | Update "Pipelex Integration Pattern" (dual-mode), "To add a new pipeline" steps, project structure, testing/mock notes.                                                                                                                                                                         |
+| `wip/durable-runs-for-long-pipelines.md`                          | Mark resolved / point at this plan once shipped.                                                                                                                                                                                                                                                |
 
 ### Files that DON'T change (confirmed)
 
@@ -410,9 +410,9 @@ export function ModeToggle({
 const [mode, setMode] = useState<ExecutionMode>(DEFAULT_EXECUTION_MODE);
 const { state, run } = useRun({
   mode,
-  blocking: runHelloBlocking,
-  start: startHelloRun,
-  poll: pollHelloRun,
+  blocking: runExtractEntitiesBlocking,
+  start: startExtractEntitiesRun,
+  poll: pollExtractEntitiesRun,
 });
 // submit: run(text.trim())
 // render:
@@ -422,22 +422,22 @@ const { state, run } = useRun({
 //   {state.phase === "done"    && <EntityResult entities={state.output} />}
 ```
 
-### Per-pipeline actions (thin; hello shown)
+### Per-pipeline actions (thin; extract-entities shown)
 
 ```ts
 "use server";
-// runHelloBlocking — the KEPT execute path
-export async function runHelloBlocking(text: string): Promise<BlockingOutcome<ExtractedEntities>> {
+// runExtractEntitiesBlocking — the KEPT execute path
+export async function runExtractEntitiesBlocking(text: string): Promise<BlockingOutcome<ExtractedEntities>> {
   const t = text.trim();
   if (!t) return { ok: false, error: /* bad_request */ };
-  return executeBlockingRun(async () => ({ pipe_code: "extract_entities", mthds_contents: [await loadHelloBundle()], inputs: { text: t } }), parseEntities);
+  return executeBlockingRun(async () => ({ pipe_code: "extract_entities", mthds_contents: [await loadExtractEntitiesBundle()], inputs: { text: t } }), parseEntities);
 }
-export async function startHelloRun(text: string): Promise<StartOutcome> {
+export async function startExtractEntitiesRun(text: string): Promise<StartOutcome> {
   const t = text.trim();
   if (!t) return { ok: false, error: /* bad_request */ };
-  return startDurableRun(async () => ({ pipe_code: "extract_entities", mthds_contents: [await loadHelloBundle()], inputs: { text: t } }));
+  return startDurableRun(async () => ({ pipe_code: "extract_entities", mthds_contents: [await loadExtractEntitiesBundle()], inputs: { text: t } }));
 }
-export async function pollHelloRun(runId: string): Promise<PollOutcome<ExtractedEntities>> {
+export async function pollExtractEntitiesRun(runId: string): Promise<PollOutcome<ExtractedEntities>> {
   return pollDurableRun(runId, parseEntities);
 }
 ```
@@ -452,7 +452,7 @@ export async function pollHelloRun(runId: string): Promise<PollOutcome<Extracted
 
 `main_stuff` = the single main output stuff (working memory is a separate, non-exposed artifact). Just confirm the wrapper.
 
-- [ ] With a live hosted key (`PIPELEX_API_KEY` set, `PIPELEX_BASE_URL` unset → `api.pipelex.com`), run a throwaway probe (scratchpad or temp e2e — do NOT commit): load `methods/hello/main.mthds`, `client.start({ pipe_code:"extract_entities", mthds_contents:[bundle], inputs:{ text:"..." } })`, poll `getRunResult` to `completed`, `console.dir(res.result.main_stuff, { depth: null })`.
+- [ ] With a live hosted key (`PIPELEX_API_KEY` set, `PIPELEX_BASE_URL` unset → `api.pipelex.com`), run a throwaway probe (scratchpad or temp e2e — do NOT commit): load `methods/extract-entities/main.mthds`, `client.start({ pipe_code:"extract_entities", mthds_contents:[bundle], inputs:{ text:"..." } })`, poll `getRunResult` to `completed`, `console.dir(res.result.main_stuff, { depth: null })`.
 - [ ] Confirm the `main_stuff` wrapper: tick one —
   - [ ] `{ concept, content: { people, orgs, dates } }` (DictStuff wrapper → unwrap `.content`)
   - [ ] `{ people, orgs, dates }` (bare content → use directly)
@@ -478,7 +478,7 @@ export async function pollHelloRun(runId: string): Promise<PollOutcome<Extracted
 
 ### Phase 3 — Per-pipeline actions (blocking kept + start + poll)
 
-- [ ] `runHelloPipeline.ts`: `runHelloBlocking(text)` (kept `execute` path, now via `executeBlockingRun`), `startHelloRun(text)`, `pollHelloRun(runId)`. Share the empty-input guard + `buildOptions` closure.
+- [ ] `runExtractEntitiesPipeline.ts`: `runExtractEntitiesBlocking(text)` (kept `execute` path, now via `executeBlockingRun`), `startExtractEntitiesRun(text)`, `pollExtractEntitiesRun(runId)`. Share the empty-input guard + `buildOptions` closure.
 - [ ] `runSummarizePdfPipeline.ts`: `runSummarizePdfBlocking({dataUrl,filename})` + `startSummarizePdfRun(...)` + `pollSummarizePdfRun(runId)`. Keep the `validateDataUrl` pre-flight in both `*Blocking` and `start*`.
 - [ ] `runGenerateImagePipeline.ts`: `runGenerateImageBlocking(prompt)` + `startGenerateImageRun(prompt)` + `pollGenerateImageRun(runId)`.
 - [ ] Remove the old single `run<Name>Pipeline` exports (replaced by the trio). Breaking change is fine.
@@ -491,7 +491,7 @@ export async function pollHelloRun(runId: string): Promise<PollOutcome<Extracted
 
 - [ ] Add `src/components/RunStatus.tsx` (blue card; status label when present else spinner+elapsed; degraded note; `role="status" aria-live="polite"`).
 - [ ] Add `src/components/ModeToggle.tsx` (segmented radiogroup; helper text).
-- [ ] `EntityForm.tsx`: add `useState<ExecutionMode>(DEFAULT_EXECUTION_MODE)`, render `<ModeToggle>` (disabled while running), wire `useRun({ mode, blocking: runHelloBlocking, start: startHelloRun, poll: pollHelloRun })`, render `<RunStatus>`/`<EntityResult>`/`<ErrorDisplay>` by phase.
+- [ ] `EntityForm.tsx`: add `useState<ExecutionMode>(DEFAULT_EXECUTION_MODE)`, render `<ModeToggle>` (disabled while running), wire `useRun({ mode, blocking: runExtractEntitiesBlocking, start: startExtractEntitiesRun, poll: pollExtractEntitiesRun })`, render `<RunStatus>`/`<EntityResult>`/`<ErrorDisplay>` by phase.
 - [ ] `ImageForm.tsx`: same with the image trio + `<ImageResult>`. Headline demo: durable streams status then image; blocking shows the ~30s `execute_timeout` error.
 - [ ] `PdfForm.tsx`: same with the pdf trio + `<PdfSummaryResult>`, preserving the existing file-encoding/validation flow (`acceptFile`, `fileToDataUrl`, `selectionTokenRef`) before `run({ dataUrl, filename })`.
 - [ ] Manual check: switch mode mid-form, run both modes on the same input; tab-switch mid-run keeps the loop alive (panels stay mounted).

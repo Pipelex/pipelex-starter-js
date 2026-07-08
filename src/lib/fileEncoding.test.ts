@@ -20,7 +20,7 @@ describe("dataUrlMimeType", () => {
     expect(dataUrlMimeType("https://example.com/file.pdf")).toBeNull();
     expect(dataUrlMimeType("")).toBeNull();
     // A non-base64 data URL is not accepted.
-    expect(dataUrlMimeType("data:text/plain,hello")).toBeNull();
+    expect(dataUrlMimeType("data:text/plain,plain")).toBeNull();
   });
 });
 

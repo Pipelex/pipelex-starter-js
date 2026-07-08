@@ -49,7 +49,7 @@ Today `parseGeneratedImage(response.pipe_output)` expects the blocking-execute s
 
 - **Image generation** — definitely migrate (flagged, already 150s in e2e).
 - **summarize-pdf** — likely also long enough to exceed 30s; consider migrating for the same reason.
-- **hello / extract** — short; blocking `execute()` is probably fine, but moving everything to `startAndWaitForResult` would make the starter uniformly hosted-safe and simpler to reason about. Decide: migrate only the long ones, or standardize on durable runs everywhere.
+- **extract-entities** — short; blocking `execute()` is probably fine, but moving everything to `startAndWaitForResult` would make the starter uniformly hosted-safe and simpler to reason about. Decide: migrate only the long ones, or standardize on durable runs everywhere.
 - **Pattern doc** — `CLAUDE.md`'s "Pipelex Integration Pattern" section shows `execute(...)`. If we standardize on durable runs, update that canonical example + the per-action narrower contract (`main_stuff ?? pipe_output`).
 - **Polling knobs** — review `WaitForResultOptions` (`runs.d.ts:97`) for timeout/interval defaults; image gen needs a ceiling ≥150s.
 - **Tests** — unit tests mock `client.execute`; they'd switch to mocking `startAndWaitForResult` and returning a `RunResults` (`main_stuff`-shaped). Re-run `make test-e2e` against the live hosted API to confirm the 30s cliff is gone.

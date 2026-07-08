@@ -1,7 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { pollHelloRun, runHelloBlocking, startHelloRun } from "@/actions/runHelloPipeline";
+import {
+  pollExtractEntitiesRun,
+  runExtractEntitiesBlocking,
+  startExtractEntitiesRun,
+} from "@/actions/runExtractEntitiesPipeline";
 import { DEFAULT_EXECUTION_MODE, type ExecutionMode } from "@/config";
 import { useRun } from "@/hooks/useRun";
 import { EntityResult } from "./EntityResult";
@@ -19,9 +23,9 @@ export function EntityForm() {
   // durable Server Actions by `mode`. The form never branches on mode itself.
   const { state, run } = useRun({
     mode,
-    blocking: runHelloBlocking,
-    start: startHelloRun,
-    poll: pollHelloRun,
+    blocking: runExtractEntitiesBlocking,
+    start: startExtractEntitiesRun,
+    poll: pollExtractEntitiesRun,
   });
 
   const running = state.phase === "running";

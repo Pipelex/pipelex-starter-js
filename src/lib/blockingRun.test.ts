@@ -8,7 +8,7 @@ vi.mock("@/lib/pipelexClient", () => ({
 }));
 
 import { executeBlockingRun } from "./blockingRun";
-import { parseEntities } from "@/types/helloPipeline";
+import { parseEntities } from "@/types/extractEntitiesPipeline";
 import { parseGeneratedImage } from "@/types/generateImagePipeline";
 
 beforeEach(() => execute.mockReset());
