@@ -1,4 +1,4 @@
-import type { ExtractedEntities } from "@/types/helloPipeline";
+import type { ExtractedEntities } from "@/types/extractEntitiesPipeline";
 
 interface EntityResultProps {
   entities: ExtractedEntities;

@@ -10,7 +10,7 @@ vi.mock("@/lib/pipelexClient", () => ({
 }));
 
 import { pollDurableRun, startDurableRun } from "./durableRun";
-import { parseEntities } from "@/types/helloPipeline";
+import { parseEntities } from "@/types/extractEntitiesPipeline";
 
 beforeEach(() => {
   start.mockReset();

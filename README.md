@@ -4,9 +4,22 @@ A minimal Next.js 16 starter that calls the [Pipelex](https://pipelex.com) API v
 
 It ships three demo pipelines, presented as tabs:
 
-- **Text entities** (`methods/hello`) — extracts `{ people, orgs, dates }` from pasted text.
+- **Text entities** (`methods/extract-entities`) — extracts `{ people, orgs, dates }` from pasted text.
 - **PDF summary** (`methods/summarize-pdf`) — uploads a PDF in the browser and returns a structured `{ title, docType, keyPoints }` summary from a cheap OpenAI model.
 - **Image generation** (`methods/generate-image`) — turns a text prompt into an image with `gpt-image-1-mini`.
+
+## Use this template
+
+This is a template repository — don't clone it directly. Click the green **Use this template** button at the top-right of the GitHub page to create your own repo, then clone that.
+
+**Make it yours.** The fastest path is the bundled `/bootstrap` skill: open your new repo in [Claude Code](https://claude.com/claude-code) and run `/bootstrap`. It renames the template identity (`pipelex-starter-js` / `Pipelex Starter`) across `package.json`, `package-lock.json`, README, CLAUDE.md, the app title, metadata, release skill, and license text, then runs the checks.
+
+Prefer to do it by hand? The manual equivalent:
+
+1. Replace `pipelex-starter-js` in `package.json` with your npm package name, and update the description, author, repository, and license metadata.
+2. Replace `Pipelex Starter` in `src/app/layout.tsx` and `src/app/page.tsx` with your app title.
+3. Update README.md, CLAUDE.md, LICENSE, and `.claude/skills/release/SKILL.md` so they describe your project instead of the template.
+4. Run `npm install --package-lock-only` so `package-lock.json` matches the new package name and version.
 
 ## Stack
 
@@ -18,7 +31,7 @@ It ships three demo pipelines, presented as tabs:
 
 ## Prerequisites
 
-- Node.js 22.12+ (the SDK is ESM-only and the e2e specs `require()` it, which needs Node's unflagged `require(ESM)`)
+- Node.js 22.12+ (the SDK is ESM-only and the e2e specs `require()` it, which needs Node's unflagged `require(esm)`)
 - Access to a **Pipelex API** server. You have two options:
   - **Hosted** — currently in private beta. Join the waitlist at [go.pipelex.com/waitlist](https://go.pipelex.com/waitlist). Once you have access, get an API key at [app.pipelex.com](https://app.pipelex.com) and point `PIPELEX_BASE_URL` at `https://api.pipelex.com` (the default).
   - **Self-hosted** — the Pipelex API is open source at [github.com/Pipelex/pipelex-api](https://github.com/Pipelex/pipelex-api). Run it locally or on your own infra and point `PIPELEX_BASE_URL` at your instance (e.g. `http://localhost:8000`).
@@ -38,7 +51,7 @@ Open [http://localhost:3000](http://localhost:3000) and try the three example ta
 
 ```
 methods/
-  hello/main.mthds            # text → { people, orgs, dates }
+  extract-entities/main.mthds            # text → { people, orgs, dates }
   summarize-pdf/main.mthds    # PDF Document → { title, docType, keyPoints }
   generate-image/main.mthds   # text prompt → generated Image
 public/sample-invoice.pdf     # sample PDF, so the PDF example works out of the box

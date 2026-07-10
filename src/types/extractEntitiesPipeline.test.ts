@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { RunResults } from "@pipelex/sdk";
-import { parseEntities } from "./helloPipeline";
+import { parseEntities } from "./extractEntitiesPipeline";
 
 /** Both paths deliver the resolved output on `main_stuff` (the SDK digs it out on the blocking path too). */
 function mainStuff(content: unknown): RunResults {

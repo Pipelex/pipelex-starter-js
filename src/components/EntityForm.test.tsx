@@ -1,17 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { EntityForm } from "./EntityForm";
-import { pollHelloRun, runHelloBlocking, startHelloRun } from "@/actions/runHelloPipeline";
+import {
+  pollExtractEntitiesRun,
+  runExtractEntitiesBlocking,
+  startExtractEntitiesRun,
+} from "@/actions/runExtractEntitiesPipeline";
 
-vi.mock("@/actions/runHelloPipeline", () => ({
-  runHelloBlocking: vi.fn(),
-  startHelloRun: vi.fn(),
-  pollHelloRun: vi.fn(),
+vi.mock("@/actions/runExtractEntitiesPipeline", () => ({
+  runExtractEntitiesBlocking: vi.fn(),
+  startExtractEntitiesRun: vi.fn(),
+  pollExtractEntitiesRun: vi.fn(),
 }));
 
-const blocking = vi.mocked(runHelloBlocking);
-const start = vi.mocked(startHelloRun);
-const poll = vi.mocked(pollHelloRun);
+const blocking = vi.mocked(runExtractEntitiesBlocking);
+const start = vi.mocked(startExtractEntitiesRun);
+const poll = vi.mocked(pollExtractEntitiesRun);
 
 beforeEach(() => {
   vi.useFakeTimers();
