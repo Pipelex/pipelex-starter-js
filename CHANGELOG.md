@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Bumped `@pipelex/sdk` to `0.4.0` (was `0.3.1`). All of `0.4.0`'s breaking changes (the `files[]` envelope and discriminated `200` verdicts on `buildInputs`/`buildOutput`/`buildRunner`, the raised `mthds` floor) are scoped to the `/v1/build/*` and tools routes, which this repo doesn't call — it only uses `execute`/`start`/`getRunStatus`/`getRunResult`. No code changes needed.
+
 ## [v0.2.1] - 2026-07-10
 
 ### Changed
