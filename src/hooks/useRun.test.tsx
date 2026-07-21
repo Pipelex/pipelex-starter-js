@@ -125,13 +125,60 @@ describe("useRun — durable", () => {
     const { result } = renderHook(() => useRun(cfg));
 
     act(() => result.current.run("in"));
-    await flush(); // start resolves; first poll → transient blip (run keeps going, degraded)
+    await flush(); // start resolves; first poll → transient blip (run keeps going, retrying)
     expect(result.current.state.phase).toBe("running");
-    expect(asRunning(result.current.state).degraded).toBe(true);
+    expect(asRunning(result.current.state).health).toBe("retrying");
 
     await flush(1000); // scheduled retry → completed
     expect(result.current.state).toEqual({ phase: "done", output: { value: "done" } });
     expect(poll).toHaveBeenCalledTimes(2);
+  });
+
+  it("maps a server-reported degraded running poll to health 'reconnecting'", async () => {
+    const start = vi.fn().mockResolvedValueOnce({ ok: true, runId: "run-1" });
+    const poll = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      state: "running",
+      status: "RUNNING",
+      degraded: true, // the server served a last-known status (Temporal unreachable)
+      retryAfterSeconds: null,
+    });
+    const cfg = makeCfg({ mode: "durable", start, poll });
+    const { result } = renderHook(() => useRun(cfg));
+
+    act(() => result.current.run("in"));
+    await flush(); // start resolves; first poll → running but server-degraded
+    // A verdict-bearing tick, so it's "reconnecting" (server signal), not "retrying".
+    expect(asRunning(result.current.state).health).toBe("reconnecting");
+  });
+
+  it("clears health back to null once a clean poll follows a degraded one", async () => {
+    const start = vi.fn().mockResolvedValueOnce({ ok: true, runId: "run-1" });
+    const poll = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        state: "running",
+        status: "RUNNING",
+        degraded: true,
+        retryAfterSeconds: null,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        state: "running",
+        status: "RUNNING",
+        degraded: false,
+        retryAfterSeconds: null,
+      });
+    const cfg = makeCfg({ mode: "durable", start, poll, intervalMs: 1000 });
+    const { result } = renderHook(() => useRun(cfg));
+
+    act(() => result.current.run("in"));
+    await flush(); // first poll → degraded
+    expect(asRunning(result.current.state).health).toBe("reconnecting");
+
+    await flush(1000); // second poll → clean
+    expect(asRunning(result.current.state).health).toBeNull();
   });
 
   it("treats a rejected poll await as a transient blip and keeps polling", async () => {

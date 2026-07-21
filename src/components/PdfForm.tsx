@@ -181,7 +181,7 @@ export function PdfForm() {
       </form>
 
       {running && (
-        <RunStatus status={state.status} elapsedMs={state.elapsedMs} degraded={state.degraded} />
+        <RunStatus status={state.status} elapsedMs={state.elapsedMs} health={state.health} />
       )}
       {fileError && <ErrorDisplay error={fileError} />}
       {!fileError && state.phase === "error" && <ErrorDisplay error={state.error} />}

@@ -7,10 +7,24 @@ import type { BlockingOutcome } from "@/lib/blockingRun";
 import type { PollOutcome, StartOutcome } from "@/lib/durableRun";
 
 /**
+ * Why the durable poll loop is in a resilient (still-polling, non-fatal) state,
+ * or `null` when it's polling cleanly. The two causes are distinct and get
+ * distinct copy — neither means the run is in trouble:
+ * - `"reconnecting"`: the *server* reported `degraded` — its status endpoint
+ *   couldn't reach the workflow orchestrator (Temporal) and returned the
+ *   last-known status from its DB. The status shown may briefly lag.
+ * - `"retrying"`: a *client-side* poll tick failed to get a verdict (a gateway
+ *   5xx or a network blip) and is being retried within the transient budget.
+ * In both cases the run keeps executing server-side.
+ */
+export type RunHealth = "reconnecting" | "retrying";
+
+/**
  * The unified run state machine, identical for both execution modes:
  * `idle → running → (done | error)`. In `running`, `status` is the durable
- * coarse run status (null in blocking — there is no per-tick status), and
- * `elapsedMs` is a smooth wall-clock counter.
+ * coarse run status (null in blocking — there is no per-tick status),
+ * `elapsedMs` is a smooth wall-clock counter, and `health` is null while
+ * polling cleanly or names why we're in a resilient/retrying state.
  */
 export type RunState<T> =
   | { phase: "idle" }
@@ -19,7 +33,7 @@ export type RunState<T> =
       mode: ExecutionMode;
       status: string | null;
       elapsedMs: number;
-      degraded: boolean;
+      health: RunHealth | null;
     }
   | { phase: "done"; output: T }
   | { phase: "error"; error: PipelineError };
@@ -123,7 +137,7 @@ export function useRun<TInput, TOutput>(
       const intervalMs = cfgRef.current.intervalMs ?? DEFAULT_INTERVAL_MS;
       const maxDurationMs = cfgRef.current.maxDurationMs ?? DEFAULT_MAX_DURATION_MS;
 
-      setState({ phase: "running", mode, status: null, elapsedMs: 0, degraded: false });
+      setState({ phase: "running", mode, status: null, elapsedMs: 0, health: null });
       startTicker();
 
       const fail = (error: PipelineError) => {
@@ -174,15 +188,15 @@ export function useRun<TInput, TOutput>(
         };
 
         // A tick that failed to get a verdict: keep polling unless the streak
-        // exceeds the budget. Surface the degraded state so the UI shows we're
-        // struggling but still trying.
+        // exceeds the budget. Surface `retrying` so the UI shows we hit a blip
+        // but are still trying — the run keeps executing server-side.
         const onTransient = (error: PipelineError) => {
           transientFailures += 1;
           if (transientFailures > MAX_TRANSIENT_POLL_FAILURES) {
             fail(error);
             return;
           }
-          setState((prev) => (prev.phase === "running" ? { ...prev, degraded: true } : prev));
+          setState((prev) => (prev.phase === "running" ? { ...prev, health: "retrying" } : prev));
           scheduleNext(intervalMs);
         };
 
@@ -210,10 +224,17 @@ export function useRun<TInput, TOutput>(
           return;
         }
 
-        // running: refresh the live status (the ticker keeps elapsedMs current).
+        // running: refresh the live status (the ticker keeps elapsedMs
+        // current). A verdict-bearing tick cleared the transient streak above,
+        // so `health` now reflects only the server's own signal:
+        // `reconnecting` when it served a last-known status, else clean.
         setState((prev) =>
           prev.phase === "running"
-            ? { ...prev, status: outcome.status, degraded: outcome.degraded }
+            ? {
+                ...prev,
+                status: outcome.status,
+                health: outcome.degraded ? "reconnecting" : null,
+              }
             : prev,
         );
         scheduleNext(Math.max(intervalMs, (outcome.retryAfterSeconds ?? 0) * 1000));

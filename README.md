@@ -45,7 +45,7 @@ make install
 make dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) and try the three example tabs.
+Open [http://localhost:4100](http://localhost:4100) and try the three example tabs.
 
 ## Project structure
 
