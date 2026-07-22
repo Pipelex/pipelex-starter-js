@@ -1,10 +1,23 @@
 # Changelog
 
-## [Unreleased]
+## [v0.3.0] - 2026-07-22
+
+### Added
+
+- **Cost Reports (`tokens_usages`)**: Added token usage and cost tracking for both blocking and durable runs, surfaced via a new `<CostReport>` component (rendered across the Entity, Image, and PDF example forms) that breaks down per-call token usage, model types, and computed USD costs. Backed by new `src/lib/usageReport.ts` utilities that parse and project raw `tokens_usages` and `usage_assembly_error` data into a render-ready format.
+- **Upload Error Handling**: Added an `upload_failed` error kind in `src/lib/errors.ts` to classify SDK `InputPreparationError`s (e.g., `UnsupportedUploadCapabilityError`, `RejectedAssetError`, `UploadAuthenticationError`) with actionable, user-friendly UI messages.
 
 ### Changed
 
-- Bumped `@pipelex/sdk` to `0.4.0` (was `0.3.1`). All of `0.4.0`'s breaking changes (the `files[]` envelope and discriminated `200` verdicts on `buildInputs`/`buildOutput`/`buildRunner`, the raised `mthds` floor) are scoped to the `/v1/build/*` and tools routes, which this repo doesn't call — it only uses `execute`/`start`/`getRunStatus`/`getRunResult`. No code changes needed.
+- **Cleaner File Uploads (Breaking)**: Replaced the hand-rolled base64 `Document` envelope in the PDF summarization pipeline with the SDK's `client.prepareInputs()`. Files now upload directly to Pipelex storage and pass to the run as lightweight `pipelex-storage://` URIs. This removes `buildDocumentInput` and `DocumentInput` from `src/lib/fileEncoding.ts` (pre-flight size and MIME validation remains intact).
+- **Improved Polling Status UI**: Refactored the `useRun` hook and `<RunStatus>` component to replace the generic `degraded` boolean with a descriptive `health` state (`"reconnecting"` or `"retrying"`), providing cause-specific copy during transient network blips or server reconnects.
+- **Development Port**: Changed the default local development and Playwright testing port from `3000` to `4100` (`package.json`, `README.md`, `playwright.config.ts`).
+- **Dependencies**: Bumped `@pipelex/sdk` from `0.3.1` to `^0.5.1` (through `0.4.0` and `0.5.0`). `0.4.0`'s breaking changes are scoped to the `/v1/build/*` and tools routes this repo doesn't call; `0.5.0` delivered the typed `tokens_usages` and `prepareInputs` upload surface the two features above build on.
+- **Testing**: Updated action-layer tests to use `toMatchObject` instead of `toEqual` to accommodate the new `usage` sibling property in run outcomes.
+
+### Security
+
+- **SDK Dependency Patch**: The final `0.5.1` hop inherits a patch for a transitive **dev** dependency (`brace-expansion`, CVE-2026-13149) in the SDK's own lockfile. That dependency is never shipped in the SDK's runtime surface, so no code changes were required here.
 
 ## [v0.2.1] - 2026-07-10
 
