@@ -36,7 +36,11 @@ describe("findOutputContent", () => {
       pipeline_run_id: "r",
       main_stuff: { caption: "no url" },
       pipe_output: {
-        working_memory: { root: { e: { content: { url: "https://ignored" } } } },
+        pipeline_run_id: "r",
+        working_memory: {
+          root: { e: { concept: "Image", content: { url: "https://ignored" } } },
+          aliases: {},
+        },
       },
     };
     expect(findOutputContent(results, hasUrl)).toBeUndefined();

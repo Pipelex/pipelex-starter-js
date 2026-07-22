@@ -43,11 +43,26 @@ const IMAGE = {
   mimeType: "image/png",
   caption: null,
 };
+const USAGE = {
+  calls: [
+    {
+      modelName: "gpt-image-1-mini",
+      modelType: "img_gen",
+      pipeCode: "generate_image",
+      tokensByCategory: null,
+      costUsd: 0.02,
+    },
+  ],
+  totalCostUsd: 0.02,
+  hasCost: true,
+  state: "records" as const,
+  assemblyError: null,
+};
 
 describe("ImageForm", () => {
   it("durable mode (default): renders the generated image", async () => {
     start.mockResolvedValueOnce({ ok: true, runId: "run-1" });
-    poll.mockResolvedValueOnce({ ok: true, state: "completed", output: IMAGE });
+    poll.mockResolvedValueOnce({ ok: true, state: "completed", output: IMAGE, usage: USAGE });
 
     render(<ImageForm />);
     submitForm();

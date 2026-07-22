@@ -53,7 +53,9 @@ describe("runSummarizePdfBlocking", () => {
       mthds_contents: ["DUMMY_BUNDLE_TOML"],
       inputs: DOC_INPUT,
     });
-    expect(result).toEqual({ ok: true, output: PARSED });
+    // `toMatchObject`: these tests assert delegation + narrowed output; the `usage`
+    // sibling now on the outcome is covered in the helper/model tests.
+    expect(result).toMatchObject({ ok: true, output: PARSED });
   });
 
   it("returns a bad_request error on empty input without calling the SDK", async () => {
@@ -120,6 +122,6 @@ describe("pollSummarizePdfRun", () => {
       result: { pipeline_run_id: "run-1", main_stuff: SUMMARY },
     });
     const result = await pollSummarizePdfRun("run-1");
-    expect(result).toEqual({ ok: true, state: "completed", output: PARSED });
+    expect(result).toMatchObject({ ok: true, state: "completed", output: PARSED });
   });
 });

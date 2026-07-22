@@ -96,7 +96,41 @@ describe("pollDurableRun", () => {
       result: { pipeline_run_id: "run-1", main_stuff: ENTITIES },
     });
     const result = await pollDurableRun("run-1", parseEntities);
-    expect(result).toEqual({ ok: true, state: "completed", output: ENTITIES });
+    // No usage on the result → an "unavailable" report rides alongside the output.
+    expect(result).toEqual({
+      ok: true,
+      state: "completed",
+      output: ENTITIES,
+      usage: {
+        calls: [],
+        totalCostUsd: null,
+        hasCost: false,
+        state: "unavailable",
+        assemblyError: null,
+      },
+    });
+  });
+
+  it("builds the usage report from the completed result's tokens_usages", async () => {
+    getRunStatus.mockResolvedValueOnce({ status: "COMPLETED", degraded: false });
+    getRunResult.mockResolvedValueOnce({
+      state: "completed",
+      pipeline_run_id: "run-1",
+      result: {
+        pipeline_run_id: "run-1",
+        main_stuff: ENTITIES,
+        tokens_usages: [
+          { inference_model_name: "gpt-4o", pipe_code: "extract_entities", cost: 0.002 },
+        ],
+        usage_assembly_error: null,
+      },
+    });
+    const result = await pollDurableRun("run-1", parseEntities);
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.state !== "completed") return;
+    expect(result.usage.state).toBe("records");
+    expect(result.usage.totalCostUsd).toBeCloseTo(0.002);
+    expect(result.usage.calls[0].modelName).toBe("gpt-4o");
   });
 
   it("classifies a failed terminal status as run_failed (constructed from the result lookup)", async () => {

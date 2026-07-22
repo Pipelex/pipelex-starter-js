@@ -38,6 +38,21 @@ function submitForm() {
 }
 
 const ENTITIES = { people: ["Tim Cook"], orgs: ["Apple"], dates: ["2026-03-05"] };
+const USAGE = {
+  calls: [
+    {
+      modelName: "gpt-4o",
+      modelType: "llm",
+      pipeCode: "extract_entities",
+      tokensByCategory: { input: 1200, output: 340 },
+      costUsd: 0.0042,
+    },
+  ],
+  totalCostUsd: 0.0042,
+  hasCost: true,
+  state: "records" as const,
+  assemblyError: null,
+};
 
 describe("EntityForm", () => {
   it("durable mode (default): streams live status, then renders the result", async () => {
@@ -50,7 +65,7 @@ describe("EntityForm", () => {
         degraded: false,
         retryAfterSeconds: null,
       })
-      .mockResolvedValueOnce({ ok: true, state: "completed", output: ENTITIES });
+      .mockResolvedValueOnce({ ok: true, state: "completed", output: ENTITIES, usage: USAGE });
 
     render(<EntityForm />);
     submitForm();
@@ -60,12 +75,14 @@ describe("EntityForm", () => {
 
     await flush(2000); // scheduled second poll → completed
     expect(screen.getByText("Tim Cook")).toBeInTheDocument();
+    // The cost report is wired in beside the result.
+    expect(screen.getByText("gpt-4o")).toBeInTheDocument();
     expect(start).toHaveBeenCalledTimes(1);
     expect(blocking).not.toHaveBeenCalled();
   });
 
   it("blocking mode: toggling to Blocking calls the blocking action and renders the result", async () => {
-    blocking.mockResolvedValueOnce({ ok: true, output: ENTITIES });
+    blocking.mockResolvedValueOnce({ ok: true, output: ENTITIES, usage: USAGE });
 
     render(<EntityForm />);
     fireEvent.click(screen.getByRole("radio", { name: "Blocking" }));
