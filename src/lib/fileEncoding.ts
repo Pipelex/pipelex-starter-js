@@ -1,10 +1,14 @@
 import type { PipelineError } from "@/lib/errors";
 
 /**
- * Helpers for turning a base64 data URL (produced client-side by
- * `fileToDataUrl`) into a Pipelex file input — plus the validation that
- * gates it. Pure: no React, no `process.env`, safe to import from either
- * side of the server boundary.
+ * Authoritative pre-flight for a base64 data URL (produced client-side by
+ * `fileToDataUrl`): MIME + size validation that gates the file *before* it is
+ * uploaded. Building the actual run input is the SDK's job now — the Server
+ * Action hands the validated data URL to `client.prepareInputs`, which uploads
+ * it to Pipelex storage and rewrites the input to a `pipelex-storage://` URI.
+ * This gate still matters: the data URL crosses the Server Action boundary, so
+ * its size must stay under `next.config.js`'s `bodySizeLimit`. Pure: no React,
+ * no `process.env`, safe to import from either side of the server boundary.
  */
 
 /** Largest PDF the PDF example will send, measured in decoded bytes. */
@@ -94,27 +98,5 @@ export function fileInputErrorToPipelineError(
     title: fileError.kind === "file_too_large" ? "PDF too large" : "Unsupported file type",
     message: fileError.message,
     details: `${fileError.kind}: ${filename || "(no filename)"}`,
-  };
-}
-
-/** A Pipelex `Document` input envelope, as accepted by `execute`. */
-export type DocumentInput = {
-  concept: "Document";
-  content: { url: string; filename: string; mime_type: string };
-};
-
-/**
- * Build the `Document` input envelope for `execute`. The Pipelex API
- * decodes the base64 data URL server-side and uploads it to storage, so the
- * app never has to host the file itself.
- */
-export function buildDocumentInput(dataUrl: string, filename: string): DocumentInput {
-  return {
-    concept: "Document",
-    content: {
-      url: dataUrl,
-      filename,
-      mime_type: dataUrlMimeType(dataUrl) ?? "application/octet-stream",
-    },
   };
 }

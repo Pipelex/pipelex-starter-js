@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildClientTimeoutError, classifyTransportError, type PipelineError } from "@/lib/errors";
 import type { ExecutionMode } from "@/config";
+import type { UsageReport } from "@/lib/usageReport";
 import type { BlockingOutcome } from "@/lib/blockingRun";
 import type { PollOutcome, StartOutcome } from "@/lib/durableRun";
 
@@ -35,7 +36,7 @@ export type RunState<T> =
       elapsedMs: number;
       health: RunHealth | null;
     }
-  | { phase: "done"; output: T }
+  | { phase: "done"; output: T; usage: UsageReport }
   | { phase: "error"; error: PipelineError };
 
 export interface UseRunConfig<TInput, TOutput> {
@@ -145,16 +146,16 @@ export function useRun<TInput, TOutput>(
         clearTimers();
         setState({ phase: "error", error });
       };
-      const succeed = (output: TOutput) => {
+      const succeed = (output: TOutput, usage: UsageReport) => {
         if (!isCurrent()) return;
         clearTimers();
-        setState({ phase: "done", output });
+        setState({ phase: "done", output, usage });
       };
 
       if (mode === "blocking") {
         blocking(input)
           .then((outcome) => {
-            if (outcome.ok) succeed(outcome.output);
+            if (outcome.ok) succeed(outcome.output, outcome.usage);
             else fail(outcome.error);
           })
           .catch((err) => fail(classifyTransportError(err)));
@@ -220,7 +221,7 @@ export function useRun<TInput, TOutput>(
 
         transientFailures = 0; // a verdict-bearing tick clears the streak
         if (outcome.state === "completed") {
-          succeed(outcome.output);
+          succeed(outcome.output, outcome.usage);
           return;
         }
 

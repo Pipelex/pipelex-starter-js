@@ -23,6 +23,22 @@ beforeEach(() => {
   poll.mockReset();
 });
 
+const USAGE = {
+  calls: [
+    {
+      modelName: "gpt-4o",
+      modelType: "llm",
+      pipeCode: "summarize_pdf",
+      tokensByCategory: { input: 3400, output: 210 },
+      costUsd: 0.012,
+    },
+  ],
+  totalCostUsd: 0.012,
+  hasCost: true,
+  state: "records" as const,
+  assemblyError: null,
+};
+
 function pdfFile(name = "doc.pdf") {
   return new File(["%PDF-1.4 fake pdf bytes"], name, { type: "application/pdf" });
 }
@@ -37,7 +53,7 @@ async function selectFile(file: File) {
 /** A durable run that completes on the first poll (no setTimeout gap to bridge). */
 function durableCompletes(summary: { title: string; docType: string; keyPoints: string[] }) {
   start.mockResolvedValueOnce({ ok: true, runId: "run-1" });
-  poll.mockResolvedValueOnce({ ok: true, state: "completed", output: summary });
+  poll.mockResolvedValueOnce({ ok: true, state: "completed", output: summary, usage: USAGE });
 }
 
 describe("PdfForm", () => {

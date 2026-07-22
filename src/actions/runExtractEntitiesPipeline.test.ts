@@ -43,7 +43,9 @@ describe("runExtractEntitiesBlocking", () => {
       mthds_contents: ["DUMMY_BUNDLE_TOML"],
       inputs: { text: "entity text" },
     });
-    expect(result).toEqual({ ok: true, output: ENTITIES });
+    // `toMatchObject`: these tests assert delegation + narrowed output; the `usage`
+    // sibling now on the outcome is covered in the helper/model tests.
+    expect(result).toMatchObject({ ok: true, output: ENTITIES });
   });
 
   it("returns a bad_request error on empty input without calling the SDK", async () => {
@@ -95,7 +97,7 @@ describe("pollExtractEntitiesRun", () => {
     });
     const result = await pollExtractEntitiesRun("run-1");
     expect(getRunStatus).toHaveBeenCalledWith("run-1");
-    expect(result).toEqual({ ok: true, state: "completed", output: ENTITIES });
+    expect(result).toMatchObject({ ok: true, state: "completed", output: ENTITIES });
   });
 
   it("reports running while the status is non-terminal", async () => {

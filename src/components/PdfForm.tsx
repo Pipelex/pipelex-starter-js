@@ -15,6 +15,7 @@ import {
 import { classifyTransportError, type PipelineError } from "@/lib/errors";
 import { DEFAULT_EXECUTION_MODE, type ExecutionMode } from "@/config";
 import { useRun } from "@/hooks/useRun";
+import { CostReport } from "./CostReport";
 import { PdfSummaryResult } from "./PdfSummaryResult";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { ModeToggle } from "./ModeToggle";
@@ -185,7 +186,12 @@ export function PdfForm() {
       )}
       {fileError && <ErrorDisplay error={fileError} />}
       {!fileError && state.phase === "error" && <ErrorDisplay error={state.error} />}
-      {state.phase === "done" && <PdfSummaryResult summary={state.output} />}
+      {state.phase === "done" && (
+        <>
+          <PdfSummaryResult summary={state.output} />
+          <CostReport usage={state.usage} />
+        </>
+      )}
     </div>
   );
 }

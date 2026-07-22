@@ -1,12 +1,8 @@
 "use server";
 
+import { getPipelexClient } from "@/lib/pipelexClient";
 import { loadSummarizePdfBundle } from "@/lib/loadBundle";
-import {
-  MAX_PDF_BYTES,
-  buildDocumentInput,
-  fileInputErrorToPipelineError,
-  validateDataUrl,
-} from "@/lib/fileEncoding";
+import { MAX_PDF_BYTES, fileInputErrorToPipelineError, validateDataUrl } from "@/lib/fileEncoding";
 import { parseDocumentSummary, type DocumentSummary } from "@/types/summarizePipeline";
 import { executeBlockingRun, type BlockingOutcome } from "@/lib/blockingRun";
 import {
@@ -45,12 +41,31 @@ function preflight(input: SummarizePdfInput): PipelineError | null {
   return null;
 }
 
+/**
+ * Build the run options, uploading the PDF through the SDK's signature-driven
+ * `prepareInputs` instead of hand-rolling a `Document` envelope.
+ *
+ * `prepareInputs` reads the method's declared signature (`document` is a
+ * `Document` input), so it knows the bare data URL at `document` is a *file*: it
+ * uploads the decoded bytes to Pipelex storage and rewrites the input to a small
+ * `pipelex-storage://` URI. The run request then carries that reference, not the
+ * fat inline base64 the old envelope embedded. `pipe_ref` is omitted, so it
+ * defaults to the closure's `main_pipe` (`summarize_pdf`).
+ *
+ * On failure `prepareInputs` throws *before any run starts* (a typed
+ * `InputPreparationError` — see `classifyInputPreparationError`). Because this
+ * closure runs inside `executeBlockingRun` / `startDurableRun`'s try/catch, that
+ * error is classified like any other SDK error — no new try/catch here. On the
+ * durable path the upload happens once, at start; `poll` never rebuilds options,
+ * so there is no re-upload.
+ */
 async function buildOptions(input: SummarizePdfInput): Promise<StartOptions> {
-  return {
-    pipe_code: PIPE_CODE,
-    mthds_contents: [await loadSummarizePdfBundle()],
-    inputs: { document: buildDocumentInput(input.dataUrl, input.filename || "document.pdf") },
-  };
+  const bundle = await loadSummarizePdfBundle();
+  const prepared = await getPipelexClient().prepareInputs({
+    files: [{ content: bundle }],
+    inputs: { document: input.dataUrl },
+  });
+  return { pipe_code: PIPE_CODE, mthds_contents: [bundle], inputs: prepared.inputs };
 }
 
 /** BLOCKING path: summarize an uploaded PDF synchronously (`POST /v1/execute`). */
