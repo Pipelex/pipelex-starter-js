@@ -105,51 +105,36 @@ Additive and low-risk: no run-path behavior changes, just a new sibling value pl
 
 Replace the hand-rolled `Document` envelope in the PDF path with signature-driven `client.prepareInputs`. Keep the client-side data-URL encoding and the server-side pre-flight (they guard the still-present Server Action boundary).
 
-### B1 — Swap the PDF `buildOptions` to `prepareInputs`
+### B1 — Swap the PDF `buildOptions` to `prepareInputs` ✅
 
-- [ ] `src/actions/runSummarizePdfPipeline.ts`: rewrite `buildOptions` to prepare inputs via the SDK instead of `buildDocumentInput`:
-
-  ```ts
-  async function buildOptions(input: SummarizePdfInput): Promise<StartOptions> {
-    const bundle = await loadSummarizePdfBundle();
-    const prepared = await getPipelexClient().prepareInputs({
-      files: [{ content: bundle }],
-      pipe_ref: "summarize_pdf.summarize_pdf", // domain.pipe_code; or omit → defaults to main_pipe
-      inputs: { document: { url: input.dataUrl, filename: input.filename || "document.pdf" } },
-    });
-    return { pipe_code: PIPE_CODE, mthds_contents: [bundle], inputs: prepared.inputs };
-  }
-  ```
-
+- [x] `src/actions/runSummarizePdfPipeline.ts`: `buildOptions` now prepares inputs via `getPipelexClient().prepareInputs({ files: [{ content: bundle }], inputs: { document: input.dataUrl } })` and passes `prepared.inputs` to the run.
   - The method: `methods/summarize-pdf/main.mthds` — `domain = "summarize_pdf"`, `main_pipe = "summarize_pdf"`, input var `document` = concept `Document`.
-  - **Decision (verify against `behavior-matrix.md` + a live run):** pass the **canonical content** `{ url: dataUrl, filename }` at `document` (preserves filename; exercises `prepareInputs`' url-bearing-content upload path). The more minimal signature-driven form is a **bare data-URL string** at `document` (let the Document-declared signature classify it) — try it and keep whichever reads cleanest as the template's teaching example. Note: nothing currently renders the filename, so losing it is cosmetic.
-  - Because `prepareInputs` throws before the run on failure and it's called inside `buildOptions` (which runs within `executeBlockingRun` / `startDurableRun`'s try/catch), its errors are classified by the existing catch — no new try/catch here. On the **durable** path, `startDurableRun` calls `buildOptions` (upload happens once, at start); `poll` never rebuilds, so no re-upload.
-  - `getPipelexClient` must be imported into the action (currently the action never touches the client directly — the helpers do). This is a deliberate, contained exception: preparing inputs is a pre-run SDK call, distinct from executing. Keep it in `buildOptions`.
+  - **Decision (SETTLED):** pass the **bare data-URL string** at `document`, not the canonical `{ url, filename }` content. It reads cleanest as a template and best demonstrates the signature-driven behavior — the SDK classifies the string as a file purely from the declared `document = Document` signature, no envelope to hand-build. Nothing renders the filename, so dropping it is cosmetic (`input.filename` is still used by `preflight` for error copy). `pipe_ref` **omitted** → defaults to the closure's `main_pipe` (`summarize_pdf`); one less thing to explain.
+  - `prepareInputs` throws before the run on failure; it runs inside `buildOptions` (within `executeBlockingRun` / `startDurableRun`'s try/catch), so its errors go through the existing catch — no new try/catch. On the **durable** path the upload happens once at start; `poll` never rebuilds, so no re-upload.
+  - `getPipelexClient` is now imported into the action (a deliberate, contained exception — preparing inputs is a pre-run SDK call, kept in `buildOptions`).
 
-### B2 — Classify upload / preparation errors
+### B2 — Classify upload / preparation errors ✅
 
-- [ ] `src/lib/errors.ts`: add a `PipelineErrorKind` for upload failures (recommend a single `"upload_failed"` with subclass-tailored copy, mirroring `classifyServerError`'s switch). Import the typed classes from `@pipelex/sdk`: `InputPreparationError` (base), `InvalidLocalSourceError`, `RejectedAssetError`, `UnsupportedUploadCapabilityError`, `UploadAuthenticationError`, `UploadTransportError`.
-  - Add branches in `classifyPipelineError` **above** the generic fallthrough. Suggested copy:
-    - `UnsupportedUploadCapabilityError` → "This API doesn't support file upload" — analogous to `lifecycle_unavailable`; point at the hosted API (`PIPELEX_BASE_URL=https://api.pipelex.com`). Consider setting `apiMessage` to the server's verbatim text.
-    - `RejectedAssetError` → "The file was rejected" (server size cap / 413) — restate service-defined limit; suggest a smaller file.
-    - `UploadAuthenticationError` → reuse the auth-missing/invalid framing (401/403 on upload).
-    - `UploadTransportError` / `InvalidLocalSourceError` → generic upload-failed with technical details.
-  - Keep the base `InputPreparationError` branch last so any future subclass is still classified (not `unknown`).
-- [ ] `src/lib/errors.test.ts`: cover each new branch (construct each subclass and assert `kind` + title).
+- [x] `src/lib/errors.ts`: added a single `"upload_failed"` `PipelineErrorKind` with subclass-tailored copy (mirrors `classifyServerError`'s switch), in a new `classifyInputPreparationError(err, env)` reached by an `if (err instanceof InputPreparationError)` branch placed after the run-lifecycle checks (disjoint from every other class, so ordering is safe). Imports `InputPreparationError`, `RejectedAssetError`, `UnsupportedUploadCapabilityError`, `UploadAuthenticationError` from `@pipelex/sdk`. Copy:
+  - `UnsupportedUploadCapabilityError` → "File upload isn't available on this API" — analogous to `lifecycle_unavailable`; hint points `PIPELEX_BASE_URL` at the hosted API.
+  - `RejectedAssetError` → "The PDF was rejected by the server" (413 / size cap); `apiMessage` = the wrapped `ApiResponseError.serverMessage` (via a `causeServerMessage` helper reading `err.cause`); details carry the filename.
+  - `UploadAuthenticationError` → "File upload was not authorized" (401/403), hint mentions `PIPELEX_API_KEY`. **Kept as one `upload_failed` kind** (not routed to `auth_missing/invalid`) per the "one kind" recommendation — the copy still tells the user to fix the key.
+  - **Default (base `InputPreparationError`)** last → generic "Preparing the PDF for upload failed" with technical details. Covers `UploadTransportError`, `InvalidLocalSourceError`, a malformed data URL, and any future subclass (never `unknown`) — those two aren't imported since they fall to the default.
+- [x] `src/lib/errors.test.ts`: a new describe block constructs each subclass (`UnsupportedUploadCapabilityError`, `RejectedAssetError` with an `ApiResponseError` cause, `UploadAuthenticationError`, `InvalidLocalSourceError` + `UploadTransportError` → generic, base `InputPreparationError` → generic) and asserts `kind` + title/message/apiMessage.
 
-### B3 — Retire the hand-rolled envelope, keep the guards
+### B3 — Retire the hand-rolled envelope, keep the guards ✅
 
-- [ ] `src/lib/fileEncoding.ts`: remove `buildDocumentInput` + the `DocumentInput` type (now the SDK's job). **Keep** `validateDataUrl`, `MAX_PDF_BYTES`, `dataUrlMimeType`, `dataUrlByteLength`, `fileInputErrorToPipelineError` — the pre-flight still runs (fast UX + Server-Action body-limit protection) since the data URL still crosses to the server.
-- [ ] Update `src/lib/fileEncoding.test.ts` (drop `buildDocumentInput` tests; keep validation tests).
-- [ ] `runSummarizePdfPipeline.ts`: drop the `buildDocumentInput` import; `preflight` (empty-input + `validateDataUrl`) stays unchanged.
-- [ ] `next.config.js`: leave `bodySizeLimit: "12mb"` and its comment (still accurate — the data URL still transits the Server Action). The follow-up doc is where that boundary gets removed.
+- [x] `src/lib/fileEncoding.ts`: removed `buildDocumentInput` + `DocumentInput`. Kept `validateDataUrl`, `MAX_PDF_BYTES`, `dataUrlMimeType`, `dataUrlByteLength`, `fileInputErrorToPipelineError`. Updated the module doc comment to describe the file's now-narrower job (authoritative pre-flight, not envelope-building).
+- [x] `src/lib/fileEncoding.test.ts`: dropped the `buildDocumentInput` describe + import; validation tests unchanged.
+- [x] `runSummarizePdfPipeline.ts`: dropped the `buildDocumentInput` import; `preflight` unchanged.
+- [x] `next.config.js`: left `bodySizeLimit: "12mb"` + comment (still accurate — the data URL still transits the Server Action). The follow-up doc removes that boundary.
 
-### B4 — Unit tests for the new PDF path
+### B4 — Unit tests for the new PDF path ✅
 
-- [ ] Action/helper tests: mock `@/lib/pipelexClient` to return `prepareInputs` (resolves `{ inputs: {...}, uploads: [...] }`) alongside `execute` / `start` / `getRunStatus` / `getRunResult`. Assert the blocking path calls `prepareInputs` then `execute` with `prepared.inputs`; assert a rejected `prepareInputs` (e.g. `UnsupportedUploadCapabilityError`) yields `{ ok:false, error.kind: "upload_failed" }`.
-- [ ] `PdfForm` test: unchanged in spirit (mock `@/actions/runSummarizePdfPipeline`); the form doesn't know about uploads.
+- [x] `runSummarizePdfPipeline.test.ts`: mock client now includes `prepareInputs` (resolves `{ inputs, uploads }`). Asserts blocking + durable both call `prepareInputs` with the bare-data-URL request then `execute`/`start` with `prepared.inputs`; a rejected `prepareInputs` (`UnsupportedUploadCapabilityError`) yields `{ ok:false, error.kind: "upload_failed" }` and never runs; pre-flight rejections never call `prepareInputs`.
+- [x] `PdfForm` test: unchanged (mocks `@/actions/runSummarizePdfPipeline`; the form doesn't know about uploads) — still green.
 
-> **Checkpoint B:** `make all` green. PDF example uploads via `prepareInputs`; the run request carries a `pipelex-storage://` URI, not inline base64. Upload failures render as classified errors. Verified live in Phase C.
+> **Checkpoint B:** `make all` green ✅ **REACHED**. PDF example prepares inputs via `prepareInputs`; the run request carries a `pipelex-storage://` URI, not inline base64. Upload failures render as classified `upload_failed` errors. Live verification (the real `/v1/upload` + `/v1/build/inputs` path) is deferred to Phase C per the plan.
 
 ---
 
@@ -169,7 +154,7 @@ Replace the hand-rolled `Document` envelope in the PDF path with signature-drive
 
 - **Cost render scope:** render `<CostReport>` under **every** example (shared component, consistent template UX) rather than a single showcase. Cheap and instructive.
 - **Usage is a sibling, not narrower output** — settled: extract in the helpers, not in `parseXxx`. Keeps the narrower contract (`main_stuff` only) intact.
-- **`prepareInputs` input shape** (canonical `{ url, filename }` vs bare data-URL string) — decide during B1 against `behavior-matrix.md` + a live run; both are valid, pick the clearest for a template.
+- **`prepareInputs` input shape** — settled in B1: **bare data-URL string** at `document`, `pipe_ref` omitted (defaults to `main_pipe`). Cleanest template form; best shows the signature-driven upload. Filename drop is cosmetic (nothing renders it). Live-verify the storage rewrite in Phase C.
 - **Blocking-path usage access** (`pipe_output.tokens_usages`) — must be live-verified (A2). If the SDK exposes it more directly on `PipelexExecuteResult`, prefer that.
 - **`upload_failed` granularity** — one kind + tailored copy vs several kinds. Recommend one kind; revisit if the UI wants to branch.
 - **Out of scope (follow-up):** browser-direct upload to bypass the Server Action body limit — written up in `../wip/upload/followup-browser-direct-upload.md`.
