@@ -8,6 +8,7 @@ import {
 } from "@/actions/runExtractEntitiesPipeline";
 import { DEFAULT_EXECUTION_MODE, type ExecutionMode } from "@/config";
 import { useRun } from "@/hooks/useRun";
+import { CostReport } from "./CostReport";
 import { EntityResult } from "./EntityResult";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { ModeToggle } from "./ModeToggle";
@@ -60,10 +61,15 @@ export function EntityForm() {
       </form>
 
       {running && (
-        <RunStatus status={state.status} elapsedMs={state.elapsedMs} degraded={state.degraded} />
+        <RunStatus status={state.status} elapsedMs={state.elapsedMs} health={state.health} />
       )}
       {state.phase === "error" && <ErrorDisplay error={state.error} />}
-      {state.phase === "done" && <EntityResult entities={state.output} />}
+      {state.phase === "done" && (
+        <>
+          <EntityResult entities={state.output} />
+          <CostReport usage={state.usage} />
+        </>
+      )}
     </div>
   );
 }

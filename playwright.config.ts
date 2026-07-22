@@ -18,13 +18,13 @@ export default defineConfig({
   // Pipeline runs hit a real LLM and can take a while; bump the per-test timeout.
   timeout: 120_000,
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: "http://localhost:4100",
     trace: "on-first-retry",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
     command: isCI ? "npm run build && npm start" : "npm run dev",
-    url: "http://localhost:3000",
+    url: "http://localhost:4100",
     reuseExistingServer: !isCI,
     timeout: 120_000,
   },

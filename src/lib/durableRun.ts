@@ -1,6 +1,7 @@
 import { getPipelexClient } from "@/lib/pipelexClient";
 import { classifyPipelineError, type PipelineError, type PipelineErrorKind } from "@/lib/errors";
 import { readClassifyEnv } from "@/lib/serverEnv";
+import { buildUsageReport, type UsageReport } from "@/lib/usageReport";
 import {
   RunFailedError,
   isTerminalRunStatus,
@@ -19,7 +20,7 @@ export type PollOutcome<T> =
       degraded: boolean;
       retryAfterSeconds: number | null;
     }
-  | { ok: true; state: "completed"; output: T }
+  | { ok: true; state: "completed"; output: T; usage: UsageReport }
   | { ok: false; error: PipelineError; transient: boolean };
 
 /**
@@ -94,7 +95,14 @@ export async function pollDurableRun<T>(
 
     const res = await client.getRunResult(runId);
     if (res.state === "completed") {
-      return { ok: true, state: "completed", output: parse(res.result) };
+      // `res.result` is a full `RunResults`, so usage rides on it directly (the
+      // hosted results route relays the `tokens_usages.json` artifact) — no lift.
+      return {
+        ok: true,
+        state: "completed",
+        output: parse(res.result),
+        usage: buildUsageReport(res.result),
+      };
     }
     if (res.state === "failed") {
       // A genuine run failure is terminal — never retried.

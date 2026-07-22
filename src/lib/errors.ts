@@ -9,11 +9,15 @@ import {
   ApiResponseError,
   ApiUnreachableError,
   ClientAuthenticationError,
+  InputPreparationError,
   PipelineExecuteTimeoutError,
+  RejectedAssetError,
   RunFailedError,
   RunLifecycleUnavailableError,
   RunStillRunningError,
   RunTimeoutError,
+  UnsupportedUploadCapabilityError,
+  UploadAuthenticationError,
 } from "@pipelex/sdk";
 import { BadImageOutputError, BadPipelineOutputError } from "@/types/pipelineError";
 
@@ -39,6 +43,11 @@ export type PipelineErrorKind =
   | "run_failed"
   | "run_timeout"
   | "lifecycle_unavailable"
+  // Input-preparation / upload failure from the SDK's `prepareInputs` — the PDF
+  // path uploads the file to Pipelex storage before the run, and that upload can
+  // fail in a few distinct, actionable ways. Classified from `InputPreparationError`
+  // and its subclasses into one kind with subclass-tailored copy.
+  | "upload_failed"
   // Pre-flight validation kinds: built inline by a Server Action before the
   // SDK call (see `runSummarizePdfPipeline` / `fileInputErrorToPipelineError`),
   // never produced by `classifyPipelineError` — there is no thrown error to
@@ -113,6 +122,7 @@ export function classifyPipelineError(
   if (err instanceof RunFailedError) return classifyRunFailed(err);
   if (err instanceof RunTimeoutError) return classifyRunTimeout(err);
   if (err instanceof RunLifecycleUnavailableError) return classifyLifecycleUnavailable(err, env);
+  if (err instanceof InputPreparationError) return classifyInputPreparationError(err, env);
   if (err instanceof BadImageOutputError) return classifyBadImageOutput(err);
   if (err instanceof BadPipelineOutputError) return classifyBadOutput(err);
   if (isFsNotFound(err)) return classifyBundleMissing(err);
@@ -420,6 +430,79 @@ function classifyLifecycleUnavailable(
     },
     details: `${err.name}: ${err.message}`,
   };
+}
+
+/**
+ * Classify an SDK input-preparation failure (`prepareInputs` / `uploadFile`) into
+ * a single `upload_failed` kind with subclass-tailored copy — the PDF path
+ * uploads the file to Pipelex storage before the run, and that upload can fail in
+ * a few distinct, actionable ways. Mirrors `classifyServerError`'s switch: branch
+ * on the concrete subclass, then fall back to the base `InputPreparationError` so
+ * any future subclass is still classified (never `unknown`).
+ */
+function classifyInputPreparationError(
+  err: InputPreparationError,
+  env: ClassifyEnv,
+): PipelineError {
+  const details = `${err.name}: ${err.message}`;
+
+  // No upload route (404) — like a bare runner missing the durable lifecycle, but
+  // for the upload capability. Point at the hosted API, which supports upload.
+  if (err instanceof UnsupportedUploadCapabilityError) {
+    const url = env.apiUrl || "(unknown)";
+    return {
+      kind: "upload_failed",
+      title: "File upload isn't available on this API",
+      message: `Preparing the PDF means uploading it to Pipelex storage first, but ${url} has no upload route — it looks like a bare pipelex-api runner. File upload is a hosted Pipelex capability.`,
+      hint: {
+        summary: "Point PIPELEX_BASE_URL at the hosted API, which supports upload:",
+        code: "PIPELEX_BASE_URL=https://api.pipelex.com",
+        codeLanguage: "env",
+      },
+      details,
+    };
+  }
+
+  // Server refused the asset (413) — past the service-defined size cap.
+  if (err instanceof RejectedAssetError) {
+    return {
+      kind: "upload_failed",
+      title: "The PDF was rejected by the server",
+      message: `Pipelex storage refused the upload (HTTP ${err.status}) — the file is likely past the service's size limit. Try a smaller PDF.`,
+      apiMessage: causeServerMessage(err),
+      details: `${details}\nfilename: ${err.filename}`,
+    };
+  }
+
+  // Upload not authorized (401/403) — same fix as run auth, framed for upload.
+  if (err instanceof UploadAuthenticationError) {
+    return {
+      kind: "upload_failed",
+      title: "File upload was not authorized",
+      message: `Pipelex storage rejected the upload (HTTP ${err.status}) — the PIPELEX_API_KEY is missing or not valid for uploads on this API.`,
+      hint: {
+        summary: "Check the API key in .env.local and restart the dev server:",
+        code: "PIPELEX_API_KEY=your-key-here",
+        codeLanguage: "env",
+      },
+      details,
+    };
+  }
+
+  // InvalidLocalSourceError, UploadTransportError, a malformed data URL (the base
+  // InputPreparationError), or any future subclass — a generic upload failure.
+  return {
+    kind: "upload_failed",
+    title: "Preparing the PDF for upload failed",
+    message:
+      "The starter couldn't upload the PDF to Pipelex storage before running the pipeline. The technical details below should help track it down.",
+    details,
+  };
+}
+
+/** The verbatim server message from a preparation error's wrapped API response, if any. */
+function causeServerMessage(err: { cause?: unknown }): string | undefined {
+  return err.cause instanceof ApiResponseError ? err.cause.serverMessage : undefined;
 }
 
 function classifyBadOutput(err: BadPipelineOutputError): PipelineError {

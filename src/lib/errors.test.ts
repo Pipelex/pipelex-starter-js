@@ -3,11 +3,17 @@ import {
   ApiResponseError,
   ApiUnreachableError,
   ClientAuthenticationError,
+  InputPreparationError,
+  InvalidLocalSourceError,
   PipelineExecuteTimeoutError,
+  RejectedAssetError,
   RunFailedError,
   RunLifecycleUnavailableError,
   RunStillRunningError,
   RunTimeoutError,
+  UnsupportedUploadCapabilityError,
+  UploadAuthenticationError,
+  UploadTransportError,
 } from "@pipelex/sdk";
 import { BadImageOutputError, BadPipelineOutputError } from "@/types/pipelineError";
 import {
@@ -414,6 +420,64 @@ describe("classifyPipelineError — run-lifecycle errors", () => {
     expect(result.message).toContain("http://localhost:8081");
     expect(result.hint?.summary).toMatch(/Blocking/i);
     expect(result.hint?.code).toContain("PIPELEX_BASE_URL");
+  });
+});
+
+describe("classifyPipelineError — input-preparation (upload) errors", () => {
+  it("classifies UnsupportedUploadCapabilityError into upload_failed pointing at the hosted API", () => {
+    const err = new UnsupportedUploadCapabilityError("no /v1/upload route");
+    const result = classifyPipelineError(err, LOCAL_ENV);
+    expect(result.kind).toBe("upload_failed");
+    expect(result.title).toMatch(/isn't available/i);
+    expect(result.message).toContain("http://localhost:8081");
+    expect(result.hint?.code).toContain("PIPELEX_BASE_URL");
+  });
+
+  it("classifies RejectedAssetError into upload_failed, surfacing the server's verbatim message", () => {
+    const cause = new ApiResponseError(
+      "...",
+      "https://api.pipelex.com",
+      413,
+      "Payload Too Large",
+      "",
+      undefined,
+      "asset exceeds the 50 MiB service limit",
+      undefined,
+      undefined,
+    );
+    const err = new RejectedAssetError("rejected big.pdf", "big.pdf", 413, { cause });
+    const result = classifyPipelineError(err, CLOUD_ENV);
+    expect(result.kind).toBe("upload_failed");
+    expect(result.title).toMatch(/rejected/i);
+    expect(result.message).toContain("413");
+    expect(result.apiMessage).toBe("asset exceeds the 50 MiB service limit");
+    expect(result.details).toContain("big.pdf");
+  });
+
+  it("classifies UploadAuthenticationError into upload_failed with the API-key hint", () => {
+    const err = new UploadAuthenticationError("upload not authorized", 401);
+    const result = classifyPipelineError(err, CLOUD_ENV);
+    expect(result.kind).toBe("upload_failed");
+    expect(result.title).toMatch(/not authorized/i);
+    expect(result.hint?.code).toContain("PIPELEX_API_KEY");
+  });
+
+  it("classifies InvalidLocalSourceError and UploadTransportError as generic upload_failed", () => {
+    for (const err of [
+      new InvalidLocalSourceError("cannot read path", "/tmp/x.pdf"),
+      new UploadTransportError("network fault"),
+    ]) {
+      const result = classifyPipelineError(err, CLOUD_ENV);
+      expect(result.kind).toBe("upload_failed");
+      expect(result.title).toMatch(/Preparing the PDF/i);
+    }
+  });
+
+  it("falls back to generic upload_failed for the base InputPreparationError (e.g. a malformed data URL)", () => {
+    const err = new InputPreparationError("Malformed data URL payload (invalid base64)");
+    const result = classifyPipelineError(err, CLOUD_ENV);
+    expect(result.kind).toBe("upload_failed");
+    expect(result.details).toContain("Malformed data URL");
   });
 });
 

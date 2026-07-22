@@ -31,7 +31,47 @@ describe("executeBlockingRun", () => {
     const result = await executeBlockingRun(async () => OPTIONS, parseEntities);
 
     expect(execute).toHaveBeenCalledWith(OPTIONS);
-    expect(result).toEqual({ ok: true, output: { people: ["Ada"], orgs: [], dates: [] } });
+    // No `pipe_output` on the response → the usage pair is absent → "unavailable".
+    expect(result).toEqual({
+      ok: true,
+      output: { people: ["Ada"], orgs: [], dates: [] },
+      usage: {
+        calls: [],
+        totalCostUsd: null,
+        hasCost: false,
+        state: "unavailable",
+        assemblyError: null,
+      },
+    });
+  });
+
+  it("lifts tokens_usages off the execute response's pipe_output into the usage report", async () => {
+    // On the blocking path the usage pair rides the extension-open `pipe_output`;
+    // the adapter lifts it onto RunResults so `buildUsageReport` reads it like durable.
+    execute.mockResolvedValueOnce({
+      pipeline_run_id: "run-1",
+      main_stuff: { people: ["Ada"], orgs: [], dates: [] },
+      pipe_output: {
+        pipeline_run_id: "run-1",
+        working_memory: { root: {}, aliases: {} },
+        tokens_usages: [
+          {
+            inference_model_name: "gpt-4o",
+            pipe_code: "extract_entities",
+            nb_tokens_by_category: { input: 10, output: 5 },
+            cost: 0.001,
+          },
+        ],
+        usage_assembly_error: null,
+      },
+    });
+
+    const result = await executeBlockingRun(async () => OPTIONS, parseEntities);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.usage.state).toBe("records");
+    expect(result.usage.totalCostUsd).toBeCloseTo(0.001);
+    expect(result.usage.calls[0].modelName).toBe("gpt-4o");
   });
 
   it("classifies a thrown SDK error", async () => {

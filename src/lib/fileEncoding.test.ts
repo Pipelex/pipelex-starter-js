@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   MAX_PDF_BYTES,
-  buildDocumentInput,
   dataUrlByteLength,
   dataUrlMimeType,
   fileInputErrorToPipelineError,
@@ -76,19 +75,6 @@ describe("validateDataUrl", () => {
     // Base64 padding only appears at the very end; embedded `==` is invalid.
     const result = validateDataUrl("data:application/pdf;base64,AB==A===", opts);
     expect(result?.kind).toBe("unsupported_file_type");
-  });
-});
-
-describe("buildDocumentInput", () => {
-  it("builds a Document envelope with url, filename, and mime_type", () => {
-    expect(buildDocumentInput(PDF_DATA_URL, "invoice.pdf")).toEqual({
-      concept: "Document",
-      content: {
-        url: PDF_DATA_URL,
-        filename: "invoice.pdf",
-        mime_type: "application/pdf",
-      },
-    });
   });
 });
 

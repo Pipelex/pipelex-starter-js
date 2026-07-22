@@ -8,6 +8,7 @@ import {
 } from "@/actions/runGenerateImagePipeline";
 import { DEFAULT_EXECUTION_MODE, type ExecutionMode } from "@/config";
 import { useRun } from "@/hooks/useRun";
+import { CostReport } from "./CostReport";
 import { ImageResult } from "./ImageResult";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { ModeToggle } from "./ModeToggle";
@@ -61,10 +62,15 @@ export function ImageForm() {
       </form>
 
       {running && (
-        <RunStatus status={state.status} elapsedMs={state.elapsedMs} degraded={state.degraded} />
+        <RunStatus status={state.status} elapsedMs={state.elapsedMs} health={state.health} />
       )}
       {state.phase === "error" && <ErrorDisplay error={state.error} />}
-      {state.phase === "done" && <ImageResult image={state.output} />}
+      {state.phase === "done" && (
+        <>
+          <ImageResult image={state.output} />
+          <CostReport usage={state.usage} />
+        </>
+      )}
     </div>
   );
 }
