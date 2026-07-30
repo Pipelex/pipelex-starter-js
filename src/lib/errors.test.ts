@@ -167,7 +167,7 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
     for (const errorType of [
       "PipeValidationError",
       "PipeFactoryError",
-      "PipelexInterpreterError",
+      "MthdsParserError",
       "MthdsDecodeError",
     ]) {
       const err = new ApiResponseError(
