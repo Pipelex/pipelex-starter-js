@@ -121,7 +121,7 @@ Image **outputs** (the image example) come back as a URL — a storage URL or a 
 | `make check`        | lint + format-check + typecheck                                                                     |
 | `make all`          | check + test + build (does **not** run e2e — see `test-e2e`)                                        |
 | `make use-local`    | Pack & install sibling `../pipelex-sdk-js` into `node_modules` (alias: `ul`)                        |
-| `make use-npm`      | Restore the npm-published `@pipelex/sdk` package (alias: `un`)                                      |
+| `make use-npm`      | Restore the latest npm-published `@pipelex/sdk` package (alias: `un`)                               |
 
 ## End-to-end testing (optional)
 
@@ -141,7 +141,7 @@ If you have the [`pipelex-sdk-js`](https://github.com/Pipelex/pipelex-sdk-js) re
 
 ```bash
 make use-local   # builds ../pipelex-sdk-js, packs it with `npm pack`, installs the tarball into node_modules/@pipelex/sdk
-make use-npm     # restores the npm version
+make use-npm     # installs the latest published @pipelex/sdk and re-pins package.json to it
 ```
 
 Aliases: `make ul` / `make un`. **Re-run `make use-local` after every SDK edit** — the tarball is a snapshot, not a live link. We use a tarball install rather than a symlink because Next.js 16's Turbopack does not follow symlinked workspace packages (`Module not found: Can't resolve '@pipelex/sdk'`).
