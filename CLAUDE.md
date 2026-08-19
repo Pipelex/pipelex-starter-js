@@ -228,7 +228,7 @@ Other targets that matter:
 
 ## Git Workflow
 
-- **PR target branch**: `main`.
+- **PR target branch**: `dev`. The one exception is a `release/vX.Y.Z` branch, which targets `main`.
 - **Branch naming**: prefix with `feature/`, `refactor/`, `docs/`, or `chore/` (e.g. `feature/durable-runs-dual-mode`).
 
 ## Anti-patterns to Avoid
