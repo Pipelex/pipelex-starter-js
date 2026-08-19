@@ -70,7 +70,7 @@ clean: ## Remove build artifacts and caches
 # By default, `make install` fetches the published `@pipelex/sdk` package from
 # npm. `make use-local` packs and installs the sibling ../pipelex-sdk-js so you
 # can develop the SDK and the starter side-by-side. `make use-npm` restores the
-# npm version.
+# latest published version and re-pins package.json to it.
 #
 # We use `npm pack` + tarball install rather than a symlink because Next.js
 # 16's Turbopack does not follow symlinked workspace packages — `npm run dev`
@@ -92,10 +92,15 @@ use-local: ## Pack and install ../pipelex-sdk-js into node_modules for local SDK
 	@rm -f /tmp/pipelex-sdk-local.tgz
 	@echo "Now using local ../pipelex-sdk-js (tarball install). Re-run after every SDK edit. 'make use-npm' to switch back."
 
-use-npm: ## Restore the npm-published @pipelex/sdk package
+# The `@latest` tag is load-bearing. A bare `npm install @pipelex/sdk` re-resolves
+# the range already in package.json, so coming off `make use-local` with a stale
+# caret range restores that range's newest match rather than the current release —
+# silently DOWNGRADING, since the SDK is pre-1.0 and `^0.a.b` will not cross a minor.
+# `@latest` fetches the published release and rewrites the range to match it.
+use-npm: ## Restore the latest npm-published @pipelex/sdk package
 	rm -rf node_modules/@pipelex/sdk
-	npm install @pipelex/sdk
-	@echo "Restored npm-published @pipelex/sdk. Run 'make use-local' to switch back."
+	npm install @pipelex/sdk@latest
+	@echo "Restored npm-published @pipelex/sdk $$(node -p "require('./node_modules/@pipelex/sdk/package.json').version"). Run 'make use-local' to switch back."
 
 ul: use-local ## Alias for use-local
 un: use-npm ## Alias for use-npm

@@ -121,7 +121,7 @@ Ask the user to confirm. On confirmation:
 Then offer (but do not automatically execute):
 
 - **Push** the branch to origin (`git push -u origin release/v{TARGET_VERSION}`)
-- **Create a PR** to `main` using `gh pr create` (per `CLAUDE.md`, the PR target branch for this repo is `main`)
+- **Create a PR** to `main` using `gh pr create` (a `release/` branch is the one exception to this repo's `dev` PR target, per `CLAUDE.md`)
 
 Wait for explicit user approval before pushing or creating a PR.
 

@@ -204,13 +204,15 @@ Enforced via Husky + lint-staged on commit.
 | `make check`        | lint + format-check + typecheck                                                                |
 | `make all`          | check + test + build (does **not** include e2e)                                                |
 | `make use-local`    | Pack and install sibling `../pipelex-sdk-js` (alias: `ul`)                                     |
-| `make use-npm`      | Restore the npm-published `@pipelex/sdk` package (alias: `un`)                                 |
+| `make use-npm`      | Restore the latest npm-published `@pipelex/sdk` package (alias: `un`)                          |
 
 ## Local SDK development (`use-local`)
 
 When working on this starter alongside the SDK, use `make use-local` to install `../pipelex-sdk-js` (sibling) into `node_modules/@pipelex/sdk` instead of the npm package. The target builds `../pipelex-sdk-js`, packs it with `npm pack`, then installs the resulting tarball.
 
-We use a tarball install rather than a symlink (`ln -s`) because Next.js 16's Turbopack does not follow symlinked workspace packages — both `npm run dev` and `npm run build` fail with `Module not found: Can't resolve '@pipelex/sdk'` against a symlinked entry. **Re-run `make use-local` after every SDK edit** to pick up changes. `make use-npm` restores the published version.
+We use a tarball install rather than a symlink (`ln -s`) because Next.js 16's Turbopack does not follow symlinked workspace packages — both `npm run dev` and `npm run build` fail with `Module not found: Can't resolve '@pipelex/sdk'` against a symlinked entry. **Re-run `make use-local` after every SDK edit** to pick up changes.
+
+`make use-npm` switches back, and it installs `@pipelex/sdk@latest` rather than plain `@pipelex/sdk` on purpose: the bare form re-resolves whatever range `package.json` already declares, so returning from a `use-local` session with a stale caret range would restore that range's newest match instead of the current release — a silent **downgrade**, since the SDK is pre-1.0 and `^0.a.b` never crosses a minor. The `@latest` tag fetches the published release and re-pins the range to it.
 
 ## Workflow Rules
 
@@ -226,7 +228,7 @@ Other targets that matter:
 
 ## Git Workflow
 
-- **PR target branch**: `main`.
+- **PR target branch**: `dev`. The one exception is a `release/vX.Y.Z` branch, which targets `main`.
 - **Branch naming**: prefix with `feature/`, `refactor/`, `docs/`, or `chore/` (e.g. `feature/durable-runs-dual-mode`).
 
 ## Anti-patterns to Avoid

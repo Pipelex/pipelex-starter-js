@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **Bumped `@pipelex/sdk` to `^0.12.0`** (the declared range was `^0.5.1`; the working tree had been running a local `make use-local` tarball of `0.9.0`). No migration was needed in this template: the only breaking changes across the intervening releases are on the methods-catalog surface — `listMethods` now returns one page of `MethodSummary` rows rather than the whole catalog as `MethodData` — and this template never calls it. Everything the examples do use (`PipelexApiClient`, `RunResults`, `StartOptions`, `TokensUsageRecord`, `DictPipeOutput`, and the error classes) is unchanged.
+- **The SDK now exposes the crate routes `client.resolve()` and `client.codegen()`.** `resolve` returns a method's normalized library crate; `codegen` projects that crate into stamped typed artifacts (`ts-zod` for TypeScript consumers) plus a `codegen.lock`, so a method's `.mthds` bundle can generate the very types this template currently hand-writes in `src/types/`. No example uses them yet. Worth knowing before adopting them: they are served by any `pipelex-api` runner and by `api-dev.pipelex.com`, but `api.pipelex.com` still answers `403` pending its deploy — so a template consumer pointing at the default hosted base URL cannot reach them today.
+
+### Fixed
+
+- **`make use-npm` restored a stale version instead of the current one.** The target ran `npm install @pipelex/sdk`, which re-resolves the range already declared in `package.json` rather than fetching the current release. Because `@pipelex/sdk` is pre-1.0, a caret range never crosses a minor — so returning from a `make use-local` session with an out-of-date range reinstalled that range's newest match and called it "restored", silently **downgrading** the SDK. It now installs `@pipelex/sdk@latest`, which fetches the published release and re-pins the range to it, and it echoes the version it actually restored so the result is visible rather than assumed.
+
+### Security
+
+- **Bumped `next` to `^16.3.1`** (was `^16.2.9`), clearing every high-severity advisory `npm audit --omit=dev` reported against this template's production dependency tree. All of them came in through Next.js: a set of Next.js advisories of its own (Server Action denial of service and unbounded Edge-runtime payloads, SSRF via rewrites and on custom servers, cache confusion of response bodies, Image Optimization denial of service on SVGs, unauthenticated disclosure of internal Server Function endpoints, and a Turbopack middleware bypass), plus its pinned transitives — `postcss` (arbitrary `.map` file disclosure via an attacker-controlled `sourceMappingURL`, and XSS through unescaped `</style>` in stringify output), `nanoid` (non-terminating generator loops), and `sharp` (inherited libvips CVEs). Next `16.3.1` pins `postcss` `8.5.23` and `sharp` `^0.35.3`, which is what moves the whole tree onto patched versions; `16.2.12`, the highest remaining `16.2.x`, still carries `postcss` `8.4.31` and does not fix them. `eslint-config-next` was raised to `^16.3.1` alongside it to keep the linter in lockstep with the framework.
+- **Bumped the `postcss` dev dependency to `^8.5.23`** and refreshed `brace-expansion` and `js-yaml` in the lockfile, so the full `npm audit` — development dependencies included — is now clean as well.
+
 ## [v0.3.0] - 2026-07-22
 
 ### Added
