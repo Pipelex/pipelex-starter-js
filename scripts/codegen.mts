@@ -141,10 +141,8 @@ function explain(error: unknown, baseUrl: string): string {
     return [
       `this base URL does not serve POST /v1/codegen (HTTP ${error.status}).`,
       `  Base URL: ${baseUrl}`,
-      "  Hosted: the route is live on https://api-dev.pipelex.com but not yet on",
+      "  The route is live on https://api-dev.pipelex.com but not yet on",
       "  api.pipelex.com — point PIPELEX_BASE_URL at api-dev in .env.local.",
-      "  Self-hosted: upgrade your pipelex-api runner to a version that serves",
-      "  /v1/codegen (https://github.com/Pipelex/pipelex-api).",
     ].join("\n");
   }
   if (error instanceof ApiResponseError) {

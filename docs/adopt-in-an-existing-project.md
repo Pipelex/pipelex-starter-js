@@ -68,4 +68,4 @@ Commit the generated tree in the same commit as the bundle. From here the conven
 
 ## Known caveat
 
-`POST /v1/codegen` is served by any self-hosted [`pipelex-api`](https://github.com/Pipelex/pipelex-api) runner and by `api-dev.pipelex.com`; `api.pipelex.com` still answers `403` pending its deploy, so regeneration currently needs `PIPELEX_BASE_URL=https://api-dev.pipelex.com` (or an up-to-date self-hosted runner). Only regeneration is affected — the offline check needs no server, and the app itself runs against the default hosted URL.
+`POST /v1/codegen` is live on `api-dev.pipelex.com`; `api.pipelex.com` still answers `403` pending its deploy, so regeneration currently needs `PIPELEX_BASE_URL=https://api-dev.pipelex.com`. Only regeneration is affected — the offline check needs no server, and the app itself runs against the default hosted URL.

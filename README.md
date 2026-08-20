@@ -34,9 +34,9 @@ Prefer to do it by hand? The manual equivalent:
 ## Prerequisites
 
 - Node.js 22.12+ (the SDK is ESM-only and the e2e specs `require()` it, which needs Node's unflagged `require(esm)`)
-- Access to a **Pipelex API** server. You have two options:
-  - **Hosted** — currently in private beta. Join the waitlist at [go.pipelex.com/waitlist](https://go.pipelex.com/waitlist). Once you have access, get an API key at [app.pipelex.com](https://app.pipelex.com) and point `PIPELEX_BASE_URL` at `https://api.pipelex.com` (the default).
-  - **Self-hosted** — the Pipelex API is open source at [github.com/Pipelex/pipelex-api](https://github.com/Pipelex/pipelex-api). Run it locally or on your own infra and point `PIPELEX_BASE_URL` at your instance (e.g. `http://localhost:8000`).
+- Access to the **hosted Pipelex API**, currently in private beta. Join the waitlist at [go.pipelex.com/waitlist](https://go.pipelex.com/waitlist); once you have access, get an API key at [app.pipelex.com](https://app.pipelex.com). `PIPELEX_BASE_URL` already defaults to `https://api.pipelex.com`, so the key is the only thing you set.
+
+  **This template targets the hosted API specifically.** The runner is open source as [`pipelex-api`](https://github.com/Pipelex/pipelex-api), but a bare runner has no run store and no file storage, so durable mode and the PDF example cannot work against one — point the starter at one and it says exactly that instead of failing obscurely. Dedicated deployments of the hosted plane exist and are not self-serve; talk to us at [pipelex.com](https://pipelex.com).
 
 ## Quick start
 
@@ -125,7 +125,7 @@ A few things worth knowing:
 
 **After editing anything under `methods/`, run `npm run codegen`** and commit the result alongside the bundle. `make check` fails until you do.
 
-> **Regeneration needs `PIPELEX_BASE_URL=https://api-dev.pipelex.com` for now.** The `/v1/codegen` route is served by any self-hosted [`pipelex-api`](https://github.com/Pipelex/pipelex-api) runner and by `api-dev.pipelex.com`, but `api.pipelex.com` still answers `403` pending its deploy. It affects regeneration only — `npm run codegen:check` needs no server at all, and the app itself runs fine against the default hosted URL. Nothing in the code changes when production catches up.
+> **Regeneration needs `PIPELEX_BASE_URL=https://api-dev.pipelex.com` for now.** The `/v1/codegen` route is live on `api-dev.pipelex.com`, but `api.pipelex.com` still answers `403` pending its deploy. It affects regeneration only — `npm run codegen:check` needs no server at all, and the app itself runs fine against the default hosted URL. Nothing in the code changes when production catches up.
 
 ## Swap in your own pipeline
 
@@ -194,11 +194,11 @@ Aliases: `make ul` / `make un`. **Re-run `make use-local` after every SDK edit**
 
 ## Environment variables
 
-| Variable                     | Purpose                                                                                                                              | Default                   |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- |
-| `PIPELEX_BASE_URL`           | Pipelex API base URL — hosted (`https://api.pipelex.com`) or your own [self-hosted instance](https://github.com/Pipelex/pipelex-api) | `https://api.pipelex.com` |
-| `PIPELEX_API_KEY`            | Bearer token used by the SDK                                                                                                         | (required at runtime)     |
-| `NEXT_PUBLIC_EXECUTION_MODE` | Default execution mode for the examples — `durable` or `blocking`. Each example also has a runtime toggle.                           | `durable`                 |
+| Variable                     | Purpose                                                                                                                       | Default                   |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `PIPELEX_BASE_URL`           | Pipelex API base URL. Override only for another Pipelex endpoint — `https://api-dev.pipelex.com` while codegen rolls out, say | `https://api.pipelex.com` |
+| `PIPELEX_API_KEY`            | Bearer token used by the SDK                                                                                                  | (required at runtime)     |
+| `NEXT_PUBLIC_EXECUTION_MODE` | Default execution mode for the examples — `durable` or `blocking`. Each example also has a runtime toggle.                    | `durable`                 |
 
 ## License
 
