@@ -84,6 +84,13 @@ async function writeTree(
   report: CodegenValidReport,
   sourceHashes: Record<string, string>,
 ): Promise<string[]> {
+  // Refuse a symlinked method tree BEFORE the first write: the root-level
+  // guard vets src/generated/ itself, but a symlinked src/generated/<method>/
+  // would route every artifact write into its external target — and the
+  // post-write readGeneratedTree refusal below would fire only after the
+  // damage was done.
+  await refuseSymlinkRoot(outDir);
+
   const changed: string[] = [];
 
   for (const artifact of [
