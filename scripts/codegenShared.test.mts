@@ -18,6 +18,7 @@ import {
   discoverMethods,
   findOrphanTrees,
   hashSource,
+  isContainedPath,
   NonUtf8FileError,
   readGeneratedTree,
   readTextFile,
@@ -284,5 +285,32 @@ describe("entry policy at the scanned roots", () => {
     const error = await findOrphanTrees(fixtureDir, new Set()).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(SymlinkRefusedError);
     expect((error as SymlinkRefusedError).message).toContain("link-tree");
+  });
+});
+
+describe("isContainedPath", () => {
+  const TREE = path.join(path.sep, "repo", "src", "generated", "demo");
+
+  it.each(["types.ts", "binder.ts", "nested/deeper.ts", "./types.ts"])(
+    "accepts %s",
+    (candidate) => {
+      expect(isContainedPath(TREE, candidate)).toBe(true);
+    },
+  );
+
+  it.each([
+    "../escaped.ts",
+    "../../../.husky/pre-commit",
+    "nested/../../escaped.ts",
+    path.join(path.sep, "etc", "passwd"),
+    "",
+    ".",
+  ])("refuses %s", (candidate) => {
+    expect(isContainedPath(TREE, candidate)).toBe(false);
+  });
+
+  it("refuses a sibling directory that merely shares the tree's name as a prefix", () => {
+    // The bug a bare `startsWith` would have: `…/demo-backup/` is not `…/demo/`.
+    expect(isContainedPath(TREE, path.join("..", "demo-backup", "types.ts"))).toBe(false);
   });
 });

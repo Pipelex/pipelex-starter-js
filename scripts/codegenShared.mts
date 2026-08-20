@@ -435,3 +435,22 @@ export function assertSecureBaseUrl(url: string): void {
   }
   throw new Error(`PIPELEX_BASE_URL must be an http(s) URL: ${url}`);
 }
+
+/**
+ * Does `relativePath` name a file that stays inside `outDir`?
+ *
+ * The codegen response names each artifact's own path, and `path.join` resolves
+ * a `..` in one without complaint — so a single bad path turns a regeneration
+ * into a write anywhere the process can reach (`.husky/pre-commit`, say), in a
+ * place no stamp guards and the offline check never looks. `assertSecureBaseUrl`
+ * closes the transport half of that exposure; this closes the response half.
+ * An absolute path is refused for the same reason, and so is one that resolves
+ * to the directory itself rather than to a file within it.
+ */
+export function isContainedPath(outDir: string, relativePath: string): boolean {
+  if (path.isAbsolute(relativePath)) return false;
+  const root = path.resolve(outDir);
+  // The trailing separator matters: without it a sibling `…/tree-backup/` would
+  // pass the prefix test against `…/tree`.
+  return path.resolve(root, relativePath).startsWith(`${root}${path.sep}`);
+}

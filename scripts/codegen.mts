@@ -32,6 +32,7 @@ import {
 import {
   assertSecureBaseUrl,
   discoverMethods,
+  isContainedPath,
   refuseSymlinkRoot,
   GENERATED_ROOT,
   LOCK_FILENAME,
@@ -235,6 +236,22 @@ async function main(): Promise<void> {
       console.error(
         `\n✗ ${method.name} — the server returned lock_filename '${report.lock_filename}', ` +
           `not '${LOCK_FILENAME}'. Nothing was written; bump @pipelex/sdk or report it upstream.`,
+      );
+      failed = true;
+      continue;
+    }
+
+    // The server names each artifact's path too, and `path.join` would resolve a
+    // `..` in one into a write outside the tree — somewhere no stamp guards the
+    // file and the offline check never looks, while `writeIfChanged`'s recursive
+    // `mkdir` creates whatever directory the path asks for. Refuse the method
+    // whole rather than write the containable ones, so the promise above holds.
+    const escaping = artifacts.filter((artifact) => !isContainedPath(outDir, artifact.path));
+    if (escaping.length > 0) {
+      console.error(
+        `\n✗ ${method.name} — the server returned artifact path(s) that escape ` +
+          `${path.relative(REPO_ROOT, outDir)}/: ${escaping.map((artifact) => artifact.path).join(", ")}. ` +
+          `Nothing was written; report it upstream.`,
       );
       failed = true;
       continue;
