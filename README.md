@@ -8,6 +8,8 @@ It ships three demo pipelines, presented as tabs:
 - **PDF summary** (`methods/summarize-pdf`) — uploads a PDF in the browser and returns a structured `{ title, doc_type, key_points }` summary from a cheap OpenAI model.
 - **Image generation** (`methods/generate-image`) — turns a text prompt into an image with `gpt-image-1-mini`.
 
+Starting from zero? Use this template (next section). Adding Pipelex to an app you already have? This repo doubles as the worked example of the pattern — [`docs/adopt-in-an-existing-project.md`](docs/adopt-in-an-existing-project.md) is the transplant checklist.
+
 ## Use this template
 
 This is a template repository — don't clone it directly. Click the green **Use this template** button at the top-right of the GitHub page to create your own repo, then clone that.
@@ -51,7 +53,7 @@ Open [http://localhost:4100](http://localhost:4100) and try the three example ta
 
 ```
 methods/
-  extract-entities/main.mthds            # text → { people, orgs, dates }
+  extract-entities/main.mthds # text → { people, orgs, dates }
   summarize-pdf/main.mthds    # PDF Document → { title, doc_type, key_points }
   generate-image/main.mthds   # text prompt → generated Image
 public/sample-invoice.pdf     # sample PDF, so the PDF example works out of the box
@@ -97,8 +99,8 @@ The flow, end to end:
 Text inputs are plain strings. File inputs (the PDF example) go through one extra step:
 
 1. The browser reads the chosen `File` into a base64 data URL with `fileToDataUrl` (`src/lib/clientFile.ts`). `File` objects are **not** serializable across the server boundary — the Server Action only ever receives the resulting `string`.
-2. The Server Action validates the data URL (`validateDataUrl`) and wraps it in a Pipelex `Document` envelope (`buildDocumentInput` → `{ concept: "Document", content: { url, filename, mime_type } }`).
-3. The Pipelex API decodes the data URL server-side — the app never hosts the file itself.
+2. The Server Action validates the data URL (`validateDataUrl` in `src/lib/fileEncoding.ts` — the authoritative MIME + size gate; any client-side pre-check is UX only).
+3. The Server Action hands the bare data URL to `client.prepareInputs()`, which reads the method's declared signature, recognizes the input as a file, uploads the bytes to Pipelex storage, and rewrites the input to a small `pipelex-storage://` URI. The run request carries that lightweight reference rather than fat inline base64 — the app never hosts the file itself.
 
 Image **outputs** (the image example) come back as a URL — a storage URL or a base64 data URL — which renders directly in an `<img>`.
 
@@ -107,8 +109,9 @@ Image **outputs** (the image example) come back as a URL — a storage URL or a 
 The typed shapes this app validates against are **not hand-written** — each one is projected from the `.mthds` bundle that declares it, so the TypeScript and the method cannot drift apart:
 
 ```bash
-npm run codegen        # regenerate src/generated/ from methods/ — needs an API key
-npm run codegen:check  # prove the committed trees are current — offline, no key
+npm run codegen         # regenerate src/generated/ from methods/ — needs an API key
+npm run codegen:check   # prove the committed trees are current — offline, no key
+npm run codegen:verify  # ask the API whether the committed types are still semantically current — needs a key
 ```
 
 `npm run codegen` sends each method to the API's `/v1/codegen` route, which returns a `types.ts` (zod schemas plus their inferred TypeScript types), a `binder.ts` (`parseXxx` / `serializeXxx` over those schemas), and a `codegen.lock`. Every artifact carries a stamp and the lock records their hashes, so `npm run codegen:check` re-derives the whole verdict **offline** — no key, no network — and fails if a generated file was edited, deleted, or left behind. Beside each lock, a `sources.json` records a hash of every source `.mthds`, which catches the other kind of staleness: editing a bundle and forgetting to regenerate. `make check` runs that check, so `make all` does too.
@@ -130,6 +133,19 @@ A few things worth knowing:
 2. Run `npm run codegen` — it writes `src/generated/<name>/` with the zod schemas and binders for the concepts that method declares.
 3. Add a loader in `src/lib/loadBundle.ts`, a `parseXxx(results)` adapter over the generated binder in `src/types/`, and the action trio (`run<Name>Blocking`, `start<Name>Run`, `poll<Name>Run`) in `src/actions/`.
 4. Wire it from a component with `useRun({ mode, blocking, start, poll })`. The three existing examples are the canonical patterns to copy.
+
+## Remove an example
+
+Stripping the demos is usually the first act of making this template yours. Each example is one vertical slice; removing one (say `extract-entities`) means deleting, in one commit:
+
+1. The bundle: `methods/extract-entities/`.
+2. Its generated tree: `src/generated/extract-entities/` — `make check` fails on a generated tree with no method behind it (and vice versa), so always remove both together.
+3. Its loader in `src/lib/loadBundle.ts`, its adapter in `src/types/extractEntitiesPipeline.ts`, and its action trio `src/actions/runExtractEntitiesPipeline.ts` — each with its co-located `.test.ts`, plus that loader's `describe` block in `src/lib/loadBundle.test.ts`.
+4. Its components — `EntityForm.tsx`, `EntityResult.tsx` and their tests — and its tab entry in `src/components/ExampleTabs.tsx`, whose own test (`ExampleTabs.test.tsx`) mocks that form and asserts its tab.
+5. Its e2e spec: `e2e/extract.spec.ts`.
+6. The references the shared code keeps to it. The text example is the fixture the shared-helper tests narrow with (`parseEntities` in `src/lib/blockingRun.test.ts` and `src/lib/durableRun.test.ts`) and the form `e2e/error-display.spec.ts` drives — repoint both at a surviving example. The blurb in `src/app/page.tsx` names all three examples, and the bundle-read hint in `src/lib/errors.ts` names this one by path.
+
+Then run `make all`. `tsc` type-checks the co-located tests, so it names most dangling references itself; the two it cannot see — the `vi.mock` module string in `ExampleTabs.test.tsx` and the Playwright selectors — surface as test failures instead. The PDF example additionally owns `public/sample-invoice.pdf`, and the image example is the one exercising the blocking-cap e2e case.
 
 ## Make targets
 

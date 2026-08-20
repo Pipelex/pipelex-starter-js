@@ -39,3 +39,7 @@ test-results/
 
 # claude code local settings (per-user, never commit)
 .claude/settings.local.json
+
+# internal planning notes — never shipped to template consumers (see v0.1.1,
+# which already removed wip/ once before open-sourcing; the files stay local)
+/wip/

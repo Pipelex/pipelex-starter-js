@@ -103,6 +103,8 @@ This runs lint + format-check + typecheck + unit tests + production build (per t
 
 If the release touches the SDK call path (`src/actions/`, `src/lib/pipelexClient.ts`, `src/lib/loadBundle.ts`, `src/lib/errors.ts`, `src/lib/fileEncoding.ts`, or `methods/`), offer to also run `make test-e2e` — but only with explicit user approval, since it costs LLM calls.
 
+**Also offer `make codegen-verify` whenever `PIPELEX_API_KEY` is configured** — and especially when the release touches `methods/` or `src/generated/`. It is the documented pre-release gate for the generated types: it asks the API whether each committed tree still comes from the crate its method resolves to today, writes nothing, and costs no LLM call (one codegen round-trip per method). It needs a base URL that serves `/v1/codegen` (see CLAUDE.md "Generated types" for the current caveat). An engine-version difference in its output is a note, not a failure — don't block the release on it.
+
 ## Step 8 — Review & Commit
 
 Present a full summary:

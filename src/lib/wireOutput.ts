@@ -78,8 +78,8 @@ function nullMeansAbsent(field: z.ZodType): boolean {
  * actually sent.
  *
  * It exists only until the emitter projects a non-required field as
- * `.nullish()`, which is filed upstream in
- * `../wip/inbox/2026-08-20-pipelex-ts-zod-optional-rejects-wire-null.md`.
+ * `.nullish()` (or the transport dump stops serializing unset fields) —
+ * reported upstream to pipelex; see docs/codegen.md for the evidence trail.
  */
 export function dropWireNulls(value: unknown, schema: z.ZodType): unknown {
   const { core } = unwrap(schema);
