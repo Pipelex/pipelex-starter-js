@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import type { RunResults } from "@pipelex/sdk";
-import { describeSchemaFailure, dropWireNulls, wireOutput } from "./wireOutput";
+import { describeSchemaFailure, dropWireNulls, MAX_WIRE_DEPTH, wireOutput } from "./wireOutput";
 import { ImageSchema } from "@/generated/generate-image/types";
 
 describe("dropWireNulls", () => {
@@ -128,5 +128,48 @@ describe("describeSchemaFailure", () => {
   it("passes a non-Zod error's message through unchanged", () => {
     expect(describeSchemaFailure(new Error("socket hang up"), "Image")).toBe("socket hang up");
     expect(describeSchemaFailure("plain string", "Image")).toBe("plain string");
+  });
+});
+
+describe("dropWireNulls recursion depth", () => {
+  // A self-referential concept — `z.lazy()` is how a concept reference projects,
+  // and the walk resolves it, so the schema stops bounding the descent and the
+  // payload starts driving it.
+  interface Node {
+    label: string;
+    caption?: string;
+    child?: Node;
+  }
+  const NodeSchema: z.ZodType<Node> = z.lazy(() =>
+    z.object({
+      label: z.string(),
+      caption: z.string().optional(),
+      child: NodeSchema.optional(),
+    }),
+  );
+
+  /** A chain `depth` levels deep, every level carrying a `null` caption. */
+  function chain(depth: number): Record<string, unknown> {
+    let node: Record<string, unknown> = { label: "leaf", caption: null };
+    for (let i = 0; i < depth; i += 1) {
+      node = { label: `n${i}`, caption: null, child: node };
+    }
+    return node;
+  }
+
+  it("strips nulls through a recursive concept, below the cap", () => {
+    const result = dropWireNulls(chain(3), NodeSchema) as Record<string, unknown>;
+    expect(NodeSchema.safeParse(result).success).toBe(true);
+    expect(result).not.toHaveProperty("caption");
+  });
+
+  it("returns the value untouched past the cap instead of recursing forever", () => {
+    // The generated schema still owns the verdict — this only stops the walk.
+    const deep = chain(MAX_WIRE_DEPTH + 10);
+    expect(() => dropWireNulls(deep, NodeSchema)).not.toThrow();
+  });
+
+  it("survives a pathologically deep payload without overflowing the stack", () => {
+    expect(() => dropWireNulls(chain(50_000), NodeSchema)).not.toThrow();
   });
 });

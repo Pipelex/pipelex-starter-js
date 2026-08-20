@@ -25,7 +25,7 @@ import {
   SOURCES_SIDECAR,
   SymlinkRefusedError,
   walk,
-} from "./codegenShared.mts";
+} from "./shared.mts";
 
 // Invalid UTF-8: a lone continuation byte. `readFile(p, "utf-8")` would decode
 // it to U+FFFD without complaint — exactly the lossy path the fatal decoder closes.

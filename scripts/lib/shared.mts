@@ -1,10 +1,10 @@
 /**
  * The pieces the three codegen scripts must agree on, byte for byte.
  *
- * `codegen.mts` writes the trees, `codegen-check.mts` proves them current offline,
- * and `codegen-verify.mts` asks the engine whether they are still semantically
- * right. All three walk the same directories and hash the same sources the same
- * way; `codegen.mts` writes the sidecar and `codegen-check.mts` reads it. Any
+ * `generate.mts` writes the trees, `check.mts` proves them current offline,
+ * and `verify.mts` asks the engine whether they are still semantically right.
+ * All three walk the same directories and hash the same sources the same
+ * way; the writer emits the sidecar and the check reads it. Any
  * disagreement between them shows up as a false verdict rather than an error, so
  * the agreement lives here rather than being restated in each script.
  *
@@ -35,14 +35,14 @@ import { isStampableArtifactPath, type CodegenTreeFile, type MthdsFileItem } fro
 
 // Anchored on this file's location, not `process.cwd()`, so the scripts produce
 // the same verdict no matter which directory they are launched from.
-export const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+export const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 export const METHODS_DIR = path.join(REPO_ROOT, "methods");
 export const GENERATED_ROOT = path.join(REPO_ROOT, "src", "generated");
 
 /**
  * The lock filename the codegen API emits (`lock_filename` on the response).
  *
- * The offline check opens the lock by this name, so `codegen.mts` refuses to
+ * The offline check opens the lock by this name, so the writer (`generate.mts`) refuses to
  * write one under any other: a response naming a different `lock_filename` is
  * an error there, not something to follow silently. That refusal is what makes
  * the two agree by construction. Writing the new lock beside the old one would
