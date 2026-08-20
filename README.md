@@ -143,7 +143,7 @@ Stripping the demos is usually the first act of making this template yours. Each
 3. Its loader in `src/lib/loadBundle.ts`, its adapter in `src/types/extractEntitiesPipeline.ts`, and its action trio `src/actions/runExtractEntitiesPipeline.ts` — each with its co-located `.test.ts`, plus that loader's `describe` block in `src/lib/loadBundle.test.ts`.
 4. Its components — `EntityForm.tsx`, `EntityResult.tsx` and their tests — and its tab entry in `src/components/ExampleTabs.tsx`, whose own test (`ExampleTabs.test.tsx`) mocks that form and asserts its tab.
 5. Its e2e spec: `e2e/extract.spec.ts`.
-6. The references the shared code keeps to it. The text example is the fixture the shared-helper tests narrow with (`parseEntities` in `src/lib/blockingRun.test.ts` and `src/lib/durableRun.test.ts`) and the form `e2e/error-display.spec.ts` drives — repoint both at a surviving example. The blurb in `src/app/page.tsx` names all three examples, and the bundle-read hint in `src/lib/errors.ts` names this one by path.
+6. The references the shared code keeps to it. The text example is the form `e2e/error-display.spec.ts` drives — repoint it at a surviving example. The blurb in `src/app/page.tsx` names all three examples, and the bundle-read hint in `src/lib/errors.ts` names this one by path.
 
 Then run `make all`. `tsc` type-checks the co-located tests, so it names most dangling references itself; the two it cannot see — the `vi.mock` module string in `ExampleTabs.test.tsx` and the Playwright selectors — surface as test failures instead. The PDF example additionally owns `public/sample-invoice.pdf`, and the image example is the one exercising the blocking-cap e2e case.
 
