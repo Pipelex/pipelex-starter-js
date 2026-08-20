@@ -75,7 +75,7 @@ The dry run prints the list of files that would be edited. Present that summary 
 
 Re-run the exact same command **without** `--dry-run`. The script:
 
-- substitutes both name spellings across `package.json`, `README.md`, `CLAUDE.md`, `src/app/layout.tsx`, `src/app/page.tsx`, and the release skill's `SKILL.md`
+- substitutes both name spellings across `package.json`, `README.md`, `CLAUDE.md`, `AGENTS.md`, `src/app/layout.tsx`, `src/app/page.tsx`, and the release skill's `SKILL.md`
 - softens the template's "the starter ..." / "this starter ..." prose self-references in `src/lib/errors.ts` (user-facing error messages), `CLAUDE.md`, the release skill, the `Makefile`, and the e2e spec comments
 - fills in the description (package.json, README intro, CLAUDE.md, layout metadata), and (if given) author and repository URL
 - resets `version` to `0.1.0` and rewrites `CHANGELOG.md` to a fresh v0.1.0 entry dated today
@@ -114,7 +114,7 @@ Finally, give the user a short summary:
 - that the version was reset to `0.1.0` and `CHANGELOG.md` restarted
 - that `package-lock.json` was re-synced and `make all` passes
 - that **nothing is committed and nothing is staged** — they should review with `git status` and `git diff`, then commit when ready
-- a nudge to skim the new `README.md` (it still documents the three demo examples — keep them as references or swap in their own pipeline per the "Swap in your own pipeline" section), and to update `CLAUDE.md` as their project grows its own conventions
+- a nudge to skim the new `README.md` (it still documents the three demo examples — keep them as references, swap in their own pipeline per the "Swap in your own pipeline" section, or strip a demo by following the "Remove an example" checklist right below it), and to update `CLAUDE.md` as their project grows its own conventions. If the user asks to remove the demos now, that checklist is the procedure — offer to walk it with them
 - a heads-up that the home page (`src/app/page.tsx`) still shows the template's subtitle and the three demo tabs under their new title — accurate while the demos remain, theirs to rewrite when they swap in their own pipeline
 
 ## Rules

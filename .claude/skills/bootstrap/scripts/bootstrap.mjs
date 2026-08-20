@@ -379,6 +379,9 @@ export const TARGETS = [
   { rel: "package.json", transform: transformPackageJson },
   { rel: "README.md", transform: transformReadme },
   { rel: "CLAUDE.md", transform: transformClaudeMd },
+  // AGENTS.md carries the template name in its heading; a plain token pass is
+  // enough — its rules are generic to any project built from this template.
+  { rel: "AGENTS.md", transform: applyNameTokens },
   { rel: "LICENSE", transform: (text, _names, opts) => transformLicense(text, opts) },
   { rel: "CHANGELOG.md", transform: (text, _names, opts) => resetChangelog(text, opts) },
   { rel: "src/app/layout.tsx", transform: transformLayout },
