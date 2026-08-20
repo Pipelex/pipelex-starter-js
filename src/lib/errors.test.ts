@@ -23,45 +23,58 @@ import {
   type ClassifyEnv,
 } from "./errors";
 
-const LOCAL_ENV: ClassifyEnv = { apiUrl: "http://localhost:8081", hasApiKey: true };
+// An explicitly-set PIPELEX_BASE_URL override pointing somewhere that isn't
+// the hosted API (a neutral fixture URL — nothing here documents a runnable
+// setup), and the no-override default where the SDK falls back to the hosted
+// URL on its own.
+const OVERRIDE_ENV: ClassifyEnv = { apiUrl: "https://api.unreachable.example", hasApiKey: true };
+const DEFAULT_ENV: ClassifyEnv = { apiUrl: undefined, hasApiKey: true };
 const CLOUD_ENV: ClassifyEnv = { apiUrl: "https://api.pipelex.com", hasApiKey: true };
 
 describe("classifyPipelineError — ApiUnreachableError", () => {
-  it("uses the localhost branch when apiUrl is local", () => {
+  it("steers to PIPELEX_BASE_URL when an override is set", () => {
     const err = new ApiUnreachableError(
-      "Could not reach Pipelex API at http://localhost:8081 (ECONNREFUSED)",
-      "http://localhost:8081",
+      "Could not reach Pipelex API at https://api.unreachable.example (ECONNREFUSED)",
+      "https://api.unreachable.example",
       "ECONNREFUSED",
     );
-    const result = classifyPipelineError(err, LOCAL_ENV);
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
     expect(result.kind).toBe("api_unreachable");
     expect(result.title).toBe("Pipelex API not reachable");
     expect(result.message).toContain("ECONNREFUSED");
-    expect(result.message).toContain("http://localhost:8081");
-    expect(result.hint?.code).toBe("cd ../pipelex-api && make run");
-    expect(result.hint?.codeLanguage).toBe("bash");
+    expect(result.message).toContain("https://api.unreachable.example");
+    expect(result.message).toMatch(/PIPELEX_BASE_URL/);
+    expect(result.hint?.summary).toMatch(/PIPELEX_BASE_URL/);
+    expect(result.hint?.code).toBe("PIPELEX_BASE_URL=https://api.pipelex.com");
+    expect(result.hint?.codeLanguage).toBe("env");
   });
 
-  it("uses the cloud branch when apiUrl is not local", () => {
+  it("steers to the network when no override is set (default hosted URL)", () => {
     const err = new ApiUnreachableError(
       "Could not reach Pipelex API at https://api.pipelex.com (ENOTFOUND)",
       "https://api.pipelex.com",
       "ENOTFOUND",
     );
-    const result = classifyPipelineError(err, CLOUD_ENV);
+    const result = classifyPipelineError(err, DEFAULT_ENV);
     expect(result.kind).toBe("api_unreachable");
     expect(result.message).toContain("https://api.pipelex.com");
-    expect(result.hint?.summary).toMatch(/PIPELEX_BASE_URL/);
+    expect(result.message).toContain("ENOTFOUND");
+    expect(result.message).toMatch(/default URL/);
+    expect(result.message).toMatch(/network/i);
+    // No override to check — the copy must not tell the user to verify a
+    // variable they never set.
+    expect(result.message).not.toMatch(/PIPELEX_BASE_URL is set/);
+    expect(result.hint?.summary).toMatch(/network/i);
     expect(result.hint?.code).toContain("https://api.pipelex.com");
   });
 
   it("handles missing error code", () => {
     const err = new ApiUnreachableError(
-      "Could not reach Pipelex API at http://localhost:8081 (network error)",
-      "http://localhost:8081",
+      "Could not reach Pipelex API at https://api.unreachable.example (network error)",
+      "https://api.unreachable.example",
       undefined,
     );
-    const result = classifyPipelineError(err, LOCAL_ENV);
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
     expect(result.kind).toBe("api_unreachable");
     expect(result.message).not.toContain("undefined");
   });
@@ -130,7 +143,7 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
   it("special-cases CredentialsError", () => {
     const err = new ApiResponseError(
       "...",
-      "http://localhost:8081",
+      "https://api.unreachable.example",
       500,
       "Internal Server Error",
       "",
@@ -139,10 +152,12 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
       undefined,
       undefined,
     );
-    const result = classifyPipelineError(err, LOCAL_ENV);
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
     expect(result.kind).toBe("server_error");
     expect(result.title).toContain("LLM credentials");
     expect(result.message).toContain("Missing OPENAI_API_KEY");
+    // The hosted API never lacks provider credentials — the hint steers to the URL.
+    expect(result.hint?.summary).toMatch(/PIPELEX_BASE_URL/);
     expect(result.hint?.docs?.href).toContain("docs.pipelex.com");
   });
 
@@ -158,9 +173,10 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
       undefined,
       undefined,
     );
-    const result = classifyPipelineError(err, LOCAL_ENV);
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
     expect(result.kind).toBe("server_error");
     expect(result.title).toContain("inference backend");
+    expect(result.hint?.summary).toMatch(/PIPELEX_BASE_URL/);
   });
 
   it("special-cases bundle/pipe definition errors", () => {
@@ -181,7 +197,7 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
         undefined,
         undefined,
       );
-      const result = classifyPipelineError(err, LOCAL_ENV);
+      const result = classifyPipelineError(err, OVERRIDE_ENV);
       expect(result.kind).toBe("server_error");
       expect(result.title).toContain("pipeline definition");
     }
@@ -199,7 +215,7 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
       undefined,
       undefined,
     );
-    const result = classifyPipelineError(err, LOCAL_ENV);
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
     expect(result.kind).toBe("server_error");
     expect(result.title).toContain("HTTP 500");
     expect(result.message).toContain("boom");
@@ -208,7 +224,7 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
   it("includes the endpoint URL, errorType, and serverMessage in details", () => {
     const err = new ApiResponseError(
       "...",
-      "http://localhost:9999",
+      "https://api.unreachable.example",
       500,
       "Internal Server Error",
       '{"detail":{"error_type":"X","message":"y"}}',
@@ -217,8 +233,8 @@ describe("classifyPipelineError — ApiResponseError 5xx with errorType", () => 
       undefined,
       undefined,
     );
-    const result = classifyPipelineError(err, LOCAL_ENV);
-    expect(result.details).toContain("API URL: http://localhost:9999");
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
+    expect(result.details).toContain("API URL: https://api.unreachable.example");
     expect(result.details).toContain("error_type: X");
     expect(result.details).toContain("server message: y");
   });
@@ -237,7 +253,7 @@ describe("classifyPipelineError — ApiResponseError 4xx (non-auth)", () => {
       undefined,
       undefined,
     );
-    const result = classifyPipelineError(err, LOCAL_ENV);
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
     expect(result.kind).toBe("bad_request");
     expect(result.title).toContain("HTTP 422");
     expect(result.message).toBe("missing field 'foo'");
@@ -248,7 +264,7 @@ describe("classifyPipelineError — ApiResponseError 4xx (non-auth)", () => {
       "Orchestration mode 'direct' cannot honor fire-and-forget delivery: /start requires an async-capable orchestration, and this deployment has none. Use /execute (synchronous) instead.";
     const err = new ApiResponseError(
       "...",
-      "http://localhost:8000",
+      "https://api.unreachable.example",
       400,
       "Bad Request",
       "",
@@ -257,12 +273,14 @@ describe("classifyPipelineError — ApiResponseError 4xx (non-auth)", () => {
       undefined,
       undefined,
     );
-    const result = classifyPipelineError(err, LOCAL_ENV);
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
     // Re-framed into the starter's vocabulary (durable execution), not a generic bad_request.
     expect(result.kind).toBe("lifecycle_unavailable");
     expect(result.title).toContain("Durable");
-    expect(result.message).toContain("http://localhost:8000");
-    expect(result.message).toMatch(/durable execution/i);
+    expect(result.message).toContain("https://api.unreachable.example");
+    expect(result.message).toMatch(/durable start/i);
+    // The remedy is the URL, not a mode switch.
+    expect(result.message).toMatch(/PIPELEX_BASE_URL/);
     // The API's verbatim message is preserved separately for the template to show.
     expect(result.apiMessage).toBe(apiMsg);
     expect(result.hint?.code).toContain("PIPELEX_BASE_URL");
@@ -282,7 +300,7 @@ describe("classifyPipelineError — ClientAuthenticationError", () => {
 describe("classifyPipelineError — BadPipelineOutputError", () => {
   it("returns bad_response", () => {
     const err = new BadPipelineOutputError("missing field");
-    const result = classifyPipelineError(err, LOCAL_ENV);
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
     expect(result.kind).toBe("bad_response");
     expect(result.title).toContain("output");
     expect(result.details).toContain("BadPipelineOutputError");
@@ -293,23 +311,23 @@ describe("classifyPipelineError — BadPipelineOutputError", () => {
 describe("classifyPipelineError — BadImageOutputError", () => {
   it("returns bad_image_output", () => {
     const err = new BadImageOutputError("no image url");
-    const result = classifyPipelineError(err, LOCAL_ENV);
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
     expect(result.kind).toBe("bad_image_output");
     expect(result.title).toMatch(/image/i);
     expect(result.details).toContain("BadImageOutputError");
     expect(result.details).toContain("no image url");
   });
 
-  it("recommends S3/GCP storage when the image URL isn't web-accessible", () => {
+  it("steers to the hosted API when the image URL isn't web-accessible", () => {
     const err = new BadImageOutputError(
       'The pipeline returned an image at "file:///tmp/storage/abc.png", but a browser cannot load a file: URL.',
       { nonWebUrl: "file:///tmp/storage/abc.png" },
     );
-    const result = classifyPipelineError(err, LOCAL_ENV);
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
     expect(result.kind).toBe("bad_image_output");
     expect(result.title).toMatch(/web-accessible/i);
-    expect(result.hint?.summary).toMatch(/S3 or GCP/);
-    expect(result.hint?.code).toContain("[storage]");
+    expect(result.message).toMatch(/PIPELEX_BASE_URL/);
+    expect(result.hint?.code).toContain("PIPELEX_BASE_URL=https://api.pipelex.com");
     expect(result.details).toContain("file:///tmp/storage/abc.png");
   });
 });
@@ -317,7 +335,7 @@ describe("classifyPipelineError — BadImageOutputError", () => {
 describe("classifyPipelineError — fs ENOENT", () => {
   it("returns bundle_load_failed", () => {
     const err = Object.assign(new Error("ENOENT: no such file"), { code: "ENOENT" });
-    const result = classifyPipelineError(err, LOCAL_ENV);
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
     expect(result.kind).toBe("bundle_load_failed");
     expect(result.title).toContain("bundle");
     expect(result.message).toContain("ENOENT");
@@ -327,13 +345,13 @@ describe("classifyPipelineError — fs ENOENT", () => {
 describe("classifyPipelineError — unknown fallback", () => {
   it("returns unknown for plain Error", () => {
     const err = new Error("???");
-    const result = classifyPipelineError(err, LOCAL_ENV);
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
     expect(result.kind).toBe("unknown");
     expect(result.details).toContain("???");
   });
 
   it("returns unknown for non-Error throws", () => {
-    const result = classifyPipelineError("a string was thrown", LOCAL_ENV);
+    const result = classifyPipelineError("a string was thrown", OVERRIDE_ENV);
     expect(result.kind).toBe("unknown");
     expect(result.details).toContain("a string was thrown");
   });
@@ -341,7 +359,7 @@ describe("classifyPipelineError — unknown fallback", () => {
 
 describe("classifyPipelineError — run-lifecycle errors", () => {
   it("classifies PipelineExecuteTimeoutError into execute_timeout pointing at Durable mode", () => {
-    const result = classifyPipelineError(new PipelineExecuteTimeoutError(31_000), LOCAL_ENV);
+    const result = classifyPipelineError(new PipelineExecuteTimeoutError(31_000), OVERRIDE_ENV);
     expect(result.kind).toBe("execute_timeout");
     expect(result.title).toMatch(/30s/);
     expect(result.hint?.summary).toMatch(/Durable/i);
@@ -387,7 +405,7 @@ describe("classifyPipelineError — run-lifecycle errors", () => {
   it("classifies RunStillRunningError into run_still_running", () => {
     const result = classifyPipelineError(
       new RunStillRunningError("still running", "run-1", 5, "/v1/runs/run-1"),
-      LOCAL_ENV,
+      OVERRIDE_ENV,
     );
     expect(result.kind).toBe("run_still_running");
     expect(result.message).toContain("run-1");
@@ -396,7 +414,10 @@ describe("classifyPipelineError — run-lifecycle errors", () => {
   });
 
   it("classifies RunFailedError into run_failed with the failure message", () => {
-    const result = classifyPipelineError(new RunFailedError("boom", "run-1", "FAILED"), LOCAL_ENV);
+    const result = classifyPipelineError(
+      new RunFailedError("boom", "run-1", "FAILED"),
+      OVERRIDE_ENV,
+    );
     expect(result.kind).toBe("run_failed");
     expect(result.message).toContain("boom");
     expect(result.details).toContain("run run-1 ended FAILED");
@@ -405,20 +426,21 @@ describe("classifyPipelineError — run-lifecycle errors", () => {
   it("classifies RunTimeoutError into run_timeout", () => {
     const result = classifyPipelineError(
       new RunTimeoutError("timed out", "run-1", 1_200_000),
-      LOCAL_ENV,
+      OVERRIDE_ENV,
     );
     expect(result.kind).toBe("run_timeout");
     expect(result.message).toContain("run-1");
   });
 
-  it("classifies RunLifecycleUnavailableError into lifecycle_unavailable pointing at Blocking mode", () => {
+  it("classifies RunLifecycleUnavailableError into lifecycle_unavailable pointing at the hosted API", () => {
     const result = classifyPipelineError(
-      new RunLifecycleUnavailableError("no run store", "http://localhost:8081"),
-      LOCAL_ENV,
+      new RunLifecycleUnavailableError("no run store", "https://api.unreachable.example"),
+      OVERRIDE_ENV,
     );
     expect(result.kind).toBe("lifecycle_unavailable");
-    expect(result.message).toContain("http://localhost:8081");
-    expect(result.hint?.summary).toMatch(/Blocking/i);
+    expect(result.message).toContain("https://api.unreachable.example");
+    expect(result.message).toMatch(/PIPELEX_BASE_URL/);
+    expect(result.hint?.summary).toMatch(/hosted Pipelex API/);
     expect(result.hint?.code).toContain("PIPELEX_BASE_URL");
   });
 });
@@ -426,10 +448,11 @@ describe("classifyPipelineError — run-lifecycle errors", () => {
 describe("classifyPipelineError — input-preparation (upload) errors", () => {
   it("classifies UnsupportedUploadCapabilityError into upload_failed pointing at the hosted API", () => {
     const err = new UnsupportedUploadCapabilityError("no /v1/upload route");
-    const result = classifyPipelineError(err, LOCAL_ENV);
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
     expect(result.kind).toBe("upload_failed");
     expect(result.title).toMatch(/isn't available/i);
-    expect(result.message).toContain("http://localhost:8081");
+    expect(result.message).toContain("https://api.unreachable.example");
+    expect(result.message).toMatch(/PIPELEX_BASE_URL/);
     expect(result.hint?.code).toContain("PIPELEX_BASE_URL");
   });
 
@@ -529,7 +552,7 @@ describe("classifyPipelineError — details truncation", () => {
       undefined,
       undefined,
     );
-    const result = classifyPipelineError(err, LOCAL_ENV);
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
     expect(result.details).toContain("truncated");
     expect(result.details.length).toBeLessThan(huge.length + 200);
   });

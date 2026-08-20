@@ -107,7 +107,7 @@ describe("runSummarizePdfBlocking", () => {
   it("classifies SDK errors from execute into a structured PipelineError", async () => {
     prepareInputs.mockResolvedValueOnce(PREPARED);
     execute.mockRejectedValueOnce(
-      new ApiUnreachableError("unreachable", "http://localhost:8081", "ECONNREFUSED"),
+      new ApiUnreachableError("unreachable", "https://api.unreachable.example", "ECONNREFUSED"),
     );
     const result = await runSummarizePdfBlocking({
       dataUrl: PDF_DATA_URL,

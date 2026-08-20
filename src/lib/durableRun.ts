@@ -40,10 +40,10 @@ function isTransientPollError(kind: PipelineErrorKind): boolean {
  * Start a pipeline the **durable** way — `POST /v1/start` (202) — and return
  * the run id to poll. Server-only.
  *
- * Against a bare runner with no run store, the SDK throws
+ * When the configured URL doesn't serve the run lifecycle, the SDK throws
  * `RunLifecycleUnavailableError` (raw `start()` does NOT auto-fall-back to
- * blocking); it is classified into a `lifecycle_unavailable` error that points
- * the user at Blocking mode.
+ * blocking); it is classified into a `lifecycle_unavailable` error that steers
+ * the user to check PIPELEX_BASE_URL.
  */
 export async function startDurableRun(
   buildOptions: () => Promise<StartOptions>,

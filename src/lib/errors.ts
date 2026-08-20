@@ -131,19 +131,24 @@ export function classifyPipelineError(
 
 function classifyUnreachable(err: ApiUnreachableError, env: ClassifyEnv): PipelineError {
   const url = err.apiUrl || env.apiUrl || "(unknown)";
-  const isLocal = isLocalhostUrl(url);
   const codeSuffix = err.code ? ` (${err.code})` : "";
   const baseDetails = `${err.name}: ${err.message}${err.cause instanceof Error ? `\nCaused by: ${err.cause.message}` : ""}`;
 
-  if (isLocal) {
+  // Split on whether PIPELEX_BASE_URL was explicitly set (`env.apiUrl` is that
+  // variable, undefined when unset). With an override in play, the URL is the
+  // first suspect; without one, telling the user to check a variable they never
+  // set would only confuse — the default hosted URL didn't answer, so point at
+  // the network first.
+  if (env.apiUrl !== undefined) {
     return {
       kind: "api_unreachable",
       title: "Pipelex API not reachable",
-      message: `Tried to reach the local API at ${url}${codeSuffix}, but nothing answered. The starter expects pipelex-api to be running on the same host.`,
+      message: `Tried to reach ${url}${codeSuffix}, but the request did not get a response. PIPELEX_BASE_URL is set, so start there: make sure it targets a Pipelex API environment.`,
       hint: {
-        summary: "Start the local Pipelex API in a sibling repo, then retry:",
-        code: "cd ../pipelex-api && make run",
-        codeLanguage: "bash",
+        summary:
+          "Verify PIPELEX_BASE_URL in .env.local targets a Pipelex API environment, or remove the override to fall back to the default:",
+        code: "PIPELEX_BASE_URL=https://api.pipelex.com",
+        codeLanguage: "env",
       },
       details: baseDetails,
     };
@@ -152,9 +157,9 @@ function classifyUnreachable(err: ApiUnreachableError, env: ClassifyEnv): Pipeli
   return {
     kind: "api_unreachable",
     title: "Pipelex API not reachable",
-    message: `Tried to reach ${url}${codeSuffix}, but the request did not get a response. Check the URL and your network connection.`,
+    message: `Tried to reach the Pipelex API at its default URL, ${url}${codeSuffix}, but the request did not get a response. Check your network connection.`,
     hint: {
-      summary: "Verify PIPELEX_BASE_URL in .env.local points to a reachable API.",
+      summary: "Check your network connection, then retry. The URL the app is using is:",
       code: `PIPELEX_BASE_URL=${url}`,
       codeLanguage: "env",
     },
@@ -234,7 +239,8 @@ function classifyServerError(err: ApiResponseError, details: string): PipelineEr
           err.serverMessage ??
           "The Pipelex backend tried to call an LLM provider but no API key was configured for it.",
         hint: {
-          summary: "Set the missing provider key in pipelex-api's .env, then restart the API.",
+          summary:
+            "The Pipelex hosted API always has its providers configured, so this indicates the API at PIPELEX_BASE_URL isn't it (or a non-production environment is mid-configuration) — verify the URL.",
           docs: { label: "Pipelex inference setup docs", href: "https://docs.pipelex.com/" },
         },
         details,
@@ -247,7 +253,8 @@ function classifyServerError(err: ApiResponseError, details: string): PipelineEr
           err.serverMessage ??
           "The Pipelex backend has no LLM inference backend wired up to handle this pipe.",
         hint: {
-          summary: "Configure an inference backend in pipelex-api (Pipelex Gateway or BYO key).",
+          summary:
+            "The Pipelex hosted API always has an inference backend, so this indicates the API at PIPELEX_BASE_URL isn't it (or a non-production environment is mid-configuration) — verify the URL.",
           docs: { label: "Pipelex inference setup docs", href: "https://docs.pipelex.com/" },
         },
         details,
@@ -371,7 +378,7 @@ function classifyRunTimeout(err: RunTimeoutError): PipelineError {
 }
 
 /**
- * The pipelex-api `error_type` for a `/start` refused because the deployment's
+ * The Pipelex API `error_type` for a `/start` refused because the deployment's
  * orchestrator can't run asynchronously (blocking-only `direct` mode). A
  * contract value on the problem body, surfaced by the SDK as `err.errorType`.
  */
@@ -380,9 +387,10 @@ const START_REQUIRES_ASYNC_ORCHESTRATION = "StartRequiresAsyncOrchestration";
 /**
  * `/start` hit a backend whose orchestrator is blocking-only (the in-process
  * `direct` mode), so the durable start is refused with a 400. Same consumer
- * meaning as a bare runner with no run store (`classifyLifecycleUnavailable`,
- * a 404): durable execution isn't available here — switch to Blocking. The
- * server says it in runtime terms ("orchestration mode", "fire-and-forget");
+ * meaning as the run-lifecycle routes missing outright
+ * (`classifyLifecycleUnavailable`, a 404): the configured URL doesn't provide
+ * durable execution, which the hosted Pipelex API always does — so the fix is
+ * the URL. The server says it in runtime terms ("orchestration mode", "fire-and-forget");
  * we re-frame it as *durable execution* (the word the starter uses) and route
  * it to the `lifecycle_unavailable` kind so the UI doesn't show the raw
  * runtime message as a generic bad request. The root cause differs from the
@@ -394,12 +402,11 @@ function classifyStartRequiresAsync(err: ApiResponseError): PipelineError {
   return {
     kind: "lifecycle_unavailable",
     title: "Durable runs aren't available on this API",
-    message: `${url} accepts runs but runs them synchronously — it's a blocking-only "direct" deployment — so durable execution (start + poll) isn't available here. Durable mode needs an async-capable backend such as the hosted Pipelex API.`,
+    message: `${url} refused the durable start because it can only run pipelines synchronously — something the Pipelex hosted API never does, so this URL isn't it. Check PIPELEX_BASE_URL.`,
     // Show the runtime's own wording verbatim alongside our re-framing.
     apiMessage: err.serverMessage,
     hint: {
-      summary:
-        "Switch this example to Blocking mode (it works against any runner), or point PIPELEX_BASE_URL at an async-capable API:",
+      summary: "Point PIPELEX_BASE_URL at the hosted Pipelex API:",
       code: "PIPELEX_BASE_URL=https://api.pipelex.com",
       codeLanguage: "env",
     },
@@ -421,10 +428,9 @@ function classifyLifecycleUnavailable(
   return {
     kind: "lifecycle_unavailable",
     title: "Durable runs aren't available on this API",
-    message: `${url} doesn't serve the durable run lifecycle (start + poll) — it looks like a bare pipelex-api runner with no run store. Durable mode needs the hosted Pipelex API.`,
+    message: `${url} doesn't serve the durable run lifecycle (start + poll), so it isn't the Pipelex hosted API — check PIPELEX_BASE_URL.`,
     hint: {
-      summary:
-        "Switch this example to Blocking mode (it works against any runner), or point PIPELEX_BASE_URL at the hosted API:",
+      summary: "Point PIPELEX_BASE_URL at the hosted Pipelex API:",
       code: "PIPELEX_BASE_URL=https://api.pipelex.com",
       codeLanguage: "env",
     },
@@ -446,16 +452,16 @@ function classifyInputPreparationError(
 ): PipelineError {
   const details = `${err.name}: ${err.message}`;
 
-  // No upload route (404) — like a bare runner missing the durable lifecycle, but
-  // for the upload capability. Point at the hosted API, which supports upload.
+  // No upload route (404) — the configured URL doesn't provide the upload
+  // capability, which the hosted Pipelex API always does. Steer to the URL.
   if (err instanceof UnsupportedUploadCapabilityError) {
     const url = env.apiUrl || "(unknown)";
     return {
       kind: "upload_failed",
       title: "File upload isn't available on this API",
-      message: `Preparing the PDF means uploading it to Pipelex storage first, but ${url} has no upload route — it looks like a bare pipelex-api runner. File upload is a hosted Pipelex capability.`,
+      message: `Preparing the PDF means uploading it to Pipelex storage first, but ${url} has no upload route, so it isn't the Pipelex hosted API — check PIPELEX_BASE_URL.`,
       hint: {
-        summary: "Point PIPELEX_BASE_URL at the hosted API, which supports upload:",
+        summary: "Point PIPELEX_BASE_URL at the hosted Pipelex API, which supports upload:",
         code: "PIPELEX_BASE_URL=https://api.pipelex.com",
         codeLanguage: "env",
       },
@@ -521,13 +527,11 @@ function classifyBadImageOutput(err: BadImageOutputError): PipelineError {
       kind: "bad_image_output",
       title: "Generated image isn't web-accessible",
       message:
-        "The pipeline generated an image, but the Pipelex API returned a URL a browser can't load — typically a file:// path on the API server's disk. This happens when the API uses the local file storage provider.",
+        "The pipeline generated an image, but the API returned a URL a browser can't load. The Pipelex hosted API returns signed web URLs, so check that PIPELEX_BASE_URL targets it.",
       hint: {
-        summary:
-          "Configure the Pipelex API with an S3 or GCP storage provider so it returns presigned HTTPS URLs, or point PIPELEX_BASE_URL at the hosted API. Set this in pipelex-api's .pipelex/pipelex.toml:",
-        code: '[storage]\nmethod = "s3"  # or "gcp"',
+        summary: "Point PIPELEX_BASE_URL at the hosted Pipelex API:",
+        code: "PIPELEX_BASE_URL=https://api.pipelex.com",
         codeLanguage: "env",
-        docs: { label: "Pipelex storage configuration", href: "https://docs.pipelex.com/" },
       },
       details: `${err.name}: ${err.message}`,
     };
@@ -615,15 +619,6 @@ function classifyUnknown(err: unknown): PipelineError {
       "The starter caught an unexpected error. The technical details below should help track it down.",
     details: `${name}: ${message}`,
   };
-}
-
-function isLocalhostUrl(url: string): boolean {
-  try {
-    const host = new URL(url).hostname;
-    return host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" || host === "::1";
-  } catch {
-    return false;
-  }
 }
 
 function isFsNotFound(err: unknown): boolean {

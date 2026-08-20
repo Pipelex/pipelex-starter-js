@@ -32,13 +32,13 @@ test("durable mode: streams live status, then generates an image", async ({ page
 
 test("blocking mode: demonstrates the ~30s hosted cap with a timeout error", async ({ page }) => {
   // The ~30s synchronous cap is a hosted-gateway behavior (prod and the
-  // env-suffixed gateways, e.g. api-dev / api-staging). A self-hosted runner
-  // has no such cap — blocking mode may simply succeed there — so this spec
+  // env-suffixed gateways, e.g. api-dev / api-staging). Other endpoints may
+  // not enforce it — blocking mode may simply succeed there — so this spec
   // only makes sense against a hosted gateway.
   const baseUrl = (process.env.PIPELEX_BASE_URL ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
   test.skip(
     !/^https:\/\/api(-\w+)?\.pipelex\.com$/.test(baseUrl),
-    "Hosted gateway only: self-hosted deployments may not enforce the ~30s blocking cap.",
+    "Hosted gateway only: other endpoints may not enforce the ~30s blocking cap.",
   );
 
   test.setTimeout(120_000);

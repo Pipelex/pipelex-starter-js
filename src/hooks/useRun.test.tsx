@@ -252,7 +252,7 @@ describe("useRun — durable", () => {
       error: {
         kind: "lifecycle_unavailable",
         title: "Durable runs aren't available on this API",
-        message: "http://localhost:8081 doesn't serve the durable run lifecycle",
+        message: "https://api.unreachable.example doesn't serve the durable run lifecycle",
         details: "d",
       },
     });

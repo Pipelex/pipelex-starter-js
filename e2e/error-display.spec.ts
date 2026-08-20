@@ -2,10 +2,10 @@ import { test, expect } from "@playwright/test";
 import { DEFAULT_API_BASE_URL } from "@pipelex/sdk";
 
 // Verifies the developer-friendly error UX when the Pipelex API isn't reachable.
-// Runs against whatever PIPELEX_BASE_URL the dev server is using — e.g. a
-// local instance from `.env.local` that isn't actually running, which is the
-// "I pointed the starter at my own API and it's down" failure mode this UX is
-// designed for.
+// Runs against whatever PIPELEX_BASE_URL the dev server is using — the failure
+// mode this UX serves is "PIPELEX_BASE_URL points somewhere unreachable, or the
+// network is down", and the rendered alert steers the developer to verify the
+// URL (or, when no override is set, their connection).
 //
 // In the default durable mode this exercises the `start` call failing with an
 // unreachable API — the classification (api_unreachable) is identical to the
@@ -51,10 +51,20 @@ test.describe("offline-API error display", () => {
     const alert = page.getByRole("alert").filter({ hasText: "Pipelex API not reachable" });
     await expect(alert).toBeVisible({ timeout: 30_000 });
 
-    // The recovery hint should include a runnable command pointing at the
-    // sibling pipelex-api repo.
-    await expect(alert).toContainText(/cd \.\.\/pipelex-api/);
-    await expect(alert).toContainText("make run");
+    // The message names the endpoint that failed to answer — the same URL this
+    // spec probed (the app and the spec read the same env, since
+    // playwright.config.ts loads .env.local).
+    const apiUrl = (process.env.PIPELEX_BASE_URL ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
+    await expect(alert).toContainText(apiUrl);
+
+    // The recovery hint is branch-specific: with a PIPELEX_BASE_URL override
+    // set, the copy steers to verifying that override; without one, it steers
+    // to the network (the user never set a URL to check).
+    if (process.env.PIPELEX_BASE_URL !== undefined) {
+      await expect(alert).toContainText("Verify PIPELEX_BASE_URL in .env.local");
+    } else {
+      await expect(alert).toContainText("Check your network connection");
+    }
 
     // Technical details are collapsible but present in the DOM.
     await expect(alert.getByText("Technical details")).toBeVisible();

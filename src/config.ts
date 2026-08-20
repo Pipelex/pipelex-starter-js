@@ -19,10 +19,11 @@ export type ExecutionMode = "blocking" | "durable";
 /**
  * Default mode for every example's `<ModeToggle>`. Durable is hosted-safe, so
  * it is the right default; flip an example to blocking to demonstrate the cap.
- * Against a bare self-hosted runner with no run store, durable surfaces an
- * explicit `lifecycle_unavailable` error (naming the endpoint URL and pointing
- * at Blocking mode) rather than silently downgrading — the developer should
- * know their backend doesn't support durable execution.
+ * When the configured URL doesn't serve the durable run lifecycle, durable
+ * surfaces an explicit `lifecycle_unavailable` error (naming the endpoint URL
+ * and steering to `PIPELEX_BASE_URL`) rather than silently downgrading — the
+ * developer should know their configured API doesn't provide durable
+ * execution.
  *
  * `NEXT_PUBLIC_` env vars are inlined at build time, so this is safe to read on
  * the client. An unrecognized value falls back to `durable`.

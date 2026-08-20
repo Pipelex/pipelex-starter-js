@@ -52,7 +52,7 @@ describe("startDurableRun", () => {
 
   it("classifies a bare-runner RunLifecycleUnavailableError into lifecycle_unavailable", async () => {
     start.mockRejectedValueOnce(
-      new RunLifecycleUnavailableError("no run store", "http://localhost:8081"),
+      new RunLifecycleUnavailableError("no run store", "https://api.unreachable.example"),
     );
     const result = await startDurableRun(async () => OPTIONS);
     expect(result.ok).toBe(false);
@@ -62,7 +62,7 @@ describe("startDurableRun", () => {
 
   it("classifies a transport error thrown by start", async () => {
     start.mockRejectedValueOnce(
-      new ApiUnreachableError("unreachable", "http://localhost:8081", "ECONNREFUSED"),
+      new ApiUnreachableError("unreachable", "https://api.unreachable.example", "ECONNREFUSED"),
     );
     const result = await startDurableRun(async () => OPTIONS);
     expect(result.ok).toBe(false);
@@ -230,7 +230,7 @@ describe("pollDurableRun", () => {
 
   it("classifies a RunLifecycleUnavailableError thrown during polling as terminal", async () => {
     getRunStatus.mockRejectedValueOnce(
-      new RunLifecycleUnavailableError("no run store", "http://localhost:8081"),
+      new RunLifecycleUnavailableError("no run store", "https://api.unreachable.example"),
     );
     const result = await pollDurableRun("run-1", parseFixture);
     expect(result.ok).toBe(false);
