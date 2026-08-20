@@ -29,6 +29,7 @@ import {
 import {
   assertSecureBaseUrl,
   discoverMethods,
+  refuseSymlinkRoot,
   GENERATED_ROOT,
   LOCK_FILENAME,
   METHODS_DIR,
@@ -60,6 +61,10 @@ async function main(): Promise<void> {
     );
     process.exit(1);
   }
+
+  // A symlinked src/generated/ root would route reads — and for the writer,
+  // writes and deletes — into an external target. Same refusal as the check's.
+  await refuseSymlinkRoot(GENERATED_ROOT);
 
   const client = new PipelexApiClient();
   console.log(`codegen:verify: ${methods.length} method(s), against ${baseUrl}`);

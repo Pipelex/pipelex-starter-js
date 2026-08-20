@@ -32,6 +32,7 @@ import {
 import {
   assertSecureBaseUrl,
   discoverMethods,
+  refuseSymlinkRoot,
   GENERATED_ROOT,
   LOCK_FILENAME,
   METHODS_DIR,
@@ -163,6 +164,10 @@ async function main(): Promise<void> {
   // Constructed bare, not via `@/lib/pipelexClient`: the `@/` alias is a tsconfig
   // path mapping that Node's runtime resolver never reads. The client picks up the
   // same PIPELEX_API_KEY / PIPELEX_BASE_URL natively, so this IS the same client.
+  // A symlinked src/generated/ root would route reads — and for the writer,
+  // writes and deletes — into an external target. Same refusal as the check's.
+  await refuseSymlinkRoot(GENERATED_ROOT);
+
   const client = new PipelexApiClient();
   console.log(`codegen: ${methods.length} method(s), via ${baseUrl}`);
 

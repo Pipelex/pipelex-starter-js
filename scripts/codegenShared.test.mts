@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   assertSecureBaseUrl,
   compareSources,
+  discoverMethods,
   findOrphanTrees,
   hashSource,
   NonUtf8FileError,
@@ -90,6 +91,30 @@ describe("walk symlink policy", () => {
     await writeFile(path.join(fixtureDir, "sub", "a.ts"), "");
 
     expect(await walk(fixtureDir)).toEqual(["b.ts", "sub/a.ts"]);
+  });
+});
+
+describe("root symlink guards", () => {
+  it("discoverMethods refuses a symlinked methods/ root", async () => {
+    const realRoot = path.join(fixtureDir, "real-methods");
+    const linkRoot = path.join(fixtureDir, "link-methods");
+    await mkdir(realRoot);
+    await symlink(realRoot, linkRoot);
+
+    const error = await discoverMethods(linkRoot).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SymlinkRefusedError);
+    expect((error as SymlinkRefusedError).message).toContain("link-methods");
+  });
+
+  it("findOrphanTrees refuses a symlinked generated root", async () => {
+    const realRoot = path.join(fixtureDir, "real-generated");
+    const linkRoot = path.join(fixtureDir, "link-generated");
+    await mkdir(realRoot);
+    await symlink(realRoot, linkRoot);
+
+    const error = await findOrphanTrees(linkRoot, new Set()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SymlinkRefusedError);
+    expect((error as SymlinkRefusedError).message).toContain("link-generated");
   });
 });
 

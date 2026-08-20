@@ -16,8 +16,9 @@
  * produce a *true* verdict rather than a silent wrong one:
  *
  *  - **Only regular files and directories.** A symlink, FIFO, or socket under
- *    `methods/` or a generated tree — or a symlinked tree root or method
- *    directory — throws `SymlinkRefusedError` naming the path. Following
+ *    `methods/` or a generated tree — or a symlinked tree root, method
+ *    directory, or `methods/` / `src/generated/` root — throws
+ *    `SymlinkRefusedError` naming the path. Following
  *    symlinks would need cycle handling and would let a symlinked `.mthds`
  *    drop out of the staleness closure; refusing loudly beats both.
  *  - **Fatal UTF-8 decoding.** Every text read goes through `readTextFile`,
@@ -138,12 +139,30 @@ export async function readTextFile(filePath: string): Promise<string> {
  * (recursive calls descend only vetted dirents), and every entry that is not
  * a regular file or a directory throws `SymlinkRefusedError`.
  */
+/**
+ * Refuse a directory that is itself a symlink. `lstat` only inspects the final
+ * path component, so this guards exactly the case the per-entry checks cannot:
+ * a symlinked root (`methods/`, `src/generated/`, or a tree directory) would
+ * otherwise be followed transparently, letting the scripts certify — or
+ * regeneration rewrite — external content. An absent path passes: ENOENT is
+ * the caller's story (no-tree, empty scan, or the readdir error).
+ */
+export async function refuseSymlinkRoot(dirPath: string): Promise<void> {
+  let rootStat;
+  try {
+    rootStat = await lstat(dirPath);
+  } catch (error) {
+    if (isEnoent(error)) return;
+    throw error;
+  }
+  if (rootStat.isSymbolicLink()) {
+    throw new SymlinkRefusedError(describePath(dirPath), "a symlink");
+  }
+}
+
 export async function walk(dir: string, prefix = ""): Promise<string[]> {
   if (prefix === "") {
-    const rootStat = await lstat(dir);
-    if (rootStat.isSymbolicLink()) {
-      throw new SymlinkRefusedError(describePath(dir), "a symlink");
-    }
+    await refuseSymlinkRoot(dir);
   }
   const entries = await readdir(dir, { withFileTypes: true });
   const found: string[] = [];
@@ -184,6 +203,7 @@ export function hashSource(content: string): string {
 
 /** Discover every method directory under `methods/` and read its `.mthds` closure. */
 export async function discoverMethods(methodsDir = METHODS_DIR): Promise<MethodClosure[]> {
+  await refuseSymlinkRoot(methodsDir);
   const entries = await readdir(methodsDir, { withFileTypes: true });
   const dirs: Dirent[] = [];
   for (const entry of entries) {
@@ -346,6 +366,7 @@ export async function findOrphanTrees(
   generatedRoot: string,
   expected: Set<string>,
 ): Promise<OrphanScan> {
+  await refuseSymlinkRoot(generatedRoot);
   let entries: Dirent[];
   try {
     entries = await readdir(generatedRoot, { withFileTypes: true });

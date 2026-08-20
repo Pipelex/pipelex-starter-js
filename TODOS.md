@@ -72,3 +72,5 @@ Local working tracker (not committed with the PRs; archive via wip-triage when d
 - [ ] Archive this tracker (wip-triage) once both PRs merge.
 
 > **CHECKPOINT 3 (final)** — record: both PR numbers, the SHAs, decisions that changed along the way, and anything discovered that belongs in `wip/` or `../wip/inbox/`.
+>
+> **Record (2026-08-20, in progress):** One PR instead of two — PR #19 merged before Phase 1 ran, so everything landed on **`feature/Codegen-follow-ups`** → **PR #20** (targets `dev`). Commits: `5c42288` (Phase 1, shared-test decoupling), `4edd176` (Phase 2, shared layer + tests), `5c06021` (Phase 3, check rewrite), `322bf2f` (Phase 4, scheme guard wiring + server-only), `64876ca` (Phase 5, docs + changelog). Decision changes en route: `assertSecureBaseUrl` landed with Phase 2 (it lives in the shared module); tagged error classes use explicit field declarations because Node strip-types rejects TS parameter properties; `findOrphanTrees` also refuses symlinks/specials at the `src/generated/` root. Review-bot loop pending; archive this tracker via wip-triage after PR #20 merges.

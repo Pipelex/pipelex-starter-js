@@ -143,7 +143,18 @@ async function main(): Promise<void> {
 
   // Orphan detection runs even when methods/ is empty: generated trees left
   // behind after the last method was removed are drift, not "nothing to check".
-  const scan = await findOrphanTrees(GENERATED_ROOT, new Set(methods.map((m) => m.name)));
+  let scan;
+  try {
+    scan = await findOrphanTrees(GENERATED_ROOT, new Set(methods.map((m) => m.name)));
+  } catch (error) {
+    if (error instanceof SymlinkRefusedError) {
+      // A symlinked src/generated/ root: every per-method verdict above would
+      // have been produced over external content, so refuse the whole run.
+      console.error(`codegen:check: ${error.message}`);
+      process.exit(EXIT_NO_VERDICT);
+    }
+    throw error;
+  }
 
   const counts = { current: 0, drift: 0, noVerdict: 0 };
   const record = (code: number): void => {
