@@ -247,3 +247,42 @@ describe("assertSecureBaseUrl", () => {
     expect(() => assertSecureBaseUrl("http://api.pipelex.com")).toThrow(/bearer token/);
   });
 });
+
+describe("entry policy at the scanned roots", () => {
+  it("readGeneratedTree maps a lockless tree to no-lock, carrying its paths", async () => {
+    await writeFile(path.join(fixtureDir, "types.ts"), "export {};\n");
+
+    expect(await readGeneratedTree(fixtureDir)).toEqual({
+      status: "no-lock",
+      treePaths: ["types.ts"],
+    });
+  });
+
+  it("discoverMethods refuses a symlinked entry at the methods root", async () => {
+    await mkdir(path.join(fixtureDir, "real-m"));
+    await symlink(path.join(fixtureDir, "real-m"), path.join(fixtureDir, "link-m"));
+
+    const error = await discoverMethods(fixtureDir).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SymlinkRefusedError);
+    expect((error as SymlinkRefusedError).message).toContain("link-m");
+  });
+
+  it("discoverMethods skips a plain file at the methods root", async () => {
+    await writeFile(path.join(fixtureDir, ".DS_Store"), "junk");
+    await mkdir(path.join(fixtureDir, "m"));
+    await writeFile(path.join(fixtureDir, "m", "main.mthds"), "a = 1\n");
+
+    const methods = await discoverMethods(fixtureDir);
+    expect(methods.map((m) => m.name)).toEqual(["m"]);
+    expect(Object.keys(methods[0].sourceHashes)).toEqual(["methods/m/main.mthds"]);
+  });
+
+  it("findOrphanTrees refuses a symlinked entry under the generated root", async () => {
+    await mkdir(path.join(fixtureDir, "real-tree"));
+    await symlink(path.join(fixtureDir, "real-tree"), path.join(fixtureDir, "link-tree"));
+
+    const error = await findOrphanTrees(fixtureDir, new Set()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SymlinkRefusedError);
+    expect((error as SymlinkRefusedError).message).toContain("link-tree");
+  });
+});

@@ -134,12 +134,6 @@ export async function readTextFile(filePath: string): Promise<string> {
 }
 
 /**
- * Recursively collect file paths under `dir`, relative to it, sorted for
- * determinism. Enforces the entry policy above: the root is `lstat`ed once
- * (recursive calls descend only vetted dirents), and every entry that is not
- * a regular file or a directory throws `SymlinkRefusedError`.
- */
-/**
  * Refuse a directory that is itself a symlink. `lstat` only inspects the final
  * path component, so this guards exactly the case the per-entry checks cannot:
  * a symlinked root (`methods/`, `src/generated/`, or a tree directory) would
@@ -160,6 +154,12 @@ export async function refuseSymlinkRoot(dirPath: string): Promise<void> {
   }
 }
 
+/**
+ * Recursively collect file paths under `dir`, relative to it, sorted for
+ * determinism. Enforces the entry policy above: the root is `lstat`ed once
+ * (recursive calls descend only vetted dirents), and every entry that is not
+ * a regular file or a directory throws `SymlinkRefusedError`.
+ */
 export async function walk(dir: string, prefix = ""): Promise<string[]> {
   if (prefix === "") {
     await refuseSymlinkRoot(dir);
