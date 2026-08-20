@@ -16,6 +16,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // See the note in vitest.server-only-stub.ts.
+      "server-only": path.resolve(__dirname, "./vitest.server-only-stub.ts"),
     },
   },
 });
