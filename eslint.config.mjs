@@ -3,7 +3,11 @@ import nextVitals from "eslint-config-next/core-web-vitals";
 
 const eslintConfig = defineConfig([
   ...nextVitals,
-  globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts"]),
+  // `src/generated/**` is written verbatim from the codegen API and hashed
+  // against per-file stamps — any autofixing rule is a byte rewrite that would
+  // break the trust chain. `tsc` still covers the trees (they sit inside the
+  // base tsconfig), which is the check that matters for generated code.
+  globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts", "src/generated/**"]),
   {
     // Route diagnostics through structured errors (classifyPipelineError),
     // not stray console writes. Mirrors mthds-js / mthds-ui.
@@ -22,7 +26,7 @@ const eslintConfig = defineConfig([
     // Build/tooling files (root configs, skill CLI scripts) write to the
     // terminal by design — there is no classifyPipelineError there, console
     // IS the output channel. Mirrors mthds-js's CLI-entrypoint carve-out.
-    files: ["*.config.{ts,mts,cts,js,mjs,cjs}", ".claude/skills/**/*.mjs"],
+    files: ["*.config.{ts,mts,cts,js,mjs,cjs}", ".claude/skills/**/*.mjs", "scripts/**/*.mts"],
     rules: {
       "no-console": "off",
     },

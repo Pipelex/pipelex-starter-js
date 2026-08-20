@@ -1,4 +1,4 @@
-.PHONY: help run dev build start lint format format-check typecheck test test-watch test-e2e test-e2e-ui confirm-live-e2e agent-test check clean install lock all use-local use-npm ul un
+.PHONY: help run dev build start lint format format-check typecheck codegen codegen-check codegen-verify test test-watch test-e2e test-e2e-ui confirm-live-e2e agent-test check clean install lock all use-local use-npm ul un
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -23,9 +23,28 @@ format: ## Format code with Prettier
 format-check: ## Check formatting (CI)
 	npm run format:check
 
-typecheck: ## Run TypeScript type checking (app + e2e specs)
+typecheck: ## Run TypeScript type checking (app + e2e specs + scripts)
 	npm run typecheck
 	npm run typecheck:e2e
+	npm run typecheck:scripts
+
+# Regenerates src/generated/<method>/ from methods/<method>/. Needs PIPELEX_API_KEY
+# and a base URL that serves POST /v1/codegen (api-dev today, not yet api.pipelex.com).
+# Deliberately OUT of `make all`, for the same reason test-e2e is: key + network.
+codegen: ## Regenerate the typed artifacts in src/generated/ from methods/ (needs PIPELEX_API_KEY)
+	npm run codegen
+
+# The CI half of the trust chain: pure hashing, no key, no network. Proves each
+# committed tree still agrees with its own lock, and that the .mthds sources it
+# was generated from have not changed since. Part of `make check`.
+codegen-check: ## Verify src/generated/ is current, offline (no API key needed)
+	npm run codegen:check
+
+# The semantic gate the offline check deliberately cannot be: re-resolves each
+# method live and compares crate fingerprints. Keyed and online, so it stays out
+# of `make all` — run it before a release, or after touching methods/.
+codegen-verify: ## Ask the engine whether the committed crates are still current (needs PIPELEX_API_KEY)
+	npm run codegen:verify
 
 test: ## Run tests (single pass)
 	npm run test
@@ -53,7 +72,7 @@ test-e2e-ui: confirm-live-e2e ## Same as test-e2e, with the Playwright UI runner
 agent-test: ## Run tests, silent on success (for agents)
 	@OUTPUT=$$(npm run test --silent 2>&1); STATUS=$$?; if [ $$STATUS -ne 0 ]; then echo "$$OUTPUT"; exit $$STATUS; fi
 
-check: lint format-check typecheck ## Run lint, format check, and type check
+check: lint format-check typecheck codegen-check ## Run lint, format check, type check, and the offline codegen check
 
 all: check test build ## Full validation: check + test + build (excludes e2e — see test-e2e)
 

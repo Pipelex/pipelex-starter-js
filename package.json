@@ -12,6 +12,10 @@
     "format:check": "prettier --check --no-error-on-unmatched-pattern \"**/*.{ts,tsx,mts,mjs,js,css,json,md}\" \".claude/skills/bootstrap/scripts/*.mjs\"",
     "typecheck": "tsc --noEmit",
     "typecheck:e2e": "tsc -p tsconfig.e2e.json --noEmit",
+    "typecheck:scripts": "tsc -p tsconfig.scripts.json --noEmit",
+    "codegen": "node --experimental-strip-types scripts/codegen.mts",
+    "codegen:check": "node --experimental-strip-types scripts/codegen-check.mts",
+    "codegen:verify": "node --experimental-strip-types scripts/codegen-verify.mts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
@@ -19,10 +23,11 @@
     "prepare": "husky"
   },
   "dependencies": {
-    "@pipelex/sdk": "^0.12.0",
+    "@pipelex/sdk": "^0.13.0",
     "next": "^16.3.1",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react-dom": "^19.2.4",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
@@ -46,7 +51,7 @@
   },
   "lint-staged": {
     "*.{ts,tsx}": [
-      "eslint --fix",
+      "eslint --fix --no-warn-ignored",
       "prettier --write"
     ],
     "*.{css,json,md}": [
