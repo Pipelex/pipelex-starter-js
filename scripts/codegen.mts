@@ -32,6 +32,7 @@ import {
 import {
   discoverMethods,
   GENERATED_ROOT,
+  LOCK_FILENAME,
   METHODS_DIR,
   REPO_ROOT,
   SIDECAR_COMMENT,
@@ -182,6 +183,20 @@ async function main(): Promise<void> {
         console.error(`    ${drift.category}: ${drift.path} — ${drift.detail}`);
       }
       console.error("    Nothing was written. This is an upstream bug — report it.");
+      failed = true;
+      continue;
+    }
+
+    // The offline check opens the lock by name, so the writer must not put it
+    // anywhere else. Following a rename silently would leave the old lock in
+    // place — it is not stampable, so the tree cleanup keeps it — and the check
+    // would keep validating that obsolete file and stay green. A rename is
+    // upstream news; surface it here rather than writing a tree nothing guards.
+    if (report.lock_filename !== LOCK_FILENAME) {
+      console.error(
+        `\n✗ ${method.name} — the server returned lock_filename '${report.lock_filename}', ` +
+          `not '${LOCK_FILENAME}'. Nothing was written; bump @pipelex/sdk or report it upstream.`,
+      );
       failed = true;
       continue;
     }

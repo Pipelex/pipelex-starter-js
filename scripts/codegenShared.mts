@@ -25,10 +25,13 @@ export const GENERATED_ROOT = path.join(REPO_ROOT, "src", "generated");
 /**
  * The lock filename the codegen API emits (`lock_filename` on the response).
  *
- * `codegen.mts` still writes the lock at whatever name the server returns — the
- * tree is verbatim — while the offline check looks for it here. If those two ever
- * disagree the check reports "no lock" and lists what it did find, which makes a
- * rename obvious instead of silent.
+ * The offline check opens the lock by this name, so `codegen.mts` refuses to
+ * write one under any other: a response naming a different `lock_filename` is
+ * an error there, not something to follow silently. That refusal is what makes
+ * the two agree by construction. Writing the new lock beside the old one would
+ * not — the old lock is not a stampable artifact, so the tree cleanup never
+ * removes it, and the check would go on validating the obsolete file and
+ * reporting a confident, wrong verdict.
  */
 export const LOCK_FILENAME = "codegen.lock";
 
@@ -71,8 +74,22 @@ export async function walk(dir: string, prefix = ""): Promise<string[]> {
   return found.sort();
 }
 
-export function sha256(content: string): string {
-  return createHash("sha256").update(content, "utf8").digest("hex");
+/**
+ * Hash one `.mthds` source for the sidecar, over line-ending-normalized text.
+ *
+ * The normalization is the one `runCodegenCheck` already applies to artifacts
+ * and to the lock, and it is here for the same reason. `.gitattributes` pins
+ * only `src/generated/**`, so a Windows checkout under `core.autocrlf=true`
+ * gets CRLF `.mthds` files; hashing those verbatim reports every bundle
+ * `stale-source` on a tree nobody touched — and the remedy the check prints,
+ * `npm run codegen`, needs the API key and the network this check is defined
+ * not to need. The crate fingerprint is line-ending-invariant anyway (the
+ * engine parses TOML, which folds CRLF inside multi-line strings), so raw
+ * bytes were never the question the sidecar meant to ask.
+ */
+export function hashSource(content: string): string {
+  const normalized = content.replace(/\r\n?/g, "\n");
+  return createHash("sha256").update(normalized, "utf8").digest("hex");
 }
 
 /** Discover every method directory under `methods/` and read its `.mthds` closure. */
@@ -94,7 +111,7 @@ export async function discoverMethods(): Promise<MethodClosure[]> {
       // `source` is the repo-relative path, so a validation error points at a real file.
       const source = `methods/${entry.name}/${relative}`;
       files.push({ content, source });
-      sourceHashes[source] = sha256(content);
+      sourceHashes[source] = hashSource(content);
     }
     methods.push({ name: entry.name, files, sourceHashes });
   }
