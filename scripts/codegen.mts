@@ -41,6 +41,7 @@ import {
   SIDECAR_COMMENT,
   SOURCES_SIDECAR,
   type SourcesSidecar,
+  walk,
 } from "./codegenShared.mts";
 
 const { loadEnvConfig } = nextEnv;
@@ -84,12 +85,16 @@ async function writeTree(
   report: CodegenValidReport,
   sourceHashes: Record<string, string>,
 ): Promise<string[]> {
-  // Refuse a symlinked method tree BEFORE the first write: the root-level
-  // guard vets src/generated/ itself, but a symlinked src/generated/<method>/
-  // would route every artifact write into its external target — and the
-  // post-write readGeneratedTree refusal below would fire only after the
-  // damage was done.
-  await refuseSymlinkRoot(outDir);
+  // Vet the whole pre-existing tree — root and nested entries alike — BEFORE
+  // the first write. `walk` refuses any symlink or special file, so a write
+  // can never be routed through a link into an external target; the post-write
+  // readGeneratedTree scan alone would refuse only after the damage was done.
+  // An absent tree (first generation) is fine.
+  try {
+    await walk(outDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code !== "ENOENT") throw error;
+  }
 
   const changed: string[] = [];
 
