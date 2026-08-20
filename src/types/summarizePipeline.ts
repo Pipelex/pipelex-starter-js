@@ -1,6 +1,6 @@
 import type { RunResults } from "@pipelex/sdk";
 import { parseDocumentSummary as parseDocumentSummaryWire } from "@/generated/summarize-pdf/binder";
-import type { DocumentSummary } from "@/generated/summarize-pdf/types";
+import { DocumentSummarySchema, type DocumentSummary } from "@/generated/summarize-pdf/types";
 import { describeSchemaFailure, wireOutput } from "@/lib/wireOutput";
 import { BadPipelineOutputError } from "@/types/pipelineError";
 
@@ -19,7 +19,7 @@ export type { DocumentSummary };
  */
 export function parseDocumentSummary(results: RunResults): DocumentSummary {
   try {
-    return parseDocumentSummaryWire(wireOutput(results));
+    return parseDocumentSummaryWire(wireOutput(results, DocumentSummarySchema));
   } catch (err) {
     throw new BadPipelineOutputError(describeSchemaFailure(err, "DocumentSummary"));
   }

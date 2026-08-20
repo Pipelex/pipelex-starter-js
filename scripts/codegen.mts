@@ -22,7 +22,7 @@ import process from "node:process";
 import nextEnv from "@next/env";
 import {
   ApiResponseError,
-  isStampableArtifactPath,
+  DEFAULT_API_BASE_URL,
   PipelexApiClient,
   runCodegenCheck,
   type CodegenValidReport,
@@ -34,11 +34,11 @@ import {
   GENERATED_ROOT,
   LOCK_FILENAME,
   METHODS_DIR,
+  readGeneratedTree,
   REPO_ROOT,
   SIDECAR_COMMENT,
   SOURCES_SIDECAR,
   type SourcesSidecar,
-  walk,
 } from "./codegenShared.mts";
 
 const { loadEnvConfig } = nextEnv;
@@ -65,9 +65,17 @@ async function writeIfChanged(filePath: string, content: string): Promise<boolea
 /**
  * Write one method's artifact set, its lock, and its sources sidecar.
  *
- * Stale stamped files that dropped out of the artifact set are removed — but
- * ONLY files the check considers stampable, so the starter-owned sidecar sitting
- * in the same directory is never touched.
+ * Stale artifacts that dropped out of the set are removed, and the authority on
+ * what may be removed is `runCodegenCheck`'s own `orphan` verdict over the tree
+ * we just wrote — not a filename test. That distinction is load-bearing. A
+ * suffix test (`isStampableArtifactPath`) answers "could this file type be an
+ * artifact"; the SDK's orphan rule additionally requires the file to *carry a
+ * codegen stamp*. Deleting on the weaker test destroys any hand-written `.ts`
+ * a consumer parks in the tree — including the "sibling module" the generated
+ * header itself recommends for declaration merging — while the offline check,
+ * which uses the stronger rule, reports that same file as perfectly healthy.
+ * Deferring to the check here is what makes the writer and the checker agree by
+ * construction, the same property the `lock_filename` guard below buys.
  */
 async function writeTree(
   outDir: string,
@@ -85,17 +93,22 @@ async function writeTree(
     }
   }
 
-  const kept = new Set([...report.artifacts.map((a) => a.path), report.lock_filename]);
-  let existingPaths: string[] = [];
-  try {
-    existingPaths = await walk(outDir);
-  } catch {
-    existingPaths = [];
-  }
-  for (const relative of existingPaths) {
-    if (kept.has(relative) || !isStampableArtifactPath(relative)) continue;
-    await rm(path.join(outDir, relative));
-    changed.push(`${relative} (removed)`);
+  // Re-read what is now on disk and ask the check which files are orphans against
+  // the lock we just wrote. `force: true` because a file vanishing between the
+  // read and the unlink is a race, not a failure — and an ENOENT thrown here
+  // would abort before the sidecar below is written, leaving a tree the offline
+  // check then calls stale.
+  const written = await readGeneratedTree(outDir);
+  if (written.status === "ok") {
+    const { drifts } = await runCodegenCheck({
+      lockContent: written.lockContent,
+      files: written.files,
+    });
+    for (const drift of drifts) {
+      if (drift.category !== "orphan") continue;
+      await rm(path.join(outDir, drift.path), { force: true });
+      changed.push(`${drift.path} (removed)`);
+    }
   }
 
   const sidecar: SourcesSidecar = { comment: SIDECAR_COMMENT, sources: sourceHashes };
@@ -126,7 +139,7 @@ function explain(error: unknown, baseUrl: string): string {
 async function main(): Promise<void> {
   loadEnvConfig(REPO_ROOT, false, { info: () => {}, error: console.error });
 
-  const baseUrl = process.env.PIPELEX_BASE_URL ?? "https://api.pipelex.com";
+  const baseUrl = process.env.PIPELEX_BASE_URL ?? DEFAULT_API_BASE_URL;
   if (!process.env.PIPELEX_API_KEY) {
     console.error("codegen: PIPELEX_API_KEY is not set — add it to .env.local.");
     process.exit(1);

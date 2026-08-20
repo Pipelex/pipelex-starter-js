@@ -54,6 +54,13 @@ describe("parseGeneratedImage", () => {
     expect(result.filename).toBeUndefined();
   });
 
+  it("treats an empty public_url as absent and falls back to url", () => {
+    // `.optional()` accepts `""`, and `""` is not nullish — so a `??` fallback
+    // would let it beat a perfectly good `url` and fail the run.
+    const result = parseGeneratedImage(mainStuff({ url: "https://x/y.png", public_url: "" }));
+    expect(result.url).toBe("https://x/y.png");
+  });
+
   it("extracts an image delivered as a base64 data URL", () => {
     const result = parseGeneratedImage(mainStuff({ url: "data:image/png;base64,AAAA" }));
     expect(result.url).toBe("data:image/png;base64,AAAA");
@@ -62,7 +69,7 @@ describe("parseGeneratedImage", () => {
     expect(result.caption).toBeUndefined();
   });
 
-  it("throws BadImageOutputError when no entry carries a URL", () => {
+  it("throws BadImageOutputError when main_stuff carries no url", () => {
     expect(() => parseGeneratedImage(mainStuff({ caption: "no url here" }))).toThrow(
       BadImageOutputError,
     );

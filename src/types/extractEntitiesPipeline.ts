@@ -1,6 +1,9 @@
 import type { RunResults } from "@pipelex/sdk";
 import { parseExtractedEntities } from "@/generated/extract-entities/binder";
-import type { ExtractedEntities } from "@/generated/extract-entities/types";
+import {
+  ExtractedEntitiesSchema,
+  type ExtractedEntities,
+} from "@/generated/extract-entities/types";
 import { describeSchemaFailure, wireOutput } from "@/lib/wireOutput";
 import { BadPipelineOutputError } from "@/types/pipelineError";
 
@@ -19,7 +22,7 @@ export type { ExtractedEntities };
  */
 export function parseEntities(results: RunResults): ExtractedEntities {
   try {
-    return parseExtractedEntities(wireOutput(results));
+    return parseExtractedEntities(wireOutput(results, ExtractedEntitiesSchema));
   } catch (err) {
     throw new BadPipelineOutputError(describeSchemaFailure(err, "ExtractedEntities"));
   }

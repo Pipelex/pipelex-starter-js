@@ -3,10 +3,10 @@
  *
  * `codegen.mts` writes the trees, `codegen-check.mts` proves them current offline,
  * and `codegen-verify.mts` asks the engine whether they are still semantically
- * right. All three walk the same directories, hash the same sources the same way,
- * and read the same sidecar — and any disagreement between them shows up as a
- * false verdict rather than an error, so the agreement lives here rather than
- * being restated in each script.
+ * right. All three walk the same directories and hash the same sources the same
+ * way; `codegen.mts` writes the sidecar and `codegen-check.mts` reads it. Any
+ * disagreement between them shows up as a false verdict rather than an error, so
+ * the agreement lives here rather than being restated in each script.
  *
  * Nothing here touches the network, `process.env`, or the SDK client: the check
  * has to stay runnable in CI with no API key.

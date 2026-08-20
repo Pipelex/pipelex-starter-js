@@ -21,6 +21,7 @@ import nextEnv from "@next/env";
 import {
   ApiResponseError,
   CodegenLockError,
+  DEFAULT_API_BASE_URL,
   PipelexApiClient,
   runCodegenCheck,
 } from "@pipelex/sdk";
@@ -39,7 +40,7 @@ const { loadEnvConfig } = nextEnv;
 async function main(): Promise<void> {
   loadEnvConfig(REPO_ROOT, false, { info: () => {}, error: console.error });
 
-  const baseUrl = process.env.PIPELEX_BASE_URL ?? "https://api.pipelex.com";
+  const baseUrl = process.env.PIPELEX_BASE_URL ?? DEFAULT_API_BASE_URL;
   if (!process.env.PIPELEX_API_KEY) {
     console.error("codegen:verify: PIPELEX_API_KEY is not set — add it to .env.local.");
     process.exit(1);

@@ -20,7 +20,8 @@
  * Exit codes follow the codegen spec: 0 current · 1 drift or stale sources ·
  * 2 no verdict could be produced.
  */
-import { readFile } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
@@ -34,7 +35,6 @@ import {
   readGeneratedTree,
   REPO_ROOT,
   SOURCES_SIDECAR,
-  walk,
 } from "./codegenShared.mts";
 
 const EXIT_CURRENT = 0;
@@ -86,15 +86,29 @@ async function compareSources(outDir: string, current: Record<string, string>): 
   return stale.sort();
 }
 
-/** Generated trees with no matching directory under `methods/` — regeneration never removes these. */
+/**
+ * Generated trees with no matching directory under `methods/` — regeneration never removes these.
+ *
+ * A tree is a *directory*, so this enumerates directory entries rather than
+ * walking files and reading their first path segment. Walking got both verdicts
+ * wrong in opposite directions: a plain file at the root of `src/generated/`
+ * (`.DS_Store`, which Finder writes into any folder you browse) contributed its
+ * own filename as a tree name and failed the check with a remedy naming a
+ * directory that does not exist, while an *empty* orphan directory contributed
+ * no files at all and was never reported. A non-recursive read answers the
+ * question the function actually asks, and it is the whole tree cheaper.
+ */
 async function findOrphanTrees(expected: Set<string>): Promise<string[]> {
-  let present: string[];
+  let entries: Dirent[];
   try {
-    present = (await walk(GENERATED_ROOT)).map((p) => p.split("/")[0] ?? "");
+    entries = await readdir(GENERATED_ROOT, { withFileTypes: true });
   } catch {
     return [];
   }
-  return [...new Set(present)].filter((name) => name !== "" && !expected.has(name)).sort();
+  return entries
+    .filter((entry) => entry.isDirectory() && !expected.has(entry.name))
+    .map((entry) => entry.name)
+    .sort();
 }
 
 async function main(): Promise<void> {

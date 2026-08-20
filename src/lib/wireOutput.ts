@@ -14,8 +14,48 @@ import type { RunResults } from "@pipelex/sdk";
  */
 
 /**
- * Turn the wire's explicit `null`s back into absence so a generated schema can
- * validate the payload.
+ * Peel `.optional()` / `.nullable()` / `.default()` / `.readonly()` wrappers off a
+ * field and report what was underneath, so the caller can tell "may be absent"
+ * from "has a value to invent".
+ */
+function unwrap(schema: z.ZodType): { core: z.ZodType; hasFallback: boolean } {
+  let core = schema;
+  let hasFallback = false;
+  // The wrapper chain is finite, but guard anyway: a hand-built schema could nest
+  // these arbitrarily and a malformed one must not hang a Server Action.
+  for (let depth = 0; depth < 32; depth += 1) {
+    const def = core.def as { type: string; innerType?: z.ZodType; getter?: () => z.ZodType };
+    if (def.type === "default" || def.type === "prefault" || def.type === "catch") {
+      hasFallback = true;
+    }
+    if (def.type === "lazy" && def.getter) {
+      // Concept references project as `z.lazy(() => XSchema)`. Resolving it is safe:
+      // the recursion below is driven by the payload, not by the schema.
+      core = def.getter();
+      continue;
+    }
+    if (def.innerType === undefined) break;
+    core = def.innerType;
+  }
+  return { core, hasFallback };
+}
+
+/**
+ * Whether a wire `null` on this field means "unset" — i.e. the field accepts
+ * `undefined` and rejects `null`, and has no default that dropping would invent.
+ *
+ * Asked of the schema rather than pattern-matched on it, so `.nullish()`,
+ * `.nullable()` and `.default(v)` all answer correctly without this file
+ * enumerating zod's wrapper vocabulary.
+ */
+function nullMeansAbsent(field: z.ZodType): boolean {
+  if (unwrap(field).hasFallback) return false;
+  return field.safeParse(undefined).success && !field.safeParse(null).success;
+}
+
+/**
+ * Turn the wire's explicit `null`s back into absence, but only where the schema
+ * says absence is what `null` meant.
  *
  * Pipelex concepts are pydantic models, and an unset optional field is `None`
  * that the runtime serializes as an explicit `"caption": null` rather than
@@ -25,37 +65,82 @@ import type { RunResults } from "@pipelex/sdk";
  * `.optional()` — which means `| undefined` and *rejects* `null` — so without
  * this step `parseImage` throws on every real image run.
  *
- * This is a wire normalization, not a shape: `null` and absent mean the same
- * thing on the far side, so nothing is lost and no field name is re-declared
- * here. It exists only until the emitter projects a non-required field as
+ * **The walk is schema-guided, and that is the whole point.** An earlier version
+ * stripped every null-valued key at every depth, which is precisely the "blind
+ * deep key transform" the ts-zod emitter's own design note rules out: inside a
+ * `z.record()` or a `z.unknown()` a `null` is *data*, and a blind strip deletes
+ * it before the schema can object — silently, with a green check. So descent
+ * follows declared shapes only: object fields are considered individually,
+ * arrays and record *values* are descended for their declared element type, and
+ * anything opaque (`z.unknown()`, `z.any()`, a union) is passed through
+ * untouched. A field carrying `.default(v)` is passed through too, because
+ * dropping the key there would substitute the default for a `null` the pipeline
+ * actually sent.
+ *
+ * It exists only until the emitter projects a non-required field as
  * `.nullish()`, which is filed upstream in
  * `../wip/inbox/2026-08-20-pipelex-ts-zod-optional-rejects-wire-null.md`.
- *
- * Known limit: an *opaque* concept field (projected as `z.unknown()`) whose
- * payload legitimately carries a `null` value loses it here. No method in this
- * template has one, and the emitter fix removes the need for this entirely.
  */
-export function dropWireNulls(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    // Only object *keys* are optional on the wire; a null list item is data.
-    return value.map((item) => dropWireNulls(item));
+export function dropWireNulls(value: unknown, schema: z.ZodType): unknown {
+  const { core } = unwrap(schema);
+  const def = core.def as {
+    type: string;
+    shape?: Record<string, z.ZodType>;
+    element?: z.ZodType;
+    valueType?: z.ZodType;
+  };
+
+  if (def.type === "array" && def.element && Array.isArray(value)) {
+    // A null list *item* is data, never absence — only object keys are optional
+    // on the wire — so items are descended, never dropped.
+    return value.map((item) => dropWireNulls(item, def.element as z.ZodType));
   }
-  if (value === null || typeof value !== "object") {
-    return value;
+
+  if (!isPlainObject(value)) return value;
+
+  if (def.type === "record" && def.valueType) {
+    // Keys are data here, so none are removed; values are still normalized in
+    // case the record's declared value type is itself a concept.
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        dropWireNulls(item, def.valueType as z.ZodType),
+      ]),
+    );
   }
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .filter(([, item]) => item !== null)
-      .map(([key, item]) => [key, dropWireNulls(item)]),
-  );
+
+  if (def.type !== "object" || !def.shape) return value;
+  const shape = def.shape;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    const field = shape[key];
+    // An undeclared key is not ours to reshape — `Schema.parse` strips it.
+    if (field === undefined) {
+      out[key] = item;
+      continue;
+    }
+    if (item === null) {
+      if (nullMeansAbsent(field)) continue;
+      out[key] = item;
+      continue;
+    }
+    out[key] = dropWireNulls(item, field);
+  }
+  return out;
+}
+
+/** A JSON object — not an array, not null. Arrays are handled by their own branch. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
  * The wire payload a narrower should hand to its generated binder: the run's
- * main output, with the wire's `null`s normalized away.
+ * main output, with the wire's `null`s normalized away per `schema`.
  */
-export function wireOutput(results: RunResults): unknown {
-  return dropWireNulls(results.main_stuff);
+export function wireOutput(results: RunResults, schema: z.ZodType): unknown {
+  return dropWireNulls(results.main_stuff, schema);
 }
 
 /**

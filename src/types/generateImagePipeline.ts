@@ -1,6 +1,6 @@
 import type { RunResults } from "@pipelex/sdk";
 import { parseImage } from "@/generated/generate-image/binder";
-import type { Image } from "@/generated/generate-image/types";
+import { ImageSchema, type Image } from "@/generated/generate-image/types";
 import { describeSchemaFailure, wireOutput } from "@/lib/wireOutput";
 import { BadImageOutputError } from "@/types/pipelineError";
 
@@ -42,12 +42,17 @@ function urlScheme(value: string): string | null {
 export function parseGeneratedImage(results: RunResults): GeneratedImage {
   let image: Image;
   try {
-    image = parseImage(wireOutput(results));
+    image = parseImage(wireOutput(results, ImageSchema));
   } catch (err) {
     throw new BadImageOutputError(describeSchemaFailure(err, "Image"));
   }
 
-  const displayUrl = image.public_url ?? image.url;
+  // `||`, not `??`: `public_url` is `.optional()`, so the schema accepts `""` —
+  // and an empty string is not nullish, so `??` would let it win over a perfectly
+  // good `url` and fail the run on a scheme-less URL. The narrower this replaced
+  // ran optional strings through a helper that mapped `""` to null; this is that
+  // guard, kept where it still matters.
+  const displayUrl = image.public_url || image.url;
   const scheme = urlScheme(displayUrl);
   if (scheme === null || !WEB_RENDERABLE_SCHEMES.includes(scheme)) {
     throw new BadImageOutputError(

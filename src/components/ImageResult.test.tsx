@@ -37,4 +37,9 @@ describe("ImageResult", () => {
       "data:image/png;base64,AAAA",
     );
   });
+
+  it("uses the default alt when the caption is an empty string", () => {
+    render(<ImageResult image={{ url: "data:image/png;base64,AAAA", caption: "" }} />);
+    expect(screen.getByRole("img", { name: "Generated image" })).toBeInTheDocument();
+  });
 });
