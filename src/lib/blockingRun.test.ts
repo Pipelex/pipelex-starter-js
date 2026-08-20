@@ -97,7 +97,7 @@ describe("executeBlockingRun", () => {
 
   it("classifies a thrown SDK error", async () => {
     execute.mockRejectedValueOnce(
-      new ApiUnreachableError("unreachable", "http://localhost:8081", "ECONNREFUSED"),
+      new ApiUnreachableError("unreachable", "https://api.unreachable.example", "ECONNREFUSED"),
     );
     const result = await executeBlockingRun(async () => OPTIONS, parseFixture);
     expect(result.ok).toBe(false);

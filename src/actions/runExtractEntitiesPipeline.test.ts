@@ -59,7 +59,7 @@ describe("runExtractEntitiesBlocking", () => {
 
   it("classifies SDK errors into a structured PipelineError", async () => {
     execute.mockRejectedValueOnce(
-      new ApiUnreachableError("unreachable", "http://localhost:8081", "ECONNREFUSED"),
+      new ApiUnreachableError("unreachable", "https://api.unreachable.example", "ECONNREFUSED"),
     );
     const result = await runExtractEntitiesBlocking("some text");
     expect(result.ok).toBe(false);

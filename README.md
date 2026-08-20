@@ -36,7 +36,7 @@ Prefer to do it by hand? The manual equivalent:
 - Node.js 22.12+ (the SDK is ESM-only and the e2e specs `require()` it, which needs Node's unflagged `require(esm)`)
 - Access to the **hosted Pipelex API**, currently in private beta. Join the waitlist at [go.pipelex.com/waitlist](https://go.pipelex.com/waitlist); once you have access, get an API key at [app.pipelex.com](https://app.pipelex.com). `PIPELEX_BASE_URL` already defaults to `https://api.pipelex.com`, so the key is the only thing you set.
 
-  **This template targets the hosted API specifically.** The runner is open source as [`pipelex-api`](https://github.com/Pipelex/pipelex-api), but a bare runner has no run store and no file storage, so durable mode and the PDF example cannot work against one — point the starter at one and it says exactly that instead of failing obscurely. Dedicated deployments of the hosted plane exist and are not self-serve; talk to us at [pipelex.com](https://pipelex.com).
+  **This template targets the hosted Pipelex API.** The hosted API is what serves everything the examples rely on — durable runs (start + poll), file upload and storage, and codegen. Dedicated deployments of the hosted plane exist and are not self-serve; talk to us at [pipelex.com](https://pipelex.com).
 
 ## Quick start
 

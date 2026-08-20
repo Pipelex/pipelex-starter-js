@@ -391,7 +391,6 @@ export const TARGETS = [
     transform: (text, names) => applyNameTokens(applyStarterProse(text), names),
   },
   { rel: "src/lib/errors.ts", transform: (text) => applyStarterProse(text) },
-  { rel: "e2e/error-display.spec.ts", transform: (text) => applyStarterProse(text) },
   { rel: "Makefile", transform: (text) => applyStarterProse(text) },
 ];
 

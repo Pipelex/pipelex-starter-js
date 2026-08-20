@@ -35,8 +35,10 @@ function unwrap(schema: z.ZodType): { core: z.ZodType; hasFallback: boolean } {
       hasFallback = true;
     }
     if (def.type === "lazy" && def.getter) {
-      // Concept references project as `z.lazy(() => XSchema)`. Resolving it is safe:
-      // the recursion below is driven by the payload, not by the schema.
+      // Concept references project as `z.lazy(() => XSchema)`, so resolving one
+      // is how the walk sees through to the referenced concept's shape. It also
+      // makes descent payload-driven again — a self-referential concept has an
+      // unbounded schema — which is why `dropWireNulls` carries a depth cap.
       core = def.getter();
       continue;
     }
@@ -83,11 +85,22 @@ function nullMeansAbsent(field: z.ZodType): boolean {
  * dropping the key there would substitute the default for a `null` the pipeline
  * actually sent.
  *
+ * Descent is depth-capped. Resolving `z.lazy()` lets a self-referential concept
+ * (a tree node whose children are tree nodes) describe an unbounded shape, so
+ * depth follows the payload — and this runs inside a Server Action on
+ * attacker-influenceable pipeline output, where a stack overflow is a crash
+ * rather than an error. Past the cap the value is returned untouched: the
+ * generated schema still owns the verdict, and a payload that deep will fail
+ * it on its own terms with a message naming the field.
+ *
  * It exists only until the emitter projects a non-required field as
  * `.nullish()` (or the transport dump stops serializing unset fields) —
  * reported upstream to pipelex; see docs/codegen.md for the evidence trail.
  */
-export function dropWireNulls(value: unknown, schema: z.ZodType): unknown {
+export const MAX_WIRE_DEPTH = 64;
+
+export function dropWireNulls(value: unknown, schema: z.ZodType, depth = 0): unknown {
+  if (depth >= MAX_WIRE_DEPTH) return value;
   const { core } = unwrap(schema);
   const def = core.def as {
     type: string;
@@ -99,7 +112,7 @@ export function dropWireNulls(value: unknown, schema: z.ZodType): unknown {
   if (def.type === "array" && def.element && Array.isArray(value)) {
     // A null list *item* is data, never absence — only object keys are optional
     // on the wire — so items are descended, never dropped.
-    return value.map((item) => dropWireNulls(item, def.element as z.ZodType));
+    return value.map((item) => dropWireNulls(item, def.element as z.ZodType, depth + 1));
   }
 
   if (!isPlainObject(value)) return value;
@@ -110,7 +123,7 @@ export function dropWireNulls(value: unknown, schema: z.ZodType): unknown {
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [
         key,
-        dropWireNulls(item, def.valueType as z.ZodType),
+        dropWireNulls(item, def.valueType as z.ZodType, depth + 1),
       ]),
     );
   }
@@ -131,7 +144,7 @@ export function dropWireNulls(value: unknown, schema: z.ZodType): unknown {
       out[key] = item;
       continue;
     }
-    out[key] = dropWireNulls(item, field);
+    out[key] = dropWireNulls(item, field, depth + 1);
   }
   return out;
 }

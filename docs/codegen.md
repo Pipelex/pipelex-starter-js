@@ -35,10 +35,14 @@ src/generated/                        # committed, generated, never hand-edited
     sources.json                      # starter-owned staleness sidecar (see below)
   summarize-pdf/ …                    # same trio + sidecar per method
 scripts/
-  codegen.mts                         # the generator (npm run codegen)
-  codegen-check.mts                   # the offline check (npm run codegen:check)
-  codegen-verify.mts                  # the keyed semantic gate (npm run codegen:verify)
-  codegenShared.mts                   # paths, walk, sha256, discoverMethods, the sidecar
+  codegen.mts                         # CLI entry — npm run codegen
+  codegen-check.mts                   # CLI entry — npm run codegen:check
+  codegen-verify.mts                  # CLI entry — npm run codegen:verify
+  lib/
+    generate.mts                      # the generator: runGenerate, writeTree
+    check.mts                         # the offline check: runCheck, checkMethod, summarizeVerdicts
+    verify.mts                        # the keyed semantic gate: runVerify
+    shared.mts                        # paths, walk, sha256, discoverMethods, the sidecar
 tsconfig.scripts.json                 # type-checks scripts/, the tsconfig.e2e.json pattern
 ```
 
@@ -68,7 +72,7 @@ The offline check proves the tree matches the lock; it deliberately never proves
 
 ## Gate fidelity policies
 
-The verdicts above are only worth trusting because of a few deliberately loud policies in the shared layer (`scripts/codegenShared.mts`), each of which replaced a way the gate could be _silently wrong_:
+The verdicts above are only worth trusting because of a few deliberately loud policies in the shared layer (`scripts/lib/shared.mts`), each of which replaced a way the gate could be _silently wrong_:
 
 - **Symlinks and special files are refused by name.** Anything under `methods/` or a generated tree that is not a regular file or a directory — a symlink, FIFO, or socket, including a symlinked tree root, method directory, or the `methods/` / `src/generated/` roots themselves — throws `SymlinkRefusedError` naming the path, and the check reports no verdict. Following symlinks would need cycle handling, and a symlinked `.mthds` used to drop out of the codegen closure _and_ `sources.json`, so editing it never tripped `stale-source`.
 - **UTF-8 decoding is fatal.** Every text read goes through `readTextFile`, which throws `NonUtf8FileError` instead of substituting U+FFFD. A lossy decode could hash a corrupted artifact to its locked value and report it `current`. The error maps by ownership: in a generated tree it is drift (regenerating rewrites the file), in a `.mthds` source it is a refusal (regenerating would ship garbage to the API).
@@ -101,5 +105,5 @@ It normalizes **values, never names** — it re-declares no field, so it is not 
 
 - **The `.optional()`-versus-wire-`null` mismatch** is the one thing here that is a workaround rather than a design. `dropWireNulls` should be deleted, not maintained — the fix belongs in the emitter (or the transport dump), and it is reported upstream.
 - **`sources.json` upstreaming**: if the staleness sidecar proves its worth, it may belong in the engine's own lock story rather than a starter convention.
-- **Production 403**: `/v1/codegen` is served by any self-hosted `pipelex-api` runner and by `api-dev.pipelex.com`, but `api.pipelex.com` still answers `403` pending its deploy. When production catches up, sweep the caveat from every place that states it: `README.md` ("Generated types"), `CLAUDE.md` (the codegen command table and the workflow rule), `CHANGELOG.md`'s `[Unreleased]` entry, `.env.example`, this list — **and `scripts/codegen.mts`'s `explain()` message**, which is code, not docs, and would otherwise keep steering users at api-dev after the reason expired.
+- **Production 403**: `/v1/codegen` is served by `api-dev.pipelex.com`, but `api.pipelex.com` still answers `403` pending its deploy. When production catches up, sweep the caveat from every place that states it: `README.md` ("Generated types"), `CLAUDE.md` (the codegen command table and the workflow rule), `CHANGELOG.md`'s `[Unreleased]` entry, `.env.example`, this list — **and `scripts/lib/generate.mts`'s `explain()` message**, which is code, not docs, and would otherwise keep steering users at api-dev after the reason expired.
 - **`lock_version` upgrade ordering**: an SDK that tolerates a new lock version must ship _before_ the pipelex release that starts writing it. If `make check` ever fails with a version message naming a version this SDK does not know, the fix is bumping `@pipelex/sdk`, not touching the generated tree.

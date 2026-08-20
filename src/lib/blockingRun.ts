@@ -40,7 +40,7 @@ export async function executeBlockingRun<T>(
   try {
     const options = await buildOptions();
     const response = await getPipelexClient().execute(options);
-    // `pipe_output` is typed as always-present, but a bare runner / test double
+    // `pipe_output` is typed as always-present, but a test double
     // may omit it — read it as optional when lifting the usage pair.
     const pipeOutput = response.pipe_output as DictPipeOutput | undefined;
     const adapted: RunResults = {
