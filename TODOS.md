@@ -4,7 +4,7 @@
 
 **Design authority:** [`wip/codegen/design.md`](wip/codegen/design.md). Read it before starting — this file is the execution tracker, that one is the _why_. Decisions are referenced below as **D1**–**D7**; if execution contradicts a decision, update the design doc rather than silently diverging.
 
-**Status:** Phase 0 (the upstream SDK helper) shipped as `@pipelex/sdk` 0.13.0. Phases 1–2 are done — the repo is on `@pipelex/sdk` 0.13.0 with `zod` `^4.4.3`, and `npm run codegen` writes the three committed trees under `src/generated/`. Phases 3–5 are **not started**. Written 2026-08-20.
+**Status:** Phase 0 (the upstream SDK helper) shipped as `@pipelex/sdk` 0.13.0. Phases 1–3 are done — the repo is on `@pipelex/sdk` 0.13.0 with `zod` `^4.4.3`, `npm run codegen` writes the three committed trees under `src/generated/`, and `make check` now fails on a drifted or stale tree via `npm run codegen:check`. Phases 4–5 are **not started**. Written 2026-08-20.
 
 **Check the boxes as you go.** This document is written for a cold start in a fresh session.
 
@@ -97,24 +97,27 @@ Implements **D1** (write verbatim, write-if-changed) and **D2** (script shape).
 
 Implements the rest of **D3**.
 
-- [ ] `scripts/codegen-check.mts` — no SDK client, no env, no key:
-  - [ ] For each `src/generated/<method>/`: read `codegen.lock` (absent → exit **2**, no verdict), walk the directory **recursively**, filter with `isStampableArtifactPath`, pass paths **relative to the lock's directory** and content **as read** (no reformatting, no re-encoding).
-  - [ ] Call `runCodegenCheck`; print each drift as `category: path — detail` (the `detail` sentences are the CLI's verbatim — do not reword them).
-  - [ ] Compare `sources.json` hashes against the current `.mthds` files; a mismatch is a stale-source failure whose message says **"run `npm run codegen`"**.
-  - [ ] Catch `CodegenLockError` → exit **2**, printing its message unchanged (an unknown `lock_version` message already names which side to upgrade).
-  - [ ] Exit codes: `0` current · `1` drift or stale sources · `2` no verdict.
-- [ ] `scripts/codegen-verify.mts` — the keyed semantic gate: re-run `codegen()` live per method and compare its `crate_fingerprint` against the committed lock's `crateFingerprint` (read via `runCodegenCheck`, which surfaces it). Writes nothing. Exit 1 on mismatch.
-- [ ] Scripts: `"codegen:check"` and `"codegen:verify"`.
-- [ ] Make targets `codegen-check` and `codegen-verify`; **fold `codegen-check` into `check`** (`check: lint format-check typecheck codegen-check`). `codegen-verify` stays out of `make all` — it needs a key and a network.
-- [ ] Verify every failure mode by hand, each must fail `make check` with an actionable message:
-  - [ ] Append a byte to a generated file → `hand-edited`.
-  - [ ] Delete a generated file → `missing`.
-  - [ ] Drop a stamped stray into a generated dir → `orphan`.
-  - [ ] Corrupt a lock → exit 2 via `CodegenLockError`.
-  - [ ] Edit a `.mthds` bundle without regenerating → stale-source failure.
-  - [ ] Restore everything (`npm run codegen`) → green again.
-- [ ] Confirm `sources.json` is **ignored** by the walk filter (it is not stampable) — a passing check with the sidecar present proves it.
-- [ ] `make all` green.
+- [x] `scripts/codegenShared.mts` — **not in the original plan**, added because three scripts now have to agree on the same directories, the same source hashing, and the same sidecar, and any disagreement between them shows up as a _false verdict_ rather than an error. Holds the paths, `walk`, `sha256`, `discoverMethods`, the sidecar shape, and `readGeneratedTree` (which discharges the SDK's two load-bearing caller obligations — walk the whole tree recursively, pass the text exactly as read — in one place). Imports nothing from `process.env` and constructs no client, so the check stays key-free. Node's type stripping resolves relative imports by their real on-disk extension, so the specifier is literally `./codegenShared.mts`; `tsconfig.scripts.json` gained `allowImportingTsExtensions` (legal because it type-checks with `--noEmit`).
+- [x] `scripts/codegen-check.mts` — no SDK client, no env, no key:
+  - [x] For each `src/generated/<method>/`: read `codegen.lock` (absent → exit **2**, no verdict), walk the directory **recursively**, filter with `isStampableArtifactPath`, pass paths **relative to the lock's directory** and content **as read** (no reformatting, no re-encoding). → the no-lock message also lists what it _did_ find, so a lock rename reads as a rename instead of a mystery.
+  - [x] Call `runCodegenCheck`; print each drift as `category: path — detail` (the `detail` sentences are the CLI's verbatim — do not reword them).
+  - [x] Compare `sources.json` hashes against the current `.mthds` files; a mismatch is a stale-source failure whose message says **"run `npm run codegen`"**. → covers three cases, not one: a hash change, a _new_ bundle the types do not cover, and a recorded source that vanished. A missing or unparseable sidecar counts as stale (exit 1) rather than no-verdict — it is starter-owned, and regenerating both restores it and re-proves the tree.
+  - [x] Catch `CodegenLockError` → exit **2**, printing its message unchanged (an unknown `lock_version` message already names which side to upgrade).
+  - [x] Exit codes: `0` current · `1` drift or stale sources · `2` no verdict. → worst-of across methods; `2` outranks `1`.
+  - [x] **Two whole-tree cases the plan did not name**, both real holes a per-tree check cannot see from inside one tree: a method under `methods/` with **no generated tree at all** (a new method nobody regenerated for → exit 1), and a `src/generated/<x>/` with **no `methods/<x>/` behind it** (regeneration prunes stale files _within_ a tree but never removes a whole tree, so the message says to delete it → exit 1).
+- [x] `scripts/codegen-verify.mts` — the keyed semantic gate: re-run `codegen()` live per method and compare its `crate_fingerprint` against the committed lock's `crateFingerprint` (read via `runCodegenCheck`, which surfaces it). Writes nothing. Exit 1 on mismatch. → an `engine_version` difference is printed as a **note, not a failure** (see the decision recorded below), and a drift count from the same call is surfaced as a note pointing at `codegen:check`, which owns that verdict.
+- [x] Scripts: `"codegen:check"` and `"codegen:verify"`.
+- [x] Make targets `codegen-check` and `codegen-verify`; **fold `codegen-check` into `check`** (`check: lint format-check typecheck codegen-check`). `codegen-verify` stays out of `make all` — it needs a key and a network.
+- [x] Verify every failure mode by hand, each must fail `make check` with an actionable message: → and `make check` itself was confirmed to go non-zero on an injected drift, not just the npm script.
+  - [x] Append a byte to a generated file → `hand-edited`. → `hand-edited: types.ts — Body was edited below the stamp (stamp hash no longer matches).`
+  - [x] Delete a generated file → `missing`. → `missing: binder.ts — Locked artifact is absent on disk.`
+  - [x] Drop a stamped stray into a generated dir → `orphan`. → `orphan: stray.ts — Stamped generated file not tracked by the lock — stale; remove or regenerate.`
+  - [x] Corrupt a lock → exit 2 via `CodegenLockError`. → both flavours: an unknown version (`Unsupported codegen lock version: this build reads lock_version 1, but it declares lock_version 99 — upgrade @pipelex/sdk to a build that reads it.`) and unparseable TOML (`Malformed codegen lock: Invalid TOML document: …`).
+  - [x] Edit a `.mthds` bundle without regenerating → stale-source failure. → `stale-source: methods/summarize-pdf/main.mthds — edited since the types were generated`.
+  - [x] Restore everything (`npm run codegen`) → green again. → and the restored run reported "no changes" for all three, so the failure-mode drills left no residue.
+- [x] Confirm `sources.json` is **ignored** by the walk filter (it is not stampable) — a passing check with the sidecar present proves it. → each tree reports "2 artifact(s) current" out of the 4 files on disk.
+- [x] `make all` green.
+- [x] `npm run codegen:verify` green live against api-dev, and its mismatch path exercised: editing one concept description moved `summarize-pdf`'s crate to `8911d874f957` and the gate failed with both fingerprints printed.
 
 > ### ⛔ CHECKPOINT 3 — STOP HERE
 >
@@ -166,8 +169,8 @@ Implements **D6**. This is the behaviour-changing phase.
 ## Decisions to make during execution (record the outcome here)
 
 - **`undefined` vs `null` on optional generated fields** (Phase 4) — recommend re-exporting the generated type and using `??` at the render sites, rather than a normalizing adapter that reintroduces a hand-written shape.
-- **Whether `codegen:verify` runs in CI** — it needs a key. Recommend leaving it manual/pre-release until there is a keyed CI job.
-- **Engine-bump churn policy** — a pipelex release rewrites every stamp. Recommend regenerating deliberately (a "bump the engine" commit), not incidentally inside an unrelated PR.
+- **Whether `codegen:verify` runs in CI** (Phase 3) — **decided: no.** It stays a manual/pre-release target, out of `make all`, for the same reason `test-e2e` is: it needs a key and a network. `make check` gets the offline check, which is the one that can run anywhere.
+- **Engine-bump churn policy** (Phase 3) — **decided: an engine move is a note, not a failure.** `codegen:verify` gates on `crate_fingerprint` (the semantic signal) and only _reports_ an `engine_version` difference, saying that regenerating will restamp the tree with no semantic change. That keeps a pipelex release from reddening the gate and leaves the whole-tree restamp to a deliberate "bump the engine" commit.
 
 ## Out of scope (D7)
 
