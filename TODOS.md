@@ -1,168 +1,182 @@
-# TODOS — integrate & demonstrate `@pipelex/sdk` 0.5.0 in the starter
+# TODOS — generated types from `.mthds` bundles (codegen adoption)
 
-**Goal:** integrate and demonstrate the two new capabilities that shipped in `@pipelex/sdk` **0.5.0** inside this reference template:
+**Goal:** stop hand-writing in `src/types/` what each method already declares in its `.mthds` bundle. `npm run codegen` projects every method into committed, stamped `ts-zod` artifacts; `npm run codegen:check` proves offline in CI that they are current; the narrowers become thin adapters over the generated binders.
 
-1. **Cost reports** — surface per-call token usage + computed USD `cost` from the new `RunResults.tokens_usages`.
-2. **Cleaner file uploads** — replace the hand-rolled base64 `Document` envelope with the SDK's signature-driven `client.prepareInputs` (uploads to storage, rewrites inputs to `pipelex-storage://` URIs).
+**Design authority:** [`wip/codegen/design.md`](wip/codegen/design.md). Read it before starting — this file is the execution tracker, that one is the _why_. Decisions are referenced below as **D1**–**D7**; if execution contradicts a decision, update the design doc rather than silently diverging.
 
-**Status:** planned, not started. Written 2026-07-22.
+**Status:** Phase 0 (the upstream SDK helper) shipped as `@pipelex/sdk` 0.13.0. Phases 1–5 below are **not started**. Written 2026-08-20.
 
-This template is a reference — keep every change small, clear, and something we'd want every consumer of the template to inherit. Two independent workstreams (A = cost, B = uploads); either order works. `make all` must stay green after every phase.
-
----
-
-## Cold-start primer (read this first in a new session)
-
-**SDK is already local.** `make use-local` has installed the sibling `../pipelex-sdk-js` (currently **0.5.0**) into `node_modules/@pipelex/sdk`. Re-run `make use-local` after editing the SDK. `package.json` still declares `^0.4.0` — Phase 0 bumps it.
-
-**What 0.5.0 gives us (authoritative sources):**
-
-- SDK changelog: `../pipelex-sdk-js/CHANGELOG.md` → `[v0.5.0]`.
-- Cost: `RunResults.tokens_usages: TokensUsageRecord[] | null` + `usage_assembly_error: string | null` — defined in `../pipelex-sdk-js/src/runs.ts:110` (`TokensUsageRecord`) and `:158` (`RunResults`). Exported from `@pipelex/sdk`.
-- Uploads: `client.uploadFile(asset, opts?)` and `client.prepareInputs({ files, pipe_ref?, inputs })` — surfaces in `../pipelex-sdk-js/src/upload.ts` (`UploadRecord`, `UploadableAsset`) and `../pipelex-sdk-js/src/prepare-inputs.ts` (`PrepareInputsRequest`, `PreparedInputs`). Client methods at `../pipelex-sdk-js/src/client.ts:1049` (`uploadFile`) and `:1062` (`prepareInputs`). Design contract: `../pipelex-sdk-js/docs/input-preparation.md`. Cross-repo behavior matrix (which sources upload vs pass through): `../wip/upload/behavior-matrix.md`.
-
-**Key facts that shape the design:**
-
-- `tokens_usages` is a **sibling** of `main_stuff` on `RunResults`, not inside it. So usage must **not** go through the `parseXxx(results)` narrowers (those stay focused on the main output). Extract it in the two run helpers (`blockingRun.ts` / `durableRun.ts`) where the whole `RunResults` is in hand, then thread it through the outcome types → hook state → a render component.
-- **No run-level cost aggregate** — sum the per-record `cost`. Each `cost` is `null` when the model has no rate table (own-GPU/mock/dry-run) and `0` when a rate table priced it at zero. `nb_tokens_by_category` values are **not additive** (`input` already includes `input_cached`) — never sum categories; render them as-is or pick specific keys.
-- Nullness of `tokens_usages`: `null` = assembly off / broke / pre-artifact; `[]` = ran, no inference happened; `usage_assembly_error` (non-null) is the **only** signal that separates "broke" from "off". Render must handle all three.
-- **Durable path** already delivers `tokens_usages` on `RunResults` from `getRunResult`. **Blocking path** does not: `executeBlockingRun` adapts the execute response onto a `RunResults` carrying only `pipeline_run_id` + `main_stuff` (`src/lib/blockingRun.ts:34`). The usage pair rides the execute response's **extension-open `pipe_output`** (per the 0.5.0 changelog), so the adapter must also copy `pipe_output.tokens_usages` / `pipe_output.usage_assembly_error`. ⚠️ **Verify the exact access path against a live run** before trusting it (see Phase A task).
-- **Uploads / the Server-Action boundary:** in this starter the SDK runs server-side (it holds the API key), so `prepareInputs` runs inside a Server Action. The browser still sends the file to our server as a base64 data URL, so Next's Server Action body limit (`next.config.js` `bodySizeLimit: "12mb"`) and the `MAX_PDF_BYTES` pre-flight are **still needed** and stay. What `prepareInputs` cleanly removes: the hand-rolled `{ concept: "Document", content }` envelope, our MIME/size envelope logic feeding the run, and the fat inline base64 in the **run** request (now a small `pipelex-storage://` URI). Truly letting the browser upload directly (bypassing the Server Action) is a **separate follow-up** — see `../wip/upload/followup-browser-direct-upload.md`.
-
-**The only file-input example is `summarize-pdf`.** `generate-image` has a file _output_ (a URL), unrelated to `prepareInputs`. `extract-entities` is text-only. So Workstream B touches only the PDF path.
-
-**Repo conventions (from `CLAUDE.md`):** Server Actions are the only SDK callers; each pipeline exports a trio (`run…Blocking` / `start…Run` / `poll…Run`) delegating to the shared helpers; narrow output with `parseXxx(results)`; return classified `{ ok:false, error }` (never throw across the boundary); add error kinds in `src/lib/errors.ts` (+ `errors.test.ts`); no barrels, no relative cross-folder imports, `@/` alias, Tailwind only, named exports. Run `make all` (check + test + build) after changes; `make agent-test` for silent tests; `make test-e2e` before shipping SDK-call-path changes (costs an LLM call, prompts first).
-
-**Testing the SDK (unit):** mock `@/lib/pipelexClient` with `vi.mock`, returning only the methods under test as `vi.fn()`s — now including `prepareInputs`, `uploadFile` alongside `execute` / `start` / `getRunStatus` / `getRunResult`. Use `mockResolvedValueOnce` / `mockRejectedValueOnce` (not the persistent variants) on these spies. Durable form/hook tests use `vi.useFakeTimers()`; `PdfForm` keeps **real** timers (its `FileReader` needs them).
+**Check the boxes as you go.** This document is written for a cold start in a fresh session.
 
 ---
 
-## Phase 0 — housekeeping & baseline
+## Cold-start primer
 
-- [x] Confirm `node_modules/@pipelex/sdk/package.json` version is `0.5.0` (re-run `make use-local` if not). — confirmed `0.5.0`.
-- [x] Bump `package.json` `@pipelex/sdk` `^0.4.0` → `^0.5.0`; ~~sync `package-lock.json`~~ **lock sync DEFERRED**. `@pipelex/sdk@0.5.0` is **not yet published to npm** (latest published = 0.4.0), so the lock cannot resolve a registry 0.5.0 tarball. Per decision (2026-07-22): keep `package.json` at `^0.5.0`, leave `package-lock.json` at the 0.4.0 registry entry, develop against the local tarball (`node_modules` = 0.5.0 via `make use-local --no-save`). Sync the lock at SDK-publish time. Caveat: a fresh `npm install` / `npm ci` fails to resolve `^0.5.0` until 0.5.0 lands on npm; `make all` stays green because it runs `npm run` scripts against `node_modules`, never `npm ci`.
-- [x] Confirm the 0.5.0 **breaking changes don't bite us**: `pipe_output` narrowed to `DictPipeOutput | null` and `DictPipeOutput` made extension-open. Production code reads `main_stuff` only — unaffected. One **test fixture** did bite: `src/lib/runOutput.test.ts` constructs an inline `pipe_output` (a negative-assertion guard that `findOutputContent` never falls back to it); the now-concrete `DictPipeOutput` required `working_memory.aliases`, an inner `pipeline_run_id`, and a `concept` on the stuff. Fixed the fixture to a valid `DictPipeOutput`. Workstream A's `pipe_output.tokens_usages` read _depends on_ the extension-open widening, so it's aligned, not broken.
-- [x] Baseline: `make all` green — green (all unit tests pass, production build succeeds).
+**What already exists upstream.** `@pipelex/sdk` 0.13.0 (on npm) carries both halves of the trust chain:
 
-> **Checkpoint 0:** SDK on 0.5.0, deps bumped (lock sync deferred to publish), baseline green. Safe to start either workstream. ✅ **REACHED**
+- `client.codegen({ files, kind: "types", target: "ts-zod" })` → `{ is_valid: true, artifacts: [{path, content}], lock, lock_filename, crate_fingerprint, engine_version }`. Verdict rides `is_valid` on a 200; only no-verdict conditions throw `ApiResponseError`.
+- `runCodegenCheck({ lockContent, files })` → `{ drifts[], isCurrent, crateFingerprint, engineVersion }`. Pure: no fs, no network, no key. Categories: `missing` · `modified` · `hand-edited` · `orphan`.
+- `isStampableArtifactPath` / `STAMPABLE_ARTIFACT_SUFFIXES` — **the walk filter is contract, not convenience** (see D3).
+- `CodegenLockError` — thrown for a malformed lock, an unsafe artifact path, or an unknown `lock_version`.
 
----
+Authoritative SDK docs: `../pipelex-sdk-js/docs/crate-routes.md` → "The offline check". Engine docs: `../pipelex/docs/under-the-hood/codegen-projections.md`.
 
-## Workstream A — Cost reports (`tokens_usages`)
+**The route is on api-dev, not prod.** `.env.local` already sets `PIPELEX_BASE_URL=https://api-dev.pipelex.com`. `api.pipelex.com` still answers 403 for `/v1/codegen` pending its deploy. This is expected and is a documentation caveat only — no code changes when prod catches up.
 
-Additive and low-risk: no run-path behavior changes, just a new sibling value plumbed to a new render. Applies to **every** example (all runs produce usage), so the render lands in each form.
+**Ground truth, captured 2026-08-20 against api-dev (engine `0.47.0`).** Live `codegen()` output for the three methods — trust this over guessing:
 
-### A1 — Usage model + pure builder ✅
+| Method             | Generated types (in `types.ts`)                                                                                                              | Binder functions                                                       |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `extract-entities` | `ExtractedEntities` (`people`/`orgs`/`dates`: `string[]`), `Text`                                                                            | `parseExtractedEntities`, `serializeExtractedEntities`, `parseText`, … |
+| `summarize-pdf`    | `DocumentSummary` (`title`, **`doc_type`**, **`key_points`**), `Document`                                                                    | `parseDocumentSummary`, `parseDocument`, …                             |
+| `generate-image`   | `Image` (`url` required; `public_url`, `mime_type`, `caption`, `source_prompt`, `width`, `height`, `filename` all **`.optional()`**), `Text` | `parseImage`, `serializeImage`, …                                      |
 
-- [x] Add `src/lib/usageReport.ts` (pure — no React, no `process.env`; safe on either side):
-  - `export interface UsageCall { modelName: string | null; modelType: string | null; pipeCode: string | null; tokensByCategory: Record<string, number> | null; costUsd: number | null; }`
-  - `export interface UsageReport { calls: UsageCall[]; totalCostUsd: number | null; hasCost: boolean; state: "records" | "no-inference" | "unavailable"; assemblyError: string | null; }`
-    - `state: "records"` when `tokens_usages` is a non-empty array; `"no-inference"` when `[]`; `"unavailable"` when `null`.
-    - `totalCostUsd` = sum of non-null `cost` across records; `null` when **no** record carried a numeric cost (so the UI can say "cost not priced" vs "$0.00"). `hasCost` mirrors that.
-  - `export function buildUsageReport(results: RunResults): UsageReport` mapping `results.tokens_usages` / `results.usage_assembly_error` (`import type { RunResults, TokensUsageRecord } from "@pipelex/sdk"`). **Do not** sum `nb_tokens_by_category` values together (non-additive) — carry the map through per call. **Done as specified**; `costUsd` uses `?? null` (not `|| null`) so a real `0` cost survives; `hasCost`/`totalCostUsd` keep `0` and drop only `null`.
-- [x] `src/lib/usageReport.test.ts`: records case (mixed `cost` incl. `null`/`0`), `[]` → `no-inference`, `null` → `unavailable`, `usage_assembly_error` set, total-cost math (nulls skipped; all-null → `null` total). Also covers an absent (`undefined`) `tokens_usages` → `unavailable`.
+Every method emits exactly `types.ts` + `binder.ts` + `codegen.lock`. Input concepts get schemas too (`Text`, `Document`) — harmless, and all exported so `noUnusedLocals` is satisfied.
 
-### A2 — Thread usage through the run helpers ✅
+**Four facts that will bite if you don't know them:**
 
-- [x] `src/lib/blockingRun.ts`: widen `BlockingOutcome<T>` ok arm to `{ ok: true; output: T; usage: UsageReport }`. In `executeBlockingRun`, extend the adapter to copy the usage pair off the execute response's `pipe_output`, then build the report:
+1. **`.optional()` means `| undefined`, not `| null`.** Today's `GeneratedImage` uses `string | null` for `publicUrl`/`mimeType`/`caption`. The generated `Image` gives `string | undefined`. The adapter or the components must reconcile this (see Phase 4).
+2. **snake_case is deliberate and permanent** (D6). `DocumentSummary` becomes `doc_type`/`key_points` everywhere — components and tests included. Do not add a camelCase mapping layer; that is the duplicated surface this work removes.
+3. **A stamp carries `engine_version`, so an engine bump rewrites every artifact** even with zero semantic change (the `crate_fingerprint` stays put — it is semantic). Expect a whole-tree diff after an upstream pipelex release; that is correct behaviour, not drift. It moved 0.46.4 → 0.47.0 in a single day during design.
+4. **The generated `binder.ts` imports `"./types"` extensionless.** Fine under the base tsconfig (`moduleResolution: "bundler"`), which is what covers `src/`. Do not point a `nodenext` config at the generated trees.
 
-  ```ts
-  const adapted: RunResults = {
-    pipeline_run_id: response.pipeline_run_id,
-    main_stuff: response.main_stuff,
-    tokens_usages: (response.pipe_output?.tokens_usages ?? null) as TokensUsageRecord[] | null,
-    usage_assembly_error: (response.pipe_output?.usage_assembly_error ?? null) as string | null,
-  };
-  return { ok: true, output: parse(adapted), usage: buildUsageReport(adapted) };
-  ```
-
-  - [ ] ⚠️ **Verify** `response.pipe_output?.tokens_usages` is the correct access (extension-open field) against a real blocking run — inspect the live response or the durable `getRunResult` shape. Adjust if the SDK surfaces it elsewhere. **Implemented per the 0.5.0 changelog contract but NOT yet live-verified — deferred to Phase C.** Access reads `pipe_output` typed as optional (`as DictPipeOutput | undefined`) since a bare runner / test double may omit it; the `?.` is then legitimately necessary (no unnecessary-optional-chain lint). Covered by a unit test that feeds `pipe_output.tokens_usages` and asserts a `records` report.
-
-- [x] `src/lib/durableRun.ts`: widen `PollOutcome<T>` completed arm to `{ ok: true; state: "completed"; output: T; usage: UsageReport }`. In `pollDurableRun`, `res.result` is a full `RunResults` — `usage: buildUsageReport(res.result)`.
-
-### A3 — Thread usage through the hook ✅
-
-- [x] `src/hooks/useRun.ts`: widen `RunState<T>` done arm to `{ phase: "done"; output: T; usage: UsageReport }`. Update `succeed(output, usage)` and both call sites (blocking `.then`, durable `completed`) to pass `outcome.usage`.
-
-### A4 — Render component ✅
-
-- [x] Add `src/components/CostReport.tsx` (server component, pure render, named export, Tailwind only). Props `{ usage: UsageReport }`. Behavior:
-  - `state: "records"` → compact table: model / pipe / raw token categories (rendered verbatim, never summed) / per-call `cost` (`null` → "—", `0`/positive → USD), plus a **total** row (`totalCostUsd`; "Not priced" + an explainer line when `null`).
-  - `state: "no-inference"` → subtle note ("No billable inference in this run").
-  - `state: "unavailable"` → **chose "render nothing" when off**; when `assemblyError` is set (assembly _broke_), a muted note + a "Technical details" `<details>` block (mirrors `<ErrorDisplay>`'s style) demonstrates the broke-vs-off distinction.
-- [x] `src/components/CostReport.test.tsx`: one render assertion per `state`, plus null-cost formatting (per-call "—", total "Not priced").
-
-### A5 — Wire into the example forms ✅
-
-- [x] In each form (`EntityForm.tsx`, `PdfForm.tsx`, `ImageForm.tsx`), render `<CostReport usage={state.usage} />` when `state.phase === "done"`, next to the result component (fragment-wrapped so `space-y-*` still spaces it).
-- [x] Update the affected form/hook unit tests to pass/allow the new `usage` in the done state. Also updated the **action-layer** tests (`run*Pipeline.test.ts`): their `{ ok, output }` / `{ ok, state, output }` assertions moved from `toEqual` → `toMatchObject` so the new `usage` sibling doesn't break delegation-focused tests (usage is exhaustively covered in the helper/model tests), and `blockingRun`/`durableRun` tests gained explicit usage assertions.
-
-> **Checkpoint A:** `make all` green ✅ **REACHED** (195 unit tests pass, production build succeeds). Cost report renders under each example's result in both modes. Live-run verification (incl. the A2 blocking-path `pipe_output.tokens_usages` access) is deferred to Phase C per the plan.
+**Repo conventions** (from `CLAUDE.md`): Server Actions are the only SDK callers; narrow with `parseXxx(results)`; return classified `{ ok: false, error }` rather than throwing across the boundary; no barrels; no relative cross-folder imports (`@/` alias); named exports; Tailwind only. Run `make all` after every change; `make agent-test` for silent tests.
 
 ---
 
-## Workstream B — Cleaner file uploads (`prepareInputs`)
+## Phase 1 — Dependencies and baseline
 
-Replace the hand-rolled `Document` envelope in the PDF path with signature-driven `client.prepareInputs`. Keep the client-side data-URL encoding and the server-side pre-flight (they guard the still-present Server Action boundary).
+- [ ] `make use-npm` — leave the local tarball, restore the published SDK. Confirm it lands on **0.13.0 or later** (the target echoes the version it restored).
+- [ ] Bump `package.json` `@pipelex/sdk` `^0.12.0` → `^0.13.0`; sync `package-lock.json` (`make lock`).
+- [ ] Add `zod` to **`dependencies`** (not dev — binders run in Server Actions at request time). Current major is 4; use `^4.4.3` or later (D5).
+- [ ] Confirm `smol-toml` did **not** add a package to the tree (it dedupes with `mthds`): `npm ls smol-toml` should show a single deduped copy.
+- [ ] Baseline: `make all` green before writing any new code.
 
-### B1 — Swap the PDF `buildOptions` to `prepareInputs` ✅
-
-- [x] `src/actions/runSummarizePdfPipeline.ts`: `buildOptions` now prepares inputs via `getPipelexClient().prepareInputs({ files: [{ content: bundle }], inputs: { document: input.dataUrl } })` and passes `prepared.inputs` to the run.
-  - The method: `methods/summarize-pdf/main.mthds` — `domain = "summarize_pdf"`, `main_pipe = "summarize_pdf"`, input var `document` = concept `Document`.
-  - **Decision (SETTLED):** pass the **bare data-URL string** at `document`, not the canonical `{ url, filename }` content. It reads cleanest as a template and best demonstrates the signature-driven behavior — the SDK classifies the string as a file purely from the declared `document = Document` signature, no envelope to hand-build. Nothing renders the filename, so dropping it is cosmetic (`input.filename` is still used by `preflight` for error copy). `pipe_ref` **omitted** → defaults to the closure's `main_pipe` (`summarize_pdf`); one less thing to explain.
-  - `prepareInputs` throws before the run on failure; it runs inside `buildOptions` (within `executeBlockingRun` / `startDurableRun`'s try/catch), so its errors go through the existing catch — no new try/catch. On the **durable** path the upload happens once at start; `poll` never rebuilds, so no re-upload.
-  - `getPipelexClient` is now imported into the action (a deliberate, contained exception — preparing inputs is a pre-run SDK call, kept in `buildOptions`).
-
-### B2 — Classify upload / preparation errors ✅
-
-- [x] `src/lib/errors.ts`: added a single `"upload_failed"` `PipelineErrorKind` with subclass-tailored copy (mirrors `classifyServerError`'s switch), in a new `classifyInputPreparationError(err, env)` reached by an `if (err instanceof InputPreparationError)` branch placed after the run-lifecycle checks (disjoint from every other class, so ordering is safe). Imports `InputPreparationError`, `RejectedAssetError`, `UnsupportedUploadCapabilityError`, `UploadAuthenticationError` from `@pipelex/sdk`. Copy:
-  - `UnsupportedUploadCapabilityError` → "File upload isn't available on this API" — analogous to `lifecycle_unavailable`; hint points `PIPELEX_BASE_URL` at the hosted API.
-  - `RejectedAssetError` → "The PDF was rejected by the server" (413 / size cap); `apiMessage` = the wrapped `ApiResponseError.serverMessage` (via a `causeServerMessage` helper reading `err.cause`); details carry the filename.
-  - `UploadAuthenticationError` → "File upload was not authorized" (401/403), hint mentions `PIPELEX_API_KEY`. **Kept as one `upload_failed` kind** (not routed to `auth_missing/invalid`) per the "one kind" recommendation — the copy still tells the user to fix the key.
-  - **Default (base `InputPreparationError`)** last → generic "Preparing the PDF for upload failed" with technical details. Covers `UploadTransportError`, `InvalidLocalSourceError`, a malformed data URL, and any future subclass (never `unknown`) — those two aren't imported since they fall to the default.
-- [x] `src/lib/errors.test.ts`: a new describe block constructs each subclass (`UnsupportedUploadCapabilityError`, `RejectedAssetError` with an `ApiResponseError` cause, `UploadAuthenticationError`, `InvalidLocalSourceError` + `UploadTransportError` → generic, base `InputPreparationError` → generic) and asserts `kind` + title/message/apiMessage.
-
-### B3 — Retire the hand-rolled envelope, keep the guards ✅
-
-- [x] `src/lib/fileEncoding.ts`: removed `buildDocumentInput` + `DocumentInput`. Kept `validateDataUrl`, `MAX_PDF_BYTES`, `dataUrlMimeType`, `dataUrlByteLength`, `fileInputErrorToPipelineError`. Updated the module doc comment to describe the file's now-narrower job (authoritative pre-flight, not envelope-building).
-- [x] `src/lib/fileEncoding.test.ts`: dropped the `buildDocumentInput` describe + import; validation tests unchanged.
-- [x] `runSummarizePdfPipeline.ts`: dropped the `buildDocumentInput` import; `preflight` unchanged.
-- [x] `next.config.js`: left `bodySizeLimit: "12mb"` + comment (still accurate — the data URL still transits the Server Action). The follow-up doc removes that boundary.
-
-### B4 — Unit tests for the new PDF path ✅
-
-- [x] `runSummarizePdfPipeline.test.ts`: mock client now includes `prepareInputs` (resolves `{ inputs, uploads }`). Asserts blocking + durable both call `prepareInputs` with the bare-data-URL request then `execute`/`start` with `prepared.inputs`; a rejected `prepareInputs` (`UnsupportedUploadCapabilityError`) yields `{ ok:false, error.kind: "upload_failed" }` and never runs; pre-flight rejections never call `prepareInputs`.
-- [x] `PdfForm` test: unchanged (mocks `@/actions/runSummarizePdfPipeline`; the form doesn't know about uploads) — still green.
-
-> **Checkpoint B:** `make all` green ✅ **REACHED**. PDF example prepares inputs via `prepareInputs`; the run request carries a `pipelex-storage://` URI, not inline base64. Upload failures render as classified `upload_failed` errors. Live verification (the real `/v1/upload` + `/v1/build/inputs` path) is deferred to Phase C per the plan.
+> ### ⛔ CHECKPOINT 1 — STOP HERE
+>
+> **Do not proceed to Phase 2 without the user.** Report: the SDK version restored, the zod version added, and confirmation that `make all` is green on an otherwise-unchanged tree. This is the last moment where the repo is trivially revertable; everything after it adds files the template's consumers inherit.
 
 ---
 
-## Phase C — docs, e2e, finalize
+## Phase 2 — The generator (`npm run codegen`)
 
-- [ ] **Docs — `CLAUDE.md` (this repo):** update the "File & image inputs" section to describe the `prepareInputs` flow (signature-driven, `pipelex-storage://`, typed `InputPreparationError`s) replacing `buildDocumentInput`; add `tokens_usages` / `<CostReport>` to the integration pattern and the component/lib maps. Mention `uploadFile` as the single-asset escape hatch.
-- [ ] **Docs — `docs/`:** add/update a short doc for the cost-report plumbing and the upload flow (create `docs/` if missing, per workspace policy). Link the SDK's `docs/input-preparation.md`.
-- [ ] **e2e:** update `e2e/summarize-pdf.spec.ts` — it now exercises the real `/v1/upload` + `/v1/build/inputs` (`prepareInputs`) path. Assert the summary renders and (optionally) a `<CostReport>` is present. Consider a cost assertion in `e2e/extract.spec.ts` too. These hit the live API (`PIPELEX_API_KEY`); point `.env.local` at `api.pipelex.com` (a local bare runner can't serve the durable poll path or hosted upload — see memory `e2e-run-against-cloud-api`).
-- [ ] Run `make test-e2e` (prompts; costs LLM calls) to verify both features end-to-end against the hosted API, **including the Phase A2 blocking-path `tokens_usages` access verification**.
-- [ ] Final `make all` green; open a `feature/…` branch (e.g. `feature/sdk-0.5-cost-and-uploads`) targeting `main`.
+Implements **D1** (write verbatim, write-if-changed) and **D2** (script shape).
 
-> **Checkpoint C:** both capabilities integrated, demonstrated, documented, and live-verified. Ship.
+- [ ] `tsconfig.scripts.json` — thin `extends` of the base config scoped to `scripts/**`, with `"module": "nodenext"` / `"moduleResolution": "nodenext"` and `"types": ["node"]`. Mirror `tsconfig.e2e.json`'s structure. Add `scripts` to the base config's `exclude` so Next's build never type-checks Node-flavored files.
+- [ ] Add `"typecheck:scripts": "tsc -p tsconfig.scripts.json --noEmit"` to `package.json`, and wire it into the `typecheck` Make target beside `typecheck:e2e`.
+- [ ] `scripts/codegen.mts`:
+  - [ ] Load env with `@next/env`'s `loadEnvConfig` (the `playwright.config.ts` trick) so `PIPELEX_API_KEY` / `PIPELEX_BASE_URL` come from `.env.local`.
+  - [ ] Construct `new PipelexApiClient()` bare — **not** via `@/lib/pipelexClient`; the `@/` alias does not exist outside Next (D2).
+  - [ ] Discover methods: every directory under `methods/`. Closure = every `**/*.mthds` inside it, sent as `files: [{ content, source }]` with `source` the repo-relative path so validation errors point at real files.
+  - [ ] Call `codegen({ files, kind: "types", target: "ts-zod" })`. **Do not send `pipe_ref`** — `kind: "types"` rejects it with a 422 (D7).
+  - [ ] On `is_valid: false`: print each `validation_errors[]` entry with its file, exit 1.
+  - [ ] On a thrown `ApiResponseError` 403/404: print the actionable message — this base URL does not serve `/v1/codegen`; point `PIPELEX_BASE_URL` at `https://api-dev.pipelex.com`.
+  - [ ] **Self-verify before writing**: `runCodegenCheck({ lockContent: result.lock, files: result.artifacts })` must report `isCurrent`. (`GeneratedArtifact` and `CodegenTreeFile` are structurally identical — no mapping.) Abort the write if it does not.
+  - [ ] Write each artifact at `src/generated/<method>/<path>` and the lock as `<lock_filename>`, **byte-for-byte verbatim**. Write-if-changed only.
+  - [ ] Remove stamped files that dropped out of the artifact set — **only** files matching `isStampableArtifactPath`, so `sources.json` is never touched (D1).
+  - [ ] Write `sources.json` beside each lock: repo-relative path + SHA-256 of every source `.mthds` in the closure (D3).
+  - [ ] Log per method: short `crate_fingerprint`, `engine_version`, and whether anything changed — a no-op run must say so.
+- [ ] `"codegen": "node --experimental-strip-types scripts/codegen.mts"` in `package.json` scripts.
+- [ ] `make codegen` target wrapping `npm run codegen`, with a `##` help line.
+- [ ] **Exclusions (D4)** — these must land in the same commit as the first generated tree, or the pre-commit hook will rewrite the artifacts and break every stamp:
+  - [ ] `.prettierignore` gains `src/generated/`.
+  - [ ] `eslint.config.mjs` gains `src/generated/**` to its ignores.
+  - [ ] lint-staged's ESLint entry gains `--no-warn-ignored`.
+- [ ] `.gitattributes` with `src/generated/** -text` — diff hygiene on a committed generated tree (not load-bearing for the verdict; the SDK normalizes line endings).
+- [ ] Run `npm run codegen` against api-dev; commit the three generated trees.
+- [ ] `make all` green **with the trees committed** — `tsc` now covers them (D4), so this is where zod-version incompatibility would surface.
+- [ ] Re-run `npm run codegen` immediately: it must report no changes (proves write-if-changed).
+
+> ### ⛔ CHECKPOINT 2 — STOP HERE
+>
+> **Do not proceed to Phase 3 without the user.** Report: the generated file list, `engine_version` + short fingerprints, that the second run was a clean no-op, and `make all` green. Nothing consumes the trees yet and there is no drift guard — this is a coherent, shippable unit on its own, and a natural place to open a PR.
 
 ---
 
-## Decisions & open questions
+## Phase 3 — The offline check (`npm run codegen:check`) and the keyed verify
 
-- **Cost render scope:** render `<CostReport>` under **every** example (shared component, consistent template UX) rather than a single showcase. Cheap and instructive.
-- **Usage is a sibling, not narrower output** — settled: extract in the helpers, not in `parseXxx`. Keeps the narrower contract (`main_stuff` only) intact.
-- **`prepareInputs` input shape** — settled in B1: **bare data-URL string** at `document`, `pipe_ref` omitted (defaults to `main_pipe`). Cleanest template form; best shows the signature-driven upload. Filename drop is cosmetic (nothing renders it). Live-verify the storage rewrite in Phase C.
-- **Blocking-path usage access** (`pipe_output.tokens_usages`) — must be live-verified (A2). If the SDK exposes it more directly on `PipelexExecuteResult`, prefer that.
-- **`upload_failed` granularity** — one kind + tailored copy vs several kinds. Recommend one kind; revisit if the UI wants to branch.
-- **Out of scope (follow-up):** browser-direct upload to bypass the Server Action body limit — written up in `../wip/upload/followup-browser-direct-upload.md`.
+Implements the rest of **D3**.
+
+- [ ] `scripts/codegen-check.mts` — no SDK client, no env, no key:
+  - [ ] For each `src/generated/<method>/`: read `codegen.lock` (absent → exit **2**, no verdict), walk the directory **recursively**, filter with `isStampableArtifactPath`, pass paths **relative to the lock's directory** and content **as read** (no reformatting, no re-encoding).
+  - [ ] Call `runCodegenCheck`; print each drift as `category: path — detail` (the `detail` sentences are the CLI's verbatim — do not reword them).
+  - [ ] Compare `sources.json` hashes against the current `.mthds` files; a mismatch is a stale-source failure whose message says **"run `npm run codegen`"**.
+  - [ ] Catch `CodegenLockError` → exit **2**, printing its message unchanged (an unknown `lock_version` message already names which side to upgrade).
+  - [ ] Exit codes: `0` current · `1` drift or stale sources · `2` no verdict.
+- [ ] `scripts/codegen-verify.mts` — the keyed semantic gate: re-run `codegen()` live per method and compare its `crate_fingerprint` against the committed lock's `crateFingerprint` (read via `runCodegenCheck`, which surfaces it). Writes nothing. Exit 1 on mismatch.
+- [ ] Scripts: `"codegen:check"` and `"codegen:verify"`.
+- [ ] Make targets `codegen-check` and `codegen-verify`; **fold `codegen-check` into `check`** (`check: lint format-check typecheck codegen-check`). `codegen-verify` stays out of `make all` — it needs a key and a network.
+- [ ] Verify every failure mode by hand, each must fail `make check` with an actionable message:
+  - [ ] Append a byte to a generated file → `hand-edited`.
+  - [ ] Delete a generated file → `missing`.
+  - [ ] Drop a stamped stray into a generated dir → `orphan`.
+  - [ ] Corrupt a lock → exit 2 via `CodegenLockError`.
+  - [ ] Edit a `.mthds` bundle without regenerating → stale-source failure.
+  - [ ] Restore everything (`npm run codegen`) → green again.
+- [ ] Confirm `sources.json` is **ignored** by the walk filter (it is not stampable) — a passing check with the sidecar present proves it.
+- [ ] `make all` green.
+
+> ### ⛔ CHECKPOINT 3 — STOP HERE
+>
+> **Do not proceed to Phase 4 without the user.** Report: each failure mode's actual message, and `make all` green. Phase 4 is the first one that changes app behaviour and touches user-visible field names — it deserves a deliberate go-ahead.
+
+---
+
+## Phase 4 — Adopt the binders in the app
+
+Implements **D6**. This is the behaviour-changing phase.
+
+- [ ] `src/types/extractEntitiesPipeline.ts` — body becomes `parseExtractedEntities(results.main_stuff)` inside `try/catch`, translating `ZodError` → `BadPipelineOutputError(err.message)`. Re-export the generated `ExtractedEntities` type. Field names are unchanged (`people`/`orgs`/`dates`), so this one is a drop-in.
+- [ ] `src/types/summarizePipeline.ts` — same shape, re-exporting the generated `DocumentSummary`. **Field rename churn**: `docType` → `doc_type`, `keyPoints` → `key_points`.
+- [ ] `src/types/generateImagePipeline.ts` — parse with the generated `parseImage` **first**, then keep the hand-written web-renderable-scheme validation of `public_url ?? url` (semantics the concept does not declare, so it stays — D6). Decide and record how `undefined` vs `null` is reconciled (see primer fact 1): either re-export the generated `Image` and let components use `??`, or keep a thin local shape. **Prefer the generated type**; `??` handles both.
+- [ ] Update components for the new field names:
+  - [ ] `src/components/PdfSummaryResult.tsx` (`summary.docType` → `summary.doc_type`, `summary.keyPoints` → `summary.key_points`).
+  - [ ] `src/components/ImageResult.tsx` (`image.publicUrl` → `image.public_url`; `??` already handles the undefined).
+- [ ] **Retire `src/lib/runOutput.ts`** and `runOutput.test.ts` — `Schema.parse` subsumes `findOutputContent`'s predicate and non-object guard, with better messages. No backward compatibility (D6).
+- [ ] Update the affected tests. Fixtures barely change (they already build wire-shaped `main_stuff`); assertions on error _messages_ move to zod's wording:
+  - [ ] `src/types/summarizePipeline.test.ts`, `src/types/generateImagePipeline.test.ts`, `src/types/extractEntitiesPipeline.test.ts`
+  - [ ] `src/components/PdfSummaryResult.test.tsx`, `src/components/ImageResult.test.tsx`, `src/components/PdfForm.test.tsx`, `src/components/ImageForm.test.tsx`
+  - [ ] `src/actions/runSummarizePdfPipeline.test.ts`, `src/actions/runGenerateImagePipeline.test.ts`
+- [ ] `make all` green.
+- [ ] `make test-e2e` — **required**, not optional: this phase changes the SDK call path's output handling, which only e2e exercises live. Costs an LLM call per spec; the target prompts first.
+
+> ### ⛔ CHECKPOINT 4 — STOP HERE
+>
+> **Do not proceed to Phase 5 without the user.** Report: which narrowers kept semantic validation beyond the schema, the exact field-name churn that reached components, and the e2e result. The feature is functionally complete here; Phase 5 is documentation only.
+
+---
+
+## Phase 5 — Documentation
+
+- [ ] `README.md` — a "Generated types" section: the commands, the trust chain in two sentences, the api-dev caveat, and "after editing a `.mthds` file, run `npm run codegen`".
+- [ ] `CLAUDE.md` — this is the big one, and it is **not** additive:
+  - [ ] Project-structure tree gains `src/generated/` and `scripts/`.
+  - [ ] Rewrite the narrower-contract sections that describe `findOutputContent` / `runOutput.ts` — that file no longer exists.
+  - [ ] The "To add a new pipeline" numbered list gains the codegen step and loses the hand-written-narrower step.
+  - [ ] Workflow rule: regenerate after editing `methods/`; `make check` now fails on stale generated types.
+  - [ ] Gotcha: `src/generated/` is excluded from Prettier/ESLint on purpose — do not "fix" that; a reformat breaks every stamp.
+  - [ ] Scripts table gains the three new targets.
+- [ ] `CHANGELOG.md` under `## [Unreleased]` — Added (codegen + the check), Changed (breaking: snake_case field names on `DocumentSummary` and the image envelope; `runOutput.ts` removed).
+- [ ] `wip/codegen/design.md` — mark implemented; fold the checkpoint findings into it.
+- [ ] Delete this file, or archive it to `../wip/history/` per the workspace convention.
+- [ ] `make all` green one final time.
+
+---
+
+## Decisions to make during execution (record the outcome here)
+
+- **`undefined` vs `null` on optional generated fields** (Phase 4) — recommend re-exporting the generated type and using `??` at the render sites, rather than a normalizing adapter that reintroduces a hand-written shape.
+- **Whether `codegen:verify` runs in CI** — it needs a key. Recommend leaving it manual/pre-release until there is a keyed CI job.
+- **Engine-bump churn policy** — a pipelex release rewrites every stamp. Recommend regenerating deliberately (a "bump the engine" commit), not incidentally inside an unrelated PR.
+
+## Out of scope (D7)
+
+No `resolve()` example · no edits to generated code (augment via sibling modules) · no watch mode or build-time hook · no per-pipe codegen kinds.
 
 ## References
 
-- SDK changelog: `../pipelex-sdk-js/CHANGELOG.md` (`[v0.5.0]`).
-- Upload contract: `../pipelex-sdk-js/docs/input-preparation.md`.
-- Cross-repo upload plan + matrix: `../wip/upload/README.md`, `../wip/upload/behavior-matrix.md`.
-- Types: `../pipelex-sdk-js/src/runs.ts` (`RunResults`, `TokensUsageRecord`), `../pipelex-sdk-js/src/upload.ts`, `../pipelex-sdk-js/src/prepare-inputs.ts`, `../pipelex-sdk-js/src/client.ts` (`uploadFile` @1049, `prepareInputs` @1062).
-- This repo's integration pattern & conventions: `CLAUDE.md`.
+- Design: [`wip/codegen/design.md`](wip/codegen/design.md)
+- SDK offline check: `../pipelex-sdk-js/docs/crate-routes.md` → "The offline check"
+- SDK changelog: `../pipelex-sdk-js/CHANGELOG.md` → `[v0.13.0]`
+- Engine / emitter behaviour: `../pipelex/docs/under-the-hood/codegen-projections.md`
+- Predecessor plan (shipped, archived): `../wip/history/TODOS-starter-js-sdk-0.5.0-cost-and-uploads.md`
