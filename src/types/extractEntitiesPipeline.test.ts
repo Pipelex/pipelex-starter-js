@@ -28,8 +28,12 @@ describe("parseEntities", () => {
     expect(() => parseEntities(mainStuff(null))).toThrow();
   });
 
-  it("throws when a field is not an array of strings", () => {
-    expect(() => parseEntities(mainStuff({ people: "Tim", orgs: [], dates: [] }))).toThrow();
-    expect(() => parseEntities(mainStuff({ people: [1, 2], orgs: [], dates: [] }))).toThrow();
+  it("names the offending field when it is not an array of strings", () => {
+    expect(() => parseEntities(mainStuff({ people: "Tim", orgs: [], dates: [] }))).toThrow(
+      /people/,
+    );
+    expect(() => parseEntities(mainStuff({ people: [1, 2], orgs: [], dates: [] }))).toThrow(
+      /people/,
+    );
   });
 });

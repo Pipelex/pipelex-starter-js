@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ApiResponseError, ApiUnreachableError, RunLifecycleUnavailableError } from "@pipelex/sdk";
+import {
+  ApiResponseError,
+  ApiUnreachableError,
+  RunLifecycleUnavailableError,
+  type RunResults,
+} from "@pipelex/sdk";
 
 const start = vi.fn();
 const getRunStatus = vi.fn();
@@ -10,7 +15,7 @@ vi.mock("@/lib/pipelexClient", () => ({
 }));
 
 import { pollDurableRun, startDurableRun } from "./durableRun";
-import { parseEntities } from "@/types/extractEntitiesPipeline";
+import { BadPipelineOutputError } from "@/types/pipelineError";
 
 beforeEach(() => {
   start.mockReset();
@@ -23,7 +28,19 @@ const OPTIONS = {
   mthds_contents: ["BUNDLE"],
   inputs: { text: "x" },
 };
-const ENTITIES = { people: ["Ada"], orgs: [], dates: [] };
+const FIXTURE = { items: ["Ada"] };
+
+// Inline fixture narrower, so the shared-helper tests import no removable
+// example's adapter (the examples stay deletable without touching this file).
+// It honors the real `parseXxx` contract: read `main_stuff`, throw a tagged
+// error on shape mismatch.
+function parseFixture(results: RunResults): { items: string[] } {
+  const stuff = results.main_stuff;
+  if (typeof stuff !== "object" || stuff === null || !("items" in stuff)) {
+    throw new BadPipelineOutputError("fixture output is missing `items`");
+  }
+  return stuff as { items: string[] };
+}
 
 describe("startDurableRun", () => {
   it("returns the run id on success", async () => {
@@ -35,7 +52,7 @@ describe("startDurableRun", () => {
 
   it("classifies a bare-runner RunLifecycleUnavailableError into lifecycle_unavailable", async () => {
     start.mockRejectedValueOnce(
-      new RunLifecycleUnavailableError("no run store", "http://localhost:8081"),
+      new RunLifecycleUnavailableError("no run store", "https://api.unreachable.example"),
     );
     const result = await startDurableRun(async () => OPTIONS);
     expect(result.ok).toBe(false);
@@ -45,7 +62,7 @@ describe("startDurableRun", () => {
 
   it("classifies a transport error thrown by start", async () => {
     start.mockRejectedValueOnce(
-      new ApiUnreachableError("unreachable", "http://localhost:8081", "ECONNREFUSED"),
+      new ApiUnreachableError("unreachable", "https://api.unreachable.example", "ECONNREFUSED"),
     );
     const result = await startDurableRun(async () => OPTIONS);
     expect(result.ok).toBe(false);
@@ -61,7 +78,7 @@ describe("pollDurableRun", () => {
       degraded: false,
       retry_after_seconds: null,
     });
-    const result = await pollDurableRun("run-1", parseEntities);
+    const result = await pollDurableRun("run-1", parseFixture);
     expect(getRunResult).not.toHaveBeenCalled();
     expect(result).toEqual({
       ok: true,
@@ -78,7 +95,7 @@ describe("pollDurableRun", () => {
       degraded: true,
       retry_after_seconds: 7,
     });
-    const result = await pollDurableRun("run-1", parseEntities);
+    const result = await pollDurableRun("run-1", parseFixture);
     expect(result).toEqual({
       ok: true,
       state: "running",
@@ -93,14 +110,14 @@ describe("pollDurableRun", () => {
     getRunResult.mockResolvedValueOnce({
       state: "completed",
       pipeline_run_id: "run-1",
-      result: { pipeline_run_id: "run-1", main_stuff: ENTITIES },
+      result: { pipeline_run_id: "run-1", main_stuff: FIXTURE },
     });
-    const result = await pollDurableRun("run-1", parseEntities);
+    const result = await pollDurableRun("run-1", parseFixture);
     // No usage on the result → an "unavailable" report rides alongside the output.
     expect(result).toEqual({
       ok: true,
       state: "completed",
-      output: ENTITIES,
+      output: FIXTURE,
       usage: {
         calls: [],
         totalCostUsd: null,
@@ -118,14 +135,14 @@ describe("pollDurableRun", () => {
       pipeline_run_id: "run-1",
       result: {
         pipeline_run_id: "run-1",
-        main_stuff: ENTITIES,
+        main_stuff: FIXTURE,
         tokens_usages: [
           { inference_model_name: "gpt-4o", pipe_code: "extract_entities", cost: 0.002 },
         ],
         usage_assembly_error: null,
       },
     });
-    const result = await pollDurableRun("run-1", parseEntities);
+    const result = await pollDurableRun("run-1", parseFixture);
     expect(result.ok).toBe(true);
     if (!result.ok || result.state !== "completed") return;
     expect(result.usage.state).toBe("records");
@@ -141,7 +158,7 @@ describe("pollDurableRun", () => {
       status: "FAILED",
       message: "pipe blew up",
     });
-    const result = await pollDurableRun("run-1", parseEntities);
+    const result = await pollDurableRun("run-1", parseFixture);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("run_failed");
@@ -156,7 +173,7 @@ describe("pollDurableRun", () => {
       pipeline_run_id: "run-1",
       retry_after_seconds: 2,
     });
-    const result = await pollDurableRun("run-1", parseEntities);
+    const result = await pollDurableRun("run-1", parseFixture);
     expect(result).toEqual({
       ok: true,
       state: "running",
@@ -173,7 +190,7 @@ describe("pollDurableRun", () => {
       pipeline_run_id: "run-1",
       result: { pipeline_run_id: "run-1", main_stuff: { foo: "bar" } },
     });
-    const result = await pollDurableRun("run-1", parseEntities);
+    const result = await pollDurableRun("run-1", parseFixture);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("bad_response");
@@ -183,7 +200,7 @@ describe("pollDurableRun", () => {
     getRunStatus.mockRejectedValueOnce(
       new ApiUnreachableError("unreachable", "https://api.pipelex.com", "ENOTFOUND"),
     );
-    const result = await pollDurableRun("run-1", parseEntities);
+    const result = await pollDurableRun("run-1", parseFixture);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("api_unreachable");
@@ -204,7 +221,7 @@ describe("pollDurableRun", () => {
         undefined,
       ),
     );
-    const result = await pollDurableRun("run-1", parseEntities);
+    const result = await pollDurableRun("run-1", parseFixture);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("server_error");
@@ -213,9 +230,9 @@ describe("pollDurableRun", () => {
 
   it("classifies a RunLifecycleUnavailableError thrown during polling as terminal", async () => {
     getRunStatus.mockRejectedValueOnce(
-      new RunLifecycleUnavailableError("no run store", "http://localhost:8081"),
+      new RunLifecycleUnavailableError("no run store", "https://api.unreachable.example"),
     );
-    const result = await pollDurableRun("run-1", parseEntities);
+    const result = await pollDurableRun("run-1", parseFixture);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("lifecycle_unavailable");

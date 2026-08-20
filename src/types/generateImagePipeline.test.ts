@@ -20,38 +20,112 @@ describe("parseGeneratedImage", () => {
     );
     expect(result).toEqual({
       url: "https://storage.pipelex.com/generated/abc.png",
-      publicUrl: "https://cdn.pipelex.com/abc.png",
-      mimeType: "image/png",
+      public_url: "https://cdn.pipelex.com/abc.png",
+      mime_type: "image/png",
       caption: "A robot",
     });
   });
 
-  it("extracts the durable hosted shape: non-web url + web public_url", () => {
-    // Matches the live `main_stuff`: `url` is a non-web pipelex-storage URI,
-    // `public_url` is a signed S3 URL. The narrower keeps both; display picks
-    // `publicUrl ?? url`, which is web-renderable, so it passes.
+  it("extracts the durable hosted shape verbatim: non-web url, web public_url, explicit nulls", () => {
+    // Captured live from api-dev: `url` is a non-web pipelex-storage URI,
+    // `public_url` a signed S3 URL, and every unset optional field arrives as
+    // an explicit `null` (pydantic serializes `None`, it does not omit the
+    // key). The generated schema models those as `.optional()`, so this case is
+    // the one that proves `dropWireNulls` is load-bearing rather than cosmetic.
     const result = parseGeneratedImage(
       mainStuff({
-        url: "pipelex-storage://user/results/run/assets/x.png",
-        public_url: "https://s3.us-west-2.amazonaws.com/bucket/x.png?X-Amz-Signature=abc",
-        mime_type: "image/png",
+        url: "pipelex-storage://org/runs/run_1/generated/abc.png",
+        public_url: "https://s3.us-west-2.amazonaws.com/bucket/abc.png?X-Amz-Signature=abc",
+        source_prompt: "A simple red circle on a plain white background.",
+        source_negative_prompt: null,
         caption: null,
+        mime_type: "image/png",
+        width: 1024,
+        height: 1024,
+        filename: null,
       }),
     );
-    expect(result.url).toBe("pipelex-storage://user/results/run/assets/x.png");
-    expect(result.publicUrl).toContain("https://s3");
-    expect(result.mimeType).toBe("image/png");
+    expect(result.url).toBe("pipelex-storage://org/runs/run_1/generated/abc.png");
+    expect(result.public_url).toContain("https://s3");
+    expect(result.mime_type).toBe("image/png");
+    expect(result.width).toBe(1024);
+    // A dropped null reads as absent, which is what `.optional()` means.
+    expect(result.caption).toBeUndefined();
+    expect(result.filename).toBeUndefined();
+  });
+
+  it("treats an empty public_url as absent and falls back to url", () => {
+    // `.optional()` accepts `""`, and `""` is not nullish — so a `??` fallback
+    // would let it beat a perfectly good `url` and fail the run.
+    const result = parseGeneratedImage(mainStuff({ url: "https://x/y.png", public_url: "" }));
+    expect(result.url).toBe("https://x/y.png");
   });
 
   it("extracts an image delivered as a base64 data URL", () => {
     const result = parseGeneratedImage(mainStuff({ url: "data:image/png;base64,AAAA" }));
     expect(result.url).toBe("data:image/png;base64,AAAA");
-    expect(result.publicUrl).toBeNull();
-    expect(result.mimeType).toBeNull();
-    expect(result.caption).toBeNull();
+    expect(result.public_url).toBeUndefined();
+    expect(result.mime_type).toBeUndefined();
+    expect(result.caption).toBeUndefined();
   });
 
-  it("throws BadImageOutputError when no entry carries a URL", () => {
+  it("refuses a data: URL whose media type is not an image", () => {
+    // Not an image-decoding concern: `<ImageResult>` puts the same string in an
+    // `<a download>`, so a text/html payload would be saved as a file that runs
+    // on a file:// origin when opened.
+    expect(() =>
+      parseGeneratedImage(mainStuff({ url: "data:text/html;base64,PHNjcmlwdD4=" })),
+    ).toThrow(BadImageOutputError);
+  });
+
+  it("refuses a data: URL with no media type at all", () => {
+    // `data:,Hello` defaults to text/plain — an image pipeline never emits it.
+    expect(() => parseGeneratedImage(mainStuff({ url: "data:,Hello" }))).toThrow(
+      BadImageOutputError,
+    );
+  });
+
+  it("accepts an image data: URL whose media type carries parameters", () => {
+    const url = "data:image/png;charset=utf-8,AAAA";
+    expect(parseGeneratedImage(mainStuff({ url })).url).toBe(url);
+  });
+
+  it.each(["image/jpeg", "image/webp"])("accepts a %s data: URL", (mediaType) => {
+    const url = `data:${mediaType};base64,AAAA`;
+    expect(parseGeneratedImage(mainStuff({ url })).url).toBe(url);
+  });
+
+  it("refuses an SVG data: URL, which is an image type but active content", () => {
+    // The reason is the download link, not the <img>: scripts are inert inside
+    // an <img>, but the saved file executes them when opened as a document.
+    expect(() =>
+      parseGeneratedImage(
+        mainStuff({
+          url: "data:image/svg+xml,%3Csvg%3E%3Cscript%3Ex()%3C%2Fscript%3E%3C%2Fsvg%3E",
+        }),
+      ),
+    ).toThrow(BadImageOutputError);
+    expect(() =>
+      parseGeneratedImage(mainStuff({ url: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=" })),
+    ).toThrow(BadImageOutputError);
+  });
+
+  it("matches the media type case-insensitively, so an uppercased SVG is still refused", () => {
+    // A regression in the case-folding would silently reopen the SVG hole.
+    expect(() =>
+      parseGeneratedImage(mainStuff({ url: "data:IMAGE/SVG+XML,%3Csvg%2F%3E" })),
+    ).toThrow(BadImageOutputError);
+  });
+
+  it("refuses an inert image type the platform does not produce", () => {
+    // The gate is an allow-list, not an `image/` prefix match: a GIF is inert,
+    // but it is not one of the types a Pipelex run returns.
+    expect(() =>
+      parseGeneratedImage(mainStuff({ url: "data:image/gif;base64,R0lGODlhAQABAAAAACw=" })),
+    ).toThrow(BadImageOutputError);
+  });
+
+  it("throws BadImageOutputError when main_stuff carries no url", () => {
     expect(() => parseGeneratedImage(mainStuff({ caption: "no url here" }))).toThrow(
       BadImageOutputError,
     );
@@ -75,7 +149,7 @@ describe("parseGeneratedImage", () => {
   );
 
   it("rejects a file:// public_url even when url is web-renderable", () => {
-    // <ImageResult> displays publicUrl ?? url, so a bad publicUrl wins.
+    // <ImageResult> displays public_url ?? url, so a bad public_url wins.
     try {
       parseGeneratedImage(
         mainStuff({

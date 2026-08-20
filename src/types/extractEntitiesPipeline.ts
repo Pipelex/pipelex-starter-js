@@ -1,35 +1,29 @@
 import type { RunResults } from "@pipelex/sdk";
-import { findOutputContent } from "@/lib/runOutput";
+import { parseExtractedEntities } from "@/generated/extract-entities/binder";
+import {
+  ExtractedEntitiesSchema,
+  type ExtractedEntities,
+} from "@/generated/extract-entities/types";
+import { describeSchemaFailure, wireOutput } from "@/lib/wireOutput";
 import { BadPipelineOutputError } from "@/types/pipelineError";
 
-export type ExtractedEntities = {
-  people: string[];
-  orgs: string[];
-  dates: string[];
-};
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
+/**
+ * The shape is not written here — it is generated from
+ * `methods/extract-entities/main.mthds` by `npm run codegen`. Re-exported so
+ * the rest of the app keeps importing its pipeline types from one place.
+ */
+export type { ExtractedEntities };
 
 /**
- * Narrow a run's output into our ExtractedEntities shape. Takes `RunResults`
- * (durable `main_stuff` or the adapted blocking `pipe_output`) and reads the
- * main output content via `findOutputContent`. Throws `BadPipelineOutputError`
- * on shape mismatch — this is a system boundary (LLM output → typed app), so
- * failures are real bugs we want surfaced (the poll/blocking catch classifies
- * them).
+ * Narrow a run's output into `ExtractedEntities` by handing `main_stuff` to the
+ * generated binder. Throws `BadPipelineOutputError` on shape mismatch — this is
+ * a system boundary (LLM output → typed app), so failures are real bugs we want
+ * surfaced (the poll/blocking catch classifies them).
  */
 export function parseEntities(results: RunResults): ExtractedEntities {
-  const content = findOutputContent(results, (c) => "people" in c && "orgs" in c && "dates" in c);
-  if (!content) {
-    throw new BadPipelineOutputError("Could not find ExtractedEntities in the run output");
+  try {
+    return parseExtractedEntities(wireOutput(results, ExtractedEntitiesSchema));
+  } catch (err) {
+    throw new BadPipelineOutputError(describeSchemaFailure(err, "ExtractedEntities"));
   }
-
-  const { people, orgs, dates } = content;
-  if (!isStringArray(people) || !isStringArray(orgs) || !isStringArray(dates)) {
-    throw new BadPipelineOutputError("ExtractedEntities fields must each be an array of strings");
-  }
-
-  return { people, orgs, dates };
 }

@@ -8,8 +8,8 @@ describe("PdfSummaryResult", () => {
       <PdfSummaryResult
         summary={{
           title: "Q1 Revenue Report",
-          docType: "report",
-          keyPoints: ["Revenue up 12%", "Costs flat"],
+          doc_type: "report",
+          key_points: ["Revenue up 12%", "Costs flat"],
         }}
       />,
     );
@@ -20,7 +20,7 @@ describe("PdfSummaryResult", () => {
   });
 
   it("renders 'None' when there are no key points", () => {
-    render(<PdfSummaryResult summary={{ title: "Memo", docType: "memo", keyPoints: [] }} />);
+    render(<PdfSummaryResult summary={{ title: "Memo", doc_type: "memo", key_points: [] }} />);
     expect(screen.getByText("None")).toBeInTheDocument();
   });
 });

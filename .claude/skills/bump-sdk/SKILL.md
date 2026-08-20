@@ -50,7 +50,7 @@ Extract the entries between `## [v{CURRENT}]` (exclusive) and `## [v{TARGET_VERS
 
 Many breaking bullets in this changelog follow a rename pattern: an identifier or env var written as `` `oldName` `` renamed/changed to `` `newName` `` (e.g. "constructor option renamed `apiToken` → `apiKey`", "env var renamed `PIPELEX_API_URL` → `PIPELEX_BASE_URL`"). For each one:
 
-1. Grep the **whole repo** for the old name — don't scope this to `src/` only. An env var name in particular tends to leak everywhere: `.env.example`, `README.md`, `CLAUDE.md`, `TODOS.md`, `wip/*.md`, `e2e/*.spec.ts` comments and fallback reads, test assertions, not just the runtime code path. A rerun of this skill against this exact repo found the old name in 14 files across five different kinds of file, so treat the file-scope list in this repo's own `CLAUDE.md` as a starting point, not a ceiling. The one place to leave alone is `CHANGELOG.md`'s **already-dated release entries** (`## [vX.Y.Z] - YYYY-MM-DD`) — those are a historical record of what was true at that release and shouldn't be rewritten; Step 7 is where this repo's changelog gets a new entry for _this_ change.
+1. Grep the **whole repo** for the old name — don't scope this to `src/` only. An env var name in particular tends to leak everywhere: `.env.example`, `README.md`, `CLAUDE.md`, `TODOS.md`, `wip/*.md`, `e2e/*.spec.ts` comments and fallback reads, test assertions, not just the runtime code path. A rerun of this skill against this exact repo found the old name in over a dozen files across several kinds of file, so treat the file-scope list in this repo's own `CLAUDE.md` as a starting point, not a ceiling. The one place to leave alone is `CHANGELOG.md`'s **already-dated release entries** (`## [vX.Y.Z] - YYYY-MM-DD`) — those are a historical record of what was true at that release and shouldn't be rewritten; Step 7 is where this repo's changelog gets a new entry for _this_ change.
 2. **If found**: this repo needs the migration. Apply it with `Edit` (rename the identifier / env var everywhere it appears), then show the diff. This matches the workspace's "no backward-compatibility shims — just change it" principle; there's no reason to keep the old name around once the SDK drops it.
 3. **If not found**: say so and move on — this repo is already using the new name (or never used the old surface), nothing to do.
 4. **Run `make format` right after any rename**, before moving on. A literal find-and-replace changes string lengths, and this repo's Prettier config re-flows Markdown tables to keep columns aligned — a raw rename of an env var name inside a `README.md` table will fail `make format-check` (and therefore `make all`) purely on column padding, which reads as a confusing false alarm if you hit it without knowing the rename is what caused it.
@@ -71,6 +71,8 @@ Run `make all` (lint + format-check + typecheck + unit tests + build, per this r
 - **On failure**: show the errors. If they trace back to one of the "needs manual review" items from Step 4, connect the dots for the user rather than just dumping the error. Ask how to proceed (fix, skip, abort) — don't guess at a fix for a behavior change you flagged as needing human judgment.
 
 A `@pipelex/sdk` bump always touches the SDK call path by definition, so — unlike the `release` skill, which only offers this conditionally — **always** offer `make test-e2e` here too (it exercises the real API against the new SDK version, which `make all`'s mocked unit tests can't). It costs an LLM call per run and needs `PIPELEX_API_KEY` set, so only run it with explicit user approval.
+
+**If the SDK changelog entries mention codegen, crates, locks, or `runCodegenCheck`, also offer `make codegen-verify`** (needs a key and a base URL serving `/v1/codegen`, but no LLM call). `make all` already re-runs the offline check after the bump; `codegen-verify` additionally asks the live engine whether the committed generated trees are still semantically current under the new SDK, which is exactly the surface such a release could have moved.
 
 ## Step 7 — Update This Repo's CHANGELOG.md
 
@@ -96,7 +98,7 @@ Ask the user to confirm. On confirmation:
 2. Commit with message: `Bump @pipelex/sdk to {TARGET_VERSION}` (add a short body line if Step 4 applied migrations, naming them).
 3. Show the commit result.
 
-Then offer (but do not automatically execute) pushing and opening a PR, same as the `release` skill — target branch `main` per this repo's `CLAUDE.md`. Wait for explicit approval before either.
+Then offer (but do not automatically execute) pushing and opening a PR, same as the `release` skill — target branch `dev` per this repo's `CLAUDE.md`. Wait for explicit approval before either.
 
 ## Rules
 

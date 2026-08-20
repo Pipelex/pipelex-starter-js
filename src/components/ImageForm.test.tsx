@@ -39,9 +39,7 @@ function submitForm() {
 
 const IMAGE = {
   url: "https://cdn.example/x.png",
-  publicUrl: null,
-  mimeType: "image/png",
-  caption: null,
+  mime_type: "image/png",
 };
 const USAGE = {
   calls: [

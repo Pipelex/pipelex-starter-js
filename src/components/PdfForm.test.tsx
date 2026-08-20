@@ -51,14 +51,14 @@ async function selectFile(file: File) {
 }
 
 /** A durable run that completes on the first poll (no setTimeout gap to bridge). */
-function durableCompletes(summary: { title: string; docType: string; keyPoints: string[] }) {
+function durableCompletes(summary: { title: string; doc_type: string; key_points: string[] }) {
   start.mockResolvedValueOnce({ ok: true, runId: "run-1" });
   poll.mockResolvedValueOnce({ ok: true, state: "completed", output: summary, usage: USAGE });
 }
 
 describe("PdfForm", () => {
   it("encodes a selected PDF and renders the summary on success (durable)", async () => {
-    durableCompletes({ title: "Invoice", docType: "invoice", keyPoints: ["Total $1,728"] });
+    durableCompletes({ title: "Invoice", doc_type: "invoice", key_points: ["Total $1,728"] });
 
     render(<PdfForm />);
     await selectFile(pdfFile());
@@ -116,7 +116,7 @@ describe("PdfForm", () => {
   });
 
   it("clears a prior summary when the sample-PDF fetch fails", async () => {
-    durableCompletes({ title: "Invoice", docType: "invoice", keyPoints: ["Total $1,728"] });
+    durableCompletes({ title: "Invoice", doc_type: "invoice", key_points: ["Total $1,728"] });
 
     render(<PdfForm />);
     await selectFile(pdfFile());
@@ -136,7 +136,7 @@ describe("PdfForm", () => {
   });
 
   it("accepts a .pdf when the browser reports an empty MIME type", async () => {
-    durableCompletes({ title: "Invoice", docType: "invoice", keyPoints: [] });
+    durableCompletes({ title: "Invoice", doc_type: "invoice", key_points: [] });
 
     render(<PdfForm />);
     const fileWithEmptyType = new File(["%PDF-1.4"], "report.pdf", { type: "" });
@@ -155,7 +155,7 @@ describe("PdfForm", () => {
   });
 
   it("ignores a stale FileReader read when a newer file is selected", async () => {
-    durableCompletes({ title: "Second", docType: "invoice", keyPoints: [] });
+    durableCompletes({ title: "Second", doc_type: "invoice", key_points: [] });
 
     // First-call FileReader stays pending; second-call resolves immediately.
     // If the stale guard is missing, the late first read overwrites filename

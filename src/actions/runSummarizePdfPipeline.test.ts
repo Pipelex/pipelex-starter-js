@@ -23,7 +23,7 @@ import {
 
 const PDF_DATA_URL = "data:application/pdf;base64,JVBERi0xLjQK";
 const SUMMARY = { title: "Invoice", doc_type: "invoice", key_points: ["Total $1,728"] };
-const PARSED = { title: "Invoice", docType: "invoice", keyPoints: ["Total $1,728"] };
+const PARSED = { title: "Invoice", doc_type: "invoice", key_points: ["Total $1,728"] };
 
 // Blocking execute returns a PipelexExecuteResult with the resolved `main_stuff`.
 const BLOCKING_RESPONSE = { pipeline_run_id: "run-1", main_stuff: SUMMARY };
@@ -107,7 +107,7 @@ describe("runSummarizePdfBlocking", () => {
   it("classifies SDK errors from execute into a structured PipelineError", async () => {
     prepareInputs.mockResolvedValueOnce(PREPARED);
     execute.mockRejectedValueOnce(
-      new ApiUnreachableError("unreachable", "http://localhost:8081", "ECONNREFUSED"),
+      new ApiUnreachableError("unreachable", "https://api.unreachable.example", "ECONNREFUSED"),
     );
     const result = await runSummarizePdfBlocking({
       dataUrl: PDF_DATA_URL,

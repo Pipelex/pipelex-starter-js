@@ -1,40 +1,26 @@
 import type { RunResults } from "@pipelex/sdk";
-import { findOutputContent } from "@/lib/runOutput";
+import { parseDocumentSummary as parseDocumentSummaryWire } from "@/generated/summarize-pdf/binder";
+import { DocumentSummarySchema, type DocumentSummary } from "@/generated/summarize-pdf/types";
+import { describeSchemaFailure, wireOutput } from "@/lib/wireOutput";
 import { BadPipelineOutputError } from "@/types/pipelineError";
 
-export type DocumentSummary = {
-  title: string;
-  docType: string;
-  keyPoints: string[];
-};
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
+/**
+ * Generated from `methods/summarize-pdf/main.mthds` by `npm run codegen`. The
+ * field names are the bundle's own — `doc_type`, `key_points` — and stay
+ * snake_case all the way to the components: a camelCase mapping layer would be
+ * exactly the hand-written duplicate of the bundle that codegen removes.
+ */
+export type { DocumentSummary };
 
 /**
- * Narrow a run's output into our DocumentSummary shape. Takes `RunResults` and
- * reads the main output via `findOutputContent`. Throws `BadPipelineOutputError`
- * on shape mismatch — a system boundary (model output → typed app).
- *
- * The bundle emits snake_case (`doc_type`, `key_points`); we map to camelCase
- * here so the rest of the app stays idiomatic TypeScript.
+ * Narrow a run's output into `DocumentSummary` via the generated binder. Throws
+ * `BadPipelineOutputError` on shape mismatch — a system boundary (model output
+ * → typed app).
  */
 export function parseDocumentSummary(results: RunResults): DocumentSummary {
-  const content = findOutputContent(
-    results,
-    (c) => "title" in c && "doc_type" in c && "key_points" in c,
-  );
-  if (!content) {
-    throw new BadPipelineOutputError("Could not find DocumentSummary in the run output");
+  try {
+    return parseDocumentSummaryWire(wireOutput(results, DocumentSummarySchema));
+  } catch (err) {
+    throw new BadPipelineOutputError(describeSchemaFailure(err, "DocumentSummary"));
   }
-
-  const { title, doc_type: docType, key_points: keyPoints } = content;
-  if (typeof title !== "string" || typeof docType !== "string" || !isStringArray(keyPoints)) {
-    throw new BadPipelineOutputError(
-      "DocumentSummary requires a string title, a string doc_type, and a string-array key_points",
-    );
-  }
-
-  return { title, docType, keyPoints };
 }

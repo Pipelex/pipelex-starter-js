@@ -245,10 +245,11 @@ export function useRun<TInput, TOutput>(
         .then((outcome) => {
           if (!isCurrent()) return;
           if (!outcome.ok) {
-            // Includes `lifecycle_unavailable` (a bare runner with no run
-            // store): surface it as an explicit error — never silently
-            // downgrade durable to blocking. The classified error names the
-            // endpoint URL and points the user at Blocking mode.
+            // Includes `lifecycle_unavailable` (the configured URL doesn't
+            // serve the durable run lifecycle): surface it as an explicit
+            // error — never silently downgrade durable to blocking. The
+            // classified error names the endpoint URL and steers the user to
+            // check PIPELEX_BASE_URL.
             fail(outcome.error);
             return;
           }

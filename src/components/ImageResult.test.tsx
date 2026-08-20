@@ -3,13 +3,13 @@ import { render, screen } from "@testing-library/react";
 import { ImageResult } from "./ImageResult";
 
 describe("ImageResult", () => {
-  it("prefers publicUrl for the image src and download link", () => {
+  it("prefers public_url for the image src and download link", () => {
     render(
       <ImageResult
         image={{
           url: "https://storage.example/raw.png",
-          publicUrl: "https://cdn.example/pub.png",
-          mimeType: "image/png",
+          public_url: "https://cdn.example/pub.png",
+          mime_type: "image/png",
           caption: "A robot",
         }}
       />,
@@ -24,14 +24,11 @@ describe("ImageResult", () => {
     );
   });
 
-  it("falls back to url and a default alt when there is no publicUrl or caption", () => {
+  it("falls back to url and a default alt when there is no public_url or caption", () => {
     render(
       <ImageResult
         image={{
           url: "data:image/png;base64,AAAA",
-          publicUrl: null,
-          mimeType: null,
-          caption: null,
         }}
       />,
     );
@@ -39,5 +36,10 @@ describe("ImageResult", () => {
       "src",
       "data:image/png;base64,AAAA",
     );
+  });
+
+  it("uses the default alt when the caption is an empty string", () => {
+    render(<ImageResult image={{ url: "data:image/png;base64,AAAA", caption: "" }} />);
+    expect(screen.getByRole("img", { name: "Generated image" })).toBeInTheDocument();
   });
 });
