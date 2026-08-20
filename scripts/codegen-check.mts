@@ -18,7 +18,7 @@
  * needs the engine, and it is `npm run codegen:verify`.
  *
  * Exit codes follow the codegen spec: 0 current · 1 drift or stale sources ·
- * 2 no verdict could be produced. Aggregation across methods is `Math.max`,
+ * 2 no verdict could be produced. Aggregation across methods is by precedence,
  * deliberately: a no-verdict (2) outranks drift (1), because as long as any
  * method could not be checked the run has not produced the full verdict a 0
  * or 1 would claim. The per-category summary line at the end shows the mix
@@ -148,8 +148,9 @@ async function main(): Promise<void> {
     scan = await findOrphanTrees(GENERATED_ROOT, new Set(methods.map((m) => m.name)));
   } catch (error) {
     if (error instanceof SymlinkRefusedError) {
-      // A symlinked src/generated/ root: every per-method verdict above would
-      // have been produced over external content, so refuse the whole run.
+      // A symlinked src/generated/ root, or a symlinked entry directly under
+      // it. The scan runs before the per-method loop precisely so a refusal
+      // here means no verdict was ever produced over external content.
       console.error(`codegen:check: ${error.message}`);
       process.exit(EXIT_NO_VERDICT);
     }
