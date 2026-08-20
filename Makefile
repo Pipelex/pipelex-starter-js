@@ -1,4 +1,4 @@
-.PHONY: help run dev build start lint format format-check typecheck test test-watch test-e2e test-e2e-ui confirm-live-e2e agent-test check clean install lock all use-local use-npm ul un
+.PHONY: help run dev build start lint format format-check typecheck codegen test test-watch test-e2e test-e2e-ui confirm-live-e2e agent-test check clean install lock all use-local use-npm ul un
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -23,9 +23,16 @@ format: ## Format code with Prettier
 format-check: ## Check formatting (CI)
 	npm run format:check
 
-typecheck: ## Run TypeScript type checking (app + e2e specs)
+typecheck: ## Run TypeScript type checking (app + e2e specs + scripts)
 	npm run typecheck
 	npm run typecheck:e2e
+	npm run typecheck:scripts
+
+# Regenerates src/generated/<method>/ from methods/<method>/. Needs PIPELEX_API_KEY
+# and a base URL that serves POST /v1/codegen (api-dev today, not yet api.pipelex.com).
+# Deliberately OUT of `make all`, for the same reason test-e2e is: key + network.
+codegen: ## Regenerate the typed artifacts in src/generated/ from methods/ (needs PIPELEX_API_KEY)
+	npm run codegen
 
 test: ## Run tests (single pass)
 	npm run test

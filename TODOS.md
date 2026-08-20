@@ -4,7 +4,7 @@
 
 **Design authority:** [`wip/codegen/design.md`](wip/codegen/design.md). Read it before starting — this file is the execution tracker, that one is the _why_. Decisions are referenced below as **D1**–**D7**; if execution contradicts a decision, update the design doc rather than silently diverging.
 
-**Status:** Phase 0 (the upstream SDK helper) shipped as `@pipelex/sdk` 0.13.0. Phases 1–5 below are **not started**. Written 2026-08-20.
+**Status:** Phase 0 (the upstream SDK helper) shipped as `@pipelex/sdk` 0.13.0. Phases 1–2 are done — the repo is on `@pipelex/sdk` 0.13.0 with `zod` `^4.4.3`, and `npm run codegen` writes the three committed trees under `src/generated/`. Phases 3–5 are **not started**. Written 2026-08-20.
 
 **Check the boxes as you go.** This document is written for a cold start in a fresh session.
 
@@ -46,11 +46,11 @@ Every method emits exactly `types.ts` + `binder.ts` + `codegen.lock`. Input conc
 
 ## Phase 1 — Dependencies and baseline
 
-- [ ] `make use-npm` — leave the local tarball, restore the published SDK. Confirm it lands on **0.13.0 or later** (the target echoes the version it restored).
-- [ ] Bump `package.json` `@pipelex/sdk` `^0.12.0` → `^0.13.0`; sync `package-lock.json` (`make lock`).
-- [ ] Add `zod` to **`dependencies`** (not dev — binders run in Server Actions at request time). Current major is 4; use `^4.4.3` or later (D5).
-- [ ] Confirm `smol-toml` did **not** add a package to the tree (it dedupes with `mthds`): `npm ls smol-toml` should show a single deduped copy.
-- [ ] Baseline: `make all` green before writing any new code.
+- [x] `make use-npm` — leave the local tarball, restore the published SDK. Confirm it lands on **0.13.0 or later** (the target echoes the version it restored). → restored **0.13.0**.
+- [x] Bump `package.json` `@pipelex/sdk` `^0.12.0` → `^0.13.0`; sync `package-lock.json` (`make lock`). → `use-npm` re-pinned the range itself (that is the `@latest` behaviour); `make lock` was a no-op afterwards.
+- [x] Add `zod` to **`dependencies`** (not dev — binders run in Server Actions at request time). Current major is 4; use `^4.4.3` or later (D5). → added **`^4.4.3`**, and it deduped with the copy `mthds` already pulled in, so the install added no new package.
+- [x] Confirm `smol-toml` did **not** add a package to the tree (it dedupes with `mthds`): `npm ls smol-toml` should show a single deduped copy. → single `smol-toml@1.8.0`, deduped between `@pipelex/sdk` and `mthds`.
+- [x] Baseline: `make all` green before writing any new code.
 
 > ### ⛔ CHECKPOINT 1 — STOP HERE
 >
@@ -62,30 +62,30 @@ Every method emits exactly `types.ts` + `binder.ts` + `codegen.lock`. Input conc
 
 Implements **D1** (write verbatim, write-if-changed) and **D2** (script shape).
 
-- [ ] `tsconfig.scripts.json` — thin `extends` of the base config scoped to `scripts/**`, with `"module": "nodenext"` / `"moduleResolution": "nodenext"` and `"types": ["node"]`. Mirror `tsconfig.e2e.json`'s structure. Add `scripts` to the base config's `exclude` so Next's build never type-checks Node-flavored files.
-- [ ] Add `"typecheck:scripts": "tsc -p tsconfig.scripts.json --noEmit"` to `package.json`, and wire it into the `typecheck` Make target beside `typecheck:e2e`.
-- [ ] `scripts/codegen.mts`:
-  - [ ] Load env with `@next/env`'s `loadEnvConfig` (the `playwright.config.ts` trick) so `PIPELEX_API_KEY` / `PIPELEX_BASE_URL` come from `.env.local`.
-  - [ ] Construct `new PipelexApiClient()` bare — **not** via `@/lib/pipelexClient`; the `@/` alias does not exist outside Next (D2).
-  - [ ] Discover methods: every directory under `methods/`. Closure = every `**/*.mthds` inside it, sent as `files: [{ content, source }]` with `source` the repo-relative path so validation errors point at real files.
-  - [ ] Call `codegen({ files, kind: "types", target: "ts-zod" })`. **Do not send `pipe_ref`** — `kind: "types"` rejects it with a 422 (D7).
-  - [ ] On `is_valid: false`: print each `validation_errors[]` entry with its file, exit 1.
-  - [ ] On a thrown `ApiResponseError` 403/404: print the actionable message — this base URL does not serve `/v1/codegen`; point `PIPELEX_BASE_URL` at `https://api-dev.pipelex.com`.
-  - [ ] **Self-verify before writing**: `runCodegenCheck({ lockContent: result.lock, files: result.artifacts })` must report `isCurrent`. (`GeneratedArtifact` and `CodegenTreeFile` are structurally identical — no mapping.) Abort the write if it does not.
-  - [ ] Write each artifact at `src/generated/<method>/<path>` and the lock as `<lock_filename>`, **byte-for-byte verbatim**. Write-if-changed only.
-  - [ ] Remove stamped files that dropped out of the artifact set — **only** files matching `isStampableArtifactPath`, so `sources.json` is never touched (D1).
-  - [ ] Write `sources.json` beside each lock: repo-relative path + SHA-256 of every source `.mthds` in the closure (D3).
-  - [ ] Log per method: short `crate_fingerprint`, `engine_version`, and whether anything changed — a no-op run must say so.
-- [ ] `"codegen": "node --experimental-strip-types scripts/codegen.mts"` in `package.json` scripts.
-- [ ] `make codegen` target wrapping `npm run codegen`, with a `##` help line.
-- [ ] **Exclusions (D4)** — these must land in the same commit as the first generated tree, or the pre-commit hook will rewrite the artifacts and break every stamp:
-  - [ ] `.prettierignore` gains `src/generated/`.
-  - [ ] `eslint.config.mjs` gains `src/generated/**` to its ignores.
-  - [ ] lint-staged's ESLint entry gains `--no-warn-ignored`.
-- [ ] `.gitattributes` with `src/generated/** -text` — diff hygiene on a committed generated tree (not load-bearing for the verdict; the SDK normalizes line endings).
-- [ ] Run `npm run codegen` against api-dev; commit the three generated trees.
-- [ ] `make all` green **with the trees committed** — `tsc` now covers them (D4), so this is where zod-version incompatibility would surface.
-- [ ] Re-run `npm run codegen` immediately: it must report no changes (proves write-if-changed).
+- [x] `tsconfig.scripts.json` — thin `extends` of the base config scoped to `scripts/**`, with `"module": "nodenext"` / `"moduleResolution": "nodenext"` and `"types": ["node"]`. Mirror `tsconfig.e2e.json`'s structure. Add `scripts` to the base config's `exclude` so Next's build never type-checks Node-flavored files.
+- [x] Add `"typecheck:scripts": "tsc -p tsconfig.scripts.json --noEmit"` to `package.json`, and wire it into the `typecheck` Make target beside `typecheck:e2e`.
+- [x] `scripts/codegen.mts`:
+  - [x] Load env with `@next/env`'s `loadEnvConfig` (the `playwright.config.ts` trick) so `PIPELEX_API_KEY` / `PIPELEX_BASE_URL` come from `.env.local`. → **`@next/env` is CommonJS**, so the named import `playwright.config.ts` uses does not survive native ESM (`SyntaxError: Named export 'loadEnvConfig' not found`). Playwright transpiles its config to CJS first; this script does not. Takes the default export and destructures, with a comment saying why it differs.
+  - [x] Construct `new PipelexApiClient()` bare — **not** via `@/lib/pipelexClient`; the `@/` alias does not exist outside Next (D2).
+  - [x] Discover methods: every directory under `methods/`. Closure = every `**/*.mthds` inside it, sent as `files: [{ content, source }]` with `source` the repo-relative path so validation errors point at real files.
+  - [x] Call `codegen({ files, kind: "types", target: "ts-zod" })`. **Do not send `pipe_ref`** — `kind: "types"` rejects it with a 422 (D7).
+  - [x] On `is_valid: false`: print each `validation_errors[]` entry with its file, exit 1.
+  - [x] On a thrown `ApiResponseError` 403/404: print the actionable message — this base URL does not serve `/v1/codegen`; point `PIPELEX_BASE_URL` at `https://api-dev.pipelex.com`.
+  - [x] **Self-verify before writing**: `runCodegenCheck({ lockContent: result.lock, files: result.artifacts })` must report `isCurrent`. (`GeneratedArtifact` and `CodegenTreeFile` are structurally identical — no mapping.) Abort the write if it does not.
+  - [x] Write each artifact at `src/generated/<method>/<path>` and the lock as `<lock_filename>`, **byte-for-byte verbatim**. Write-if-changed only.
+  - [x] Remove stamped files that dropped out of the artifact set — **only** files matching `isStampableArtifactPath`, so `sources.json` is never touched (D1).
+  - [x] Write `sources.json` beside each lock: repo-relative path + SHA-256 of every source `.mthds` in the closure (D3).
+  - [x] Log per method: short `crate_fingerprint`, `engine_version`, and whether anything changed — a no-op run must say so.
+- [x] `"codegen": "node --experimental-strip-types scripts/codegen.mts"` in `package.json` scripts.
+- [x] `make codegen` target wrapping `npm run codegen`, with a `##` help line.
+- [x] **Exclusions (D4)** — these must land in the same commit as the first generated tree, or the pre-commit hook will rewrite the artifacts and break every stamp:
+  - [x] `.prettierignore` gains `src/generated/`. → **verified load-bearing**: `prettier --check --ignore-path /dev/null 'src/generated/**/*.ts'` flags two of the three binders, so without this entry the commit hook really would break those stamps.
+  - [x] `eslint.config.mjs` gains `src/generated/**` to its ignores. → also added `scripts/**/*.mts` to the existing `no-console` carve-out, since the generator's output channel _is_ the terminal.
+  - [x] lint-staged's ESLint entry gains `--no-warn-ignored`.
+- [x] `.gitattributes` with `src/generated/** -text` — diff hygiene on a committed generated tree (not load-bearing for the verdict; the SDK normalizes line endings).
+- [x] Run `npm run codegen` against api-dev; commit the three generated trees.
+- [x] `make all` green **with the trees committed** — `tsc` now covers them (D4), so this is where zod-version incompatibility would surface. → zod 4.4.3 accepts the emitter's output with no complaint; `tsc --listFiles` confirms all six generated `.ts` files are in the program.
+- [x] Re-run `npm run codegen` immediately: it must report no changes (proves write-if-changed).
 
 > ### ⛔ CHECKPOINT 2 — STOP HERE
 >

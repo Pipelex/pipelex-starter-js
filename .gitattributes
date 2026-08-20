@@ -1,0 +1,5 @@
+# Generated codegen artifacts are committed and hashed against their stamps.
+# `-text` disables git's newline translation so a checkout on any platform holds
+# the bytes the API emitted. Diff hygiene rather than correctness — the SDK's
+# offline check normalizes line endings before hashing — but worth pinning.
+src/generated/** -text
