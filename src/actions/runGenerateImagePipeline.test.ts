@@ -21,12 +21,7 @@ import {
 } from "./runGenerateImagePipeline";
 
 const IMAGE_CONTENT = { url: "https://cdn.pipelex.com/x.png", mime_type: "image/png" };
-const PARSED = {
-  url: "https://cdn.pipelex.com/x.png",
-  publicUrl: null,
-  mimeType: "image/png",
-  caption: null,
-};
+const PARSED = { url: "https://cdn.pipelex.com/x.png", mime_type: "image/png" };
 
 // Blocking execute returns a PipelexExecuteResult with the resolved `main_stuff`.
 const BLOCKING_RESPONSE = { pipeline_run_id: "run-1", main_stuff: IMAGE_CONTENT };
@@ -117,6 +112,6 @@ describe("pollGenerateImageRun", () => {
     const result = await pollGenerateImageRun("run-1");
     expect(result.ok).toBe(true);
     if (!result.ok || result.state !== "completed") return;
-    expect(result.output.publicUrl).toContain("https://s3");
+    expect(result.output.public_url).toContain("https://s3");
   });
 });

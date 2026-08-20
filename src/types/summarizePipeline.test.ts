@@ -8,26 +8,20 @@ function mainStuff(content: unknown): RunResults {
 }
 
 describe("parseDocumentSummary", () => {
-  it("extracts a DocumentSummary from main_stuff (snake→camel)", () => {
-    const result = parseDocumentSummary(
-      mainStuff({
-        title: "Q1 Revenue Report",
-        doc_type: "report",
-        key_points: ["Revenue up 12%", "Costs flat"],
-      }),
-    );
-    expect(result).toEqual({
+  it("extracts a DocumentSummary from main_stuff, keeping the bundle's field names", () => {
+    const summary = {
       title: "Q1 Revenue Report",
-      docType: "report",
-      keyPoints: ["Revenue up 12%", "Costs flat"],
-    });
+      doc_type: "report",
+      key_points: ["Revenue up 12%", "Costs flat"],
+    };
+    expect(parseDocumentSummary(mainStuff(summary))).toEqual(summary);
   });
 
   it("accepts an empty key_points list", () => {
     const result = parseDocumentSummary(
       mainStuff({ title: "Memo", doc_type: "memo", key_points: [] }),
     );
-    expect(result.keyPoints).toEqual([]);
+    expect(result.key_points).toEqual([]);
   });
 
   it("throws when main_stuff is not the expected object (a list output / scalar)", () => {
@@ -39,12 +33,12 @@ describe("parseDocumentSummary", () => {
     expect(() => parseDocumentSummary(mainStuff({ foo: "bar" }))).toThrow();
   });
 
-  it("throws when a field has the wrong type", () => {
+  it("names the offending field in the error, so a bundle edit is diagnosable", () => {
     expect(() =>
       parseDocumentSummary(mainStuff({ title: 42, doc_type: "report", key_points: [] })),
-    ).toThrow();
+    ).toThrow(/title/);
     expect(() =>
       parseDocumentSummary(mainStuff({ title: "T", doc_type: "report", key_points: ["ok", 7] })),
-    ).toThrow();
+    ).toThrow(/key_points/);
   });
 });

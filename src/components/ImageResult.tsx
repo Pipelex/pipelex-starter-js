@@ -5,10 +5,10 @@ interface ImageResultProps {
 }
 
 export function ImageResult({ image }: ImageResultProps) {
-  // Prefer publicUrl for display; fall back to url. Both a remote/storage URL
+  // Prefer public_url for display; fall back to url. Both a remote/storage URL
   // and a base64 data URL render in a plain <img> — we use <img> rather than
   // next/image because the image host is dynamic and unknown ahead of time.
-  const src = image.publicUrl ?? image.url;
+  const src = image.public_url ?? image.url;
 
   return (
     <section

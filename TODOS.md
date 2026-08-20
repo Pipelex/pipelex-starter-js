@@ -4,7 +4,7 @@
 
 **Design authority:** [`wip/codegen/design.md`](wip/codegen/design.md). Read it before starting — this file is the execution tracker, that one is the _why_. Decisions are referenced below as **D1**–**D7**; if execution contradicts a decision, update the design doc rather than silently diverging.
 
-**Status:** Phase 0 (the upstream SDK helper) shipped as `@pipelex/sdk` 0.13.0. Phases 1–3 are done — the repo is on `@pipelex/sdk` 0.13.0 with `zod` `^4.4.3`, `npm run codegen` writes the three committed trees under `src/generated/`, and `make check` now fails on a drifted or stale tree via `npm run codegen:check`. Phases 4–5 are **not started**. Written 2026-08-20.
+**Status:** Phase 0 (the upstream SDK helper) shipped as `@pipelex/sdk` 0.13.0. Phases 1–4 are done — the repo is on `@pipelex/sdk` 0.13.0 with `zod` `^4.4.3`, `npm run codegen` writes the three committed trees under `src/generated/`, `make check` fails on a drifted or stale tree via `npm run codegen:check`, and all three narrowers are now thin adapters over the generated binders (`src/lib/runOutput.ts` is gone). Phase 5 (documentation) is **not started**. Written 2026-08-20.
 
 **Check the boxes as you go.** This document is written for a cold start in a fresh session.
 
@@ -129,19 +129,23 @@ Implements the rest of **D3**.
 
 Implements **D6**. This is the behaviour-changing phase.
 
-- [ ] `src/types/extractEntitiesPipeline.ts` — body becomes `parseExtractedEntities(results.main_stuff)` inside `try/catch`, translating `ZodError` → `BadPipelineOutputError(err.message)`. Re-export the generated `ExtractedEntities` type. Field names are unchanged (`people`/`orgs`/`dates`), so this one is a drop-in.
-- [ ] `src/types/summarizePipeline.ts` — same shape, re-exporting the generated `DocumentSummary`. **Field rename churn**: `docType` → `doc_type`, `keyPoints` → `key_points`.
-- [ ] `src/types/generateImagePipeline.ts` — parse with the generated `parseImage` **first**, then keep the hand-written web-renderable-scheme validation of `public_url ?? url` (semantics the concept does not declare, so it stays — D6). Decide and record how `undefined` vs `null` is reconciled (see primer fact 1): either re-export the generated `Image` and let components use `??`, or keep a thin local shape. **Prefer the generated type**; `??` handles both.
-- [ ] Update components for the new field names:
-  - [ ] `src/components/PdfSummaryResult.tsx` (`summary.docType` → `summary.doc_type`, `summary.keyPoints` → `summary.key_points`).
-  - [ ] `src/components/ImageResult.tsx` (`image.publicUrl` → `image.public_url`; `??` already handles the undefined).
-- [ ] **Retire `src/lib/runOutput.ts`** and `runOutput.test.ts` — `Schema.parse` subsumes `findOutputContent`'s predicate and non-object guard, with better messages. No backward compatibility (D6).
-- [ ] Update the affected tests. Fixtures barely change (they already build wire-shaped `main_stuff`); assertions on error _messages_ move to zod's wording:
-  - [ ] `src/types/summarizePipeline.test.ts`, `src/types/generateImagePipeline.test.ts`, `src/types/extractEntitiesPipeline.test.ts`
-  - [ ] `src/components/PdfSummaryResult.test.tsx`, `src/components/ImageResult.test.tsx`, `src/components/PdfForm.test.tsx`, `src/components/ImageForm.test.tsx`
-  - [ ] `src/actions/runSummarizePdfPipeline.test.ts`, `src/actions/runGenerateImagePipeline.test.ts`
-- [ ] `make all` green.
-- [ ] `make test-e2e` — **required**, not optional: this phase changes the SDK call path's output handling, which only e2e exercises live. Costs an LLM call per spec; the target prompts first.
+**The fact this phase turned on, found before writing any code:** the ts-zod projection **cannot parse the runtime's own wire payload**. A non-required concept field is projected `.optional()`, which in zod means `| undefined` and rejects `null` — but the runtime serializes an unset optional field as an explicit `null` (`working_memory.py`'s `dump_for_transport` is `model_dump(serialize_as_any=True)`, no `exclude_none`). Captured live from api-dev, run `run_517b9004`, the `main_stuff` of a `PipeImgGen` run carries `source_negative_prompt: null`, `caption: null`, `filename: null`, and `ImageSchema.parse` rejects it with five issues. So `parseImage(main_stuff)` would have thrown on **every real image run**. Filed upstream as [`../wip/inbox/2026-08-20-pipelex-ts-zod-optional-rejects-wire-null.md`](../wip/inbox/2026-08-20-pipelex-ts-zod-optional-rejects-wire-null.md); worked around locally by `dropWireNulls`.
+
+- [x] `src/lib/wireOutput.ts` — **not in the original plan**, the successor to `runOutput.ts` in the same slot. Three exports, no shape-checking of its own: `dropWireNulls` (recursively strips null-valued _keys_, leaving null list _items_ alone — only object keys are optional on the wire), `wireOutput(results)` (read `main_stuff`, normalize, one step), and `describeSchemaFailure(err, typeName)` (a `ZodError`'s own `.message` is a JSON dump of its issue array; `z.prettifyError` turns it into the field-by-field list `<ErrorDisplay>` shows under Details).
+- [x] `src/types/extractEntitiesPipeline.ts` — body is `parseExtractedEntities(wireOutput(results))` in a `try/catch` translating `ZodError` → `BadPipelineOutputError`. Re-exports the generated `ExtractedEntities`. Field names unchanged, so a drop-in as predicted.
+- [x] `src/types/summarizePipeline.ts` — same shape, re-exporting the generated `DocumentSummary`. **Field rename churn**: `docType` → `doc_type`, `keyPoints` → `key_points`.
+- [x] `src/types/generateImagePipeline.ts` — parses with the generated `parseImage` first, then keeps the web-renderable-scheme validation of `public_url ?? url` (semantics the concept does not declare — D6). `GeneratedImage` is now an **alias** of the generated `Image`, not a hand-written shape; aliased rather than re-exported as `Image` because that name is a DOM global in a `.tsx` file.
+- [x] Update components for the new field names:
+  - [x] `src/components/PdfSummaryResult.tsx` (`summary.docType` → `summary.doc_type`, `summary.keyPoints` → `summary.key_points`).
+  - [x] `src/components/ImageResult.tsx` (`image.publicUrl` → `image.public_url`; `??` already handles the undefined).
+- [x] **Retire `src/lib/runOutput.ts`** and `runOutput.test.ts` — `Schema.parse` subsumes `findOutputContent`'s predicate and non-object guard, with better messages. No backward compatibility (D6).
+- [x] Update the affected tests. Fixtures barely changed (they already built wire-shaped `main_stuff`); the shape-mismatch assertions got **stricter**, not looser — several now assert zod names the offending field (`toThrow(/key_points/)`) where they previously only asserted that something threw.
+  - [x] `src/types/summarizePipeline.test.ts`, `src/types/generateImagePipeline.test.ts`, `src/types/extractEntitiesPipeline.test.ts` — the image suite gained the **verbatim live payload** as a case, so the null-rejection regression is pinned by a fixture copied from a real run rather than an invented one.
+  - [x] `src/components/PdfSummaryResult.test.tsx`, `src/components/ImageResult.test.tsx`, `src/components/PdfForm.test.tsx`, `src/components/ImageForm.test.tsx`
+  - [x] `src/actions/runSummarizePdfPipeline.test.ts`, `src/actions/runGenerateImagePipeline.test.ts`
+  - [x] New `src/lib/wireOutput.test.ts` replaces `runOutput.test.ts`, including the case that states the whole reason the helper exists: the same payload is `safeParse` false before `dropWireNulls` and true after.
+- [x] `make all` green. → 25 files / 204 tests.
+- [x] `make test-e2e` — **required**, not optional. → 4 passed, 1 skipped (the offline `error-display` spec, which correctly skips while the API is reachable). The durable image spec is the one that would have failed without `dropWireNulls`.
 
 > ### ⛔ CHECKPOINT 4 — STOP HERE
 >
@@ -154,7 +158,8 @@ Implements **D6**. This is the behaviour-changing phase.
 - [ ] `README.md` — a "Generated types" section: the commands, the trust chain in two sentences, the api-dev caveat, and "after editing a `.mthds` file, run `npm run codegen`".
 - [ ] `CLAUDE.md` — this is the big one, and it is **not** additive:
   - [ ] Project-structure tree gains `src/generated/` and `scripts/`.
-  - [ ] Rewrite the narrower-contract sections that describe `findOutputContent` / `runOutput.ts` — that file no longer exists.
+  - [ ] Rewrite the narrower-contract sections that describe `findOutputContent` / `runOutput.ts` — that file no longer exists; `src/lib/wireOutput.ts` took its slot. Same for `README.md:67` and `README.md:87`, which still describe the old `main_stuff ?? pipe_output` search.
+  - [ ] Document `dropWireNulls` and **why** it exists (the `.optional()`-vs-`null` mismatch), with the pointer to the inbox item so a future reader knows it is a workaround with an expiry, not a design.
   - [ ] The "To add a new pipeline" numbered list gains the codegen step and loses the hand-written-narrower step.
   - [ ] Workflow rule: regenerate after editing `methods/`; `make check` now fails on stale generated types.
   - [ ] Gotcha: `src/generated/` is excluded from Prettier/ESLint on purpose — do not "fix" that; a reformat breaks every stamp.
@@ -168,7 +173,7 @@ Implements **D6**. This is the behaviour-changing phase.
 
 ## Decisions to make during execution (record the outcome here)
 
-- **`undefined` vs `null` on optional generated fields** (Phase 4) — recommend re-exporting the generated type and using `??` at the render sites, rather than a normalizing adapter that reintroduces a hand-written shape.
+- **`undefined` vs `null` on optional generated fields** (Phase 4) — **decided: both, and they are two separate questions.** On the _output_ side the recommendation held: the generated type is re-exported as-is and the render sites use `??`, so no hand-written shape came back. On the _input_ side it turned out not to be a style choice at all — the wire really does carry `null`, and `.optional()` really does reject it, so a normalization step was mandatory for the code to work. `dropWireNulls` is that step, and it normalizes _values_, never names: it re-declares no field, so it is not the duplicated surface D6 removes. It is deletable the day the emitter emits `.nullish()`.
 - **Whether `codegen:verify` runs in CI** (Phase 3) — **decided: no.** It stays a manual/pre-release target, out of `make all`, for the same reason `test-e2e` is: it needs a key and a network. `make check` gets the offline check, which is the one that can run anywhere.
 - **Engine-bump churn policy** (Phase 3) — **decided: an engine move is a note, not a failure.** `codegen:verify` gates on `crate_fingerprint` (the semantic signal) and only _reports_ an `engine_version` difference, saying that regenerating will restamp the tree with no semantic change. That keeps a pipelex release from reddening the gate and leaves the whole-tree restamp to a deliberate "bump the engine" commit.
 

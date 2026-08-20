@@ -1,19 +1,16 @@
 import type { RunResults } from "@pipelex/sdk";
-import { findOutputContent } from "@/lib/runOutput";
+import { parseImage } from "@/generated/generate-image/binder";
+import type { Image } from "@/generated/generate-image/types";
+import { describeSchemaFailure, wireOutput } from "@/lib/wireOutput";
 import { BadImageOutputError } from "@/types/pipelineError";
 
-export type GeneratedImage = {
-  /** Image URL — a remote/storage URL or a base64 data URL; renders either way. */
-  url: string;
-  /** Public URL when the API exposes one; prefer it for display. */
-  publicUrl: string | null;
-  mimeType: string | null;
-  caption: string | null;
-};
-
-function optionalString(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
+/**
+ * The generated `Image` concept, under the name the app already uses. Aliased
+ * rather than re-exported as `Image` because that name is a DOM global in a
+ * `.tsx` file. Optional fields are `| undefined` (zod's `.optional()`), not
+ * `| null` — `??` at the render sites covers both.
+ */
+export type GeneratedImage = Image;
 
 /** URL schemes a browser can render directly in an `<img>` element. */
 const WEB_RENDERABLE_SCHEMES = ["http:", "https:", "data:"];
@@ -28,33 +25,29 @@ function urlScheme(value: string): string | null {
 }
 
 /**
- * Narrow a run's output into our GeneratedImage shape. Takes `RunResults` and
- * reads the main output via `findOutputContent`. Throws `BadImageOutputError`
- * when no entry carries a usable image URL — distinct from
- * `BadPipelineOutputError` so the error UI can speak to image generation
- * specifically.
+ * Narrow a run's output into the generated `Image` shape, then apply the one
+ * rule the concept itself does not declare: the URL we are about to render has
+ * to be one a browser can load.
  *
- * Also rejects an image URL whose scheme a browser can't render (`file://`,
- * `pipelex-storage://`, …): `<ImageResult>` would otherwise drop it straight
+ * Throws `BadImageOutputError` — distinct from `BadPipelineOutputError` so the
+ * error UI can speak to image generation specifically — both when the payload
+ * fails the schema and when it carries a URL with a non-web scheme (`file://`,
+ * `pipelex-storage://`, …), which `<ImageResult>` would otherwise drop straight
  * into an `<img>` and produce a silently-broken image. On the hosted durable
  * path the runtime returns both a non-web `url` (`pipelex-storage://…`) and a
  * web `public_url` (a signed S3 URL); we validate the one that will actually
- * render — `publicUrl ?? url` — so a usable `url` can't save a broken
- * `publicUrl` and vice-versa.
+ * render — `public_url ?? url` — so a usable `url` can't save a broken
+ * `public_url` and vice-versa.
  */
 export function parseGeneratedImage(results: RunResults): GeneratedImage {
-  const candidate = findOutputContent(
-    results,
-    (c) => typeof c.url === "string" && (c.url as string).length > 0,
-  );
-  if (!candidate) {
-    throw new BadImageOutputError("Could not find a generated image with a URL in the run output");
+  let image: Image;
+  try {
+    image = parseImage(wireOutput(results));
+  } catch (err) {
+    throw new BadImageOutputError(describeSchemaFailure(err, "Image"));
   }
 
-  const url = candidate.url as string;
-  const publicUrl = optionalString(candidate.public_url);
-
-  const displayUrl = publicUrl ?? url;
+  const displayUrl = image.public_url ?? image.url;
   const scheme = urlScheme(displayUrl);
   if (scheme === null || !WEB_RENDERABLE_SCHEMES.includes(scheme)) {
     throw new BadImageOutputError(
@@ -65,10 +58,5 @@ export function parseGeneratedImage(results: RunResults): GeneratedImage {
     );
   }
 
-  return {
-    url,
-    publicUrl,
-    mimeType: optionalString(candidate.mime_type),
-    caption: optionalString(candidate.caption),
-  };
+  return image;
 }
