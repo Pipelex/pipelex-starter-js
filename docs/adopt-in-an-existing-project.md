@@ -8,9 +8,10 @@ Only one seam is Next.js-specific (env loading — step 3); everything else is f
 
 ```bash
 npm install @pipelex/sdk zod
+npm install --save-dev @types/node   # skip if your app already has it
 ```
 
-Both are **runtime** dependencies: the SDK makes the API calls, and the generated binders validate run output with zod at request time.
+`@pipelex/sdk` and `zod` are **runtime** dependencies: the SDK makes the API calls, and the generated binders validate run output with zod at request time. `@types/node` is dev-only, and the codegen kit needs it: `tsconfig.scripts.json` sets `"types": ["node"]` and the scripts import `node:` built-ins, so without it the script typecheck fails with TS2688. A Next.js app already ships it; a browser-only app typically does not.
 
 ## 2. Copy the codegen kit
 
@@ -42,9 +43,11 @@ These pieces of `src/lib/` are the pattern — copy and adapt them:
 - `blockingRun.ts` / `durableRun.ts` — the two execution paths (`execute` vs `start` + poll), each returning `{ ok: true, ... } | { ok: false, error: PipelineError }` instead of throwing across a serialization boundary.
 - `wireOutput.ts` — reads the run's `main_stuff` and normalizes wire `null`s for the generated schemas (see [`docs/codegen.md`](codegen.md) for why that step exists and why it is schema-guided).
 - `errors.ts` — `classifyPipelineError`, which turns SDK error classes into a tagged, serializable error model.
+- `serverEnv.ts` — `readClassifyEnv()`, the single `process.env` read both run helpers share, so the two execution paths can't drift on how classification sees the environment.
+- `usageReport.ts` — turns a run's `tokens_usages` into the render-ready cost report both helpers return; it is part of their public return type, not an optional extra.
 - `loadBundle.ts` — `fs.readFile` of the `.mthds` bundles; bundles ship as files, never as inlined TOML strings.
 
-The `src/types/` convention comes with them: one adapter per method, which re-exports the generated type and wraps the generated binder in a `parseXxx(results)` that translates a `ZodError` into your error model. **Never hand-declare an output shape** — the bundle declares it and codegen projects it.
+The `src/types/` convention comes with them: `pipelineError.ts` — the tagged `BadPipelineOutputError` / `BadImageOutputError` classes that `errors.ts` `instanceof`-matches on, so it is part of the module graph, not an optional extra — plus one adapter per method, which re-exports the generated type and wraps the generated binder in a `parseXxx(results)` that translates a `ZodError` into your error model. **Never hand-declare an output shape** — the bundle declares it and codegen projects it.
 
 `src/hooks/useRun.ts` (the blocking|durable client state machine) is worth taking only if your host app is React; the server pattern above does not depend on it. Likewise `src/actions/` is Next.js Server Actions plumbing — in another stack the equivalent is whatever server endpoint calls the two run helpers.
 
