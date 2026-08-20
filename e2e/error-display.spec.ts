@@ -57,10 +57,12 @@ test.describe("offline-API error display", () => {
     const apiUrl = (process.env.PIPELEX_BASE_URL ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
     await expect(alert).toContainText(apiUrl);
 
-    // The recovery hint is branch-specific: with a PIPELEX_BASE_URL override
-    // set, the copy steers to verifying that override; without one, it steers
-    // to the network (the user never set a URL to check).
-    if (process.env.PIPELEX_BASE_URL !== undefined) {
+    // The recovery hint is branch-specific: with a *customized* PIPELEX_BASE_URL
+    // the copy steers to verifying it; on the default hosted URL it steers to
+    // the network, since there is nothing in the config to fix. Setting the
+    // variable to the SDK default (what `.env.example` does) counts as default,
+    // so compare values rather than testing whether the variable exists.
+    if (apiUrl !== DEFAULT_API_BASE_URL.replace(/\/+$/, "")) {
       await expect(alert).toContainText("Verify PIPELEX_BASE_URL in .env.local");
     } else {
       await expect(alert).toContainText("Check your network connection");

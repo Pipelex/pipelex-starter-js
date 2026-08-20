@@ -9,6 +9,7 @@ import {
   ApiResponseError,
   ApiUnreachableError,
   ClientAuthenticationError,
+  DEFAULT_API_BASE_URL,
   InputPreparationError,
   PipelineExecuteTimeoutError,
   RejectedAssetError,
@@ -129,17 +130,33 @@ export function classifyPipelineError(
   return classifyUnknown(err);
 }
 
+/**
+ * True when PIPELEX_BASE_URL names something other than the SDK's own default.
+ *
+ * "The variable is set" is not the same question: the quick start is
+ * `cp .env.example .env.local`, and that file pins the default hosted URL
+ * explicitly, so the variable is set on the ordinary path without the user ever
+ * choosing a URL. Only a genuinely customized value makes the URL a suspect —
+ * telling someone to replace a correct value with itself is worse than saying
+ * nothing. Trailing slashes are normalized away, the same way the e2e specs
+ * compare this value.
+ */
+function isCustomApiUrl(apiUrl: string | undefined): boolean {
+  if (apiUrl === undefined) return false;
+  const normalize = (url: string) => url.trim().replace(/\/+$/, "");
+  return normalize(apiUrl) !== normalize(DEFAULT_API_BASE_URL);
+}
+
 function classifyUnreachable(err: ApiUnreachableError, env: ClassifyEnv): PipelineError {
   const url = err.apiUrl || env.apiUrl || "(unknown)";
   const codeSuffix = err.code ? ` (${err.code})` : "";
   const baseDetails = `${err.name}: ${err.message}${err.cause instanceof Error ? `\nCaused by: ${err.cause.message}` : ""}`;
 
-  // Split on whether PIPELEX_BASE_URL was explicitly set (`env.apiUrl` is that
-  // variable, undefined when unset). With an override in play, the URL is the
-  // first suspect; without one, telling the user to check a variable they never
-  // set would only confuse — the default hosted URL didn't answer, so point at
-  // the network first.
-  if (env.apiUrl !== undefined) {
+  // Split on whether PIPELEX_BASE_URL was *customized*, not merely set — see
+  // `isCustomApiUrl`. With a custom URL in play it is the first suspect; on the
+  // default hosted URL there is nothing for the user to fix in their config, so
+  // point at the network instead.
+  if (isCustomApiUrl(env.apiUrl)) {
     return {
       kind: "api_unreachable",
       title: "Pipelex API not reachable",

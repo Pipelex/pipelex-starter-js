@@ -68,6 +68,37 @@ describe("classifyPipelineError — ApiUnreachableError", () => {
     expect(result.hint?.code).toContain("https://api.pipelex.com");
   });
 
+  // The quick start is `cp .env.example .env.local`, and that file pins the
+  // default hosted URL explicitly — so PIPELEX_BASE_URL being *set* is the
+  // ordinary case, not a signal that the user chose this URL. Both of these
+  // must land on the network branch.
+  it("steers to the network when PIPELEX_BASE_URL is set to the SDK default", () => {
+    const err = new ApiUnreachableError(
+      "Could not reach Pipelex API at https://api.pipelex.com (ENOTFOUND)",
+      "https://api.pipelex.com",
+      "ENOTFOUND",
+    );
+    const result = classifyPipelineError(err, CLOUD_ENV);
+    expect(result.kind).toBe("api_unreachable");
+    expect(result.message).toMatch(/network/i);
+    expect(result.message).not.toMatch(/PIPELEX_BASE_URL is set/);
+    expect(result.hint?.summary).toMatch(/network/i);
+    expect(result.hint?.summary).not.toMatch(/Verify PIPELEX_BASE_URL/);
+  });
+
+  it("ignores a trailing slash when comparing against the SDK default", () => {
+    const err = new ApiUnreachableError(
+      "Could not reach Pipelex API at https://api.pipelex.com (ENOTFOUND)",
+      "https://api.pipelex.com",
+      "ENOTFOUND",
+    );
+    const result = classifyPipelineError(err, {
+      apiUrl: "https://api.pipelex.com/",
+      hasApiKey: true,
+    });
+    expect(result.hint?.summary).toMatch(/network/i);
+  });
+
   it("handles missing error code", () => {
     const err = new ApiUnreachableError(
       "Could not reach Pipelex API at https://api.unreachable.example (network error)",
