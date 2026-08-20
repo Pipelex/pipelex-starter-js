@@ -1,6 +1,6 @@
 # Codegen in the starter — generated types from `.mthds` bundles
 
-Status: **design**; Phase 0 (the upstream SDK helper) is **done and released**. Owner: Louis. Written 2026-08-19, updated 2026-08-20 against `@pipelex/sdk` 0.13.0.
+Status: **implemented** — every phase below shipped, against `@pipelex/sdk` 0.13.0 and engine `0.47.0`. Owner: Louis. Written 2026-08-19, implemented 2026-08-20. What execution actually found, including the one discovery that changed a decision, is folded into the phases and the "What execution changed" section at the end; the design body above them is left as written so the reasoning stays legible.
 
 ## Why
 
@@ -41,6 +41,8 @@ src/generated/                        # committed, generated, never hand-edited
 scripts/
   codegen.mts                         # the generator (npm run codegen)
   codegen-check.mts                   # the offline check (npm run codegen:check)
+  codegen-verify.mts                  # the keyed semantic gate (npm run codegen:verify)
+  codegenShared.mts                   # paths, walk, sha256, discoverMethods, the sidecar
 tsconfig.scripts.json                 # type-checks scripts/, the tsconfig.e2e.json pattern
 ```
 
@@ -111,24 +113,25 @@ The ts-zod emitter targets **Prettier's default** config (80-column width, doubl
 The `parseXxx(results: RunResults)` contract survives untouched — actions, `useRun`, components, and tests keep their call sites — but each narrower's body becomes: hand `results.main_stuff` to the generated binder, and translate a thrown `ZodError` into the template's tagged error model (`BadPipelineOutputError` / `BadImageOutputError`), because the tagged classes are what `classifyPipelineError` and `<ErrorDisplay>` speak. The zod error message goes into the tagged error verbatim — a strict upgrade over today's hand-rolled predicates, since zod names the exact failing field and expectation.
 
 ```ts
-// src/types/extractEntitiesPipeline.ts — after
+// src/types/extractEntitiesPipeline.ts — as shipped
 import type { RunResults } from "@pipelex/sdk";
-import { ZodError } from "zod";
 import { parseExtractedEntities } from "@/generated/extract-entities/binder";
 import type { ExtractedEntities } from "@/generated/extract-entities/types";
+import { describeSchemaFailure, wireOutput } from "@/lib/wireOutput";
 import { BadPipelineOutputError } from "@/types/pipelineError";
 
 export type { ExtractedEntities };
 
 export function parseEntities(results: RunResults): ExtractedEntities {
   try {
-    return parseExtractedEntities(results.main_stuff);
+    return parseExtractedEntities(wireOutput(results));
   } catch (err) {
-    if (err instanceof ZodError) throw new BadPipelineOutputError(err.message);
-    throw err;
+    throw new BadPipelineOutputError(describeSchemaFailure(err, "ExtractedEntities"));
   }
 }
 ```
+
+Two departures from the sketch this design started with, both found during execution. The payload goes through `wireOutput(results)` rather than `results.main_stuff` directly, because the projection cannot parse the runtime's own wire payload unmodified — see "What execution changed" below. And the `ZodError` is rendered by `describeSchemaFailure` rather than passed as `err.message`, because a `ZodError`'s `.message` is a JSON dump of its issue array; `z.prettifyError` turns it into the field-by-field list `<ErrorDisplay>` can show a developer.
 
 **Generated types flow to the components with their wire-native snake_case keys.** The emitter keeps keys wire-native deliberately (a blind camelCase remap cannot tell schema keys from data keys), and a hand-maintained camelCase mirror is exactly the duplicated type surface this design removes. So `DocumentSummary` consumers switch from `docType`/`keyPoints` to `doc_type`/`key_points`, and `ExtractedEntities` (already `people`/`orgs`/`dates`) is a drop-in. An adapter keeps hand-written shape only where it _adds semantics_ the concept does not declare: `parseGeneratedImage` keeps its web-renderable-scheme validation of `public_url ?? url`, applied after the generated `Image` schema (the native is materialized into the crate, so it gets a generated schema too) has validated the envelope.
 
@@ -151,30 +154,54 @@ Beyond the planned surface it also landed: `isStampableArtifactPath` / `STAMPABL
 
 Remaining mechanical step, folded into Phase 1: `make use-npm` and bump the range from `^0.12.0` to `^0.13.0`.
 
-### Phase 1 — Generator + committed artifacts
+### Phase 1 — Generator + committed artifacts — **DONE**
 
-Bump `@pipelex/sdk` to `^0.13.0`; add `zod`; write `scripts/codegen.mts` + `tsconfig.scripts.json`; add the `codegen` npm script and `make codegen`; add the Prettier/ESLint/lint-staged exclusions (D4); run it against api-dev and commit the generated trees for the existing methods. `make all` must pass with the trees committed (typecheck now covers them).
+Bumped `@pipelex/sdk` to `^0.13.0` and added `zod` `^4.4.3` (which deduped with the copy `mthds` already pulls in, so the install added no package); wrote `scripts/codegen.mts` + `tsconfig.scripts.json`; added the `codegen` npm script, `make codegen`, and the Prettier/ESLint/lint-staged exclusions; generated against api-dev and committed the three trees.
 
-**Checkpoint 1** — natural handoff: the generated trees exist and are green, but nothing consumes them yet and there is no drift guard. Record here: SDK version used, engine_version/fingerprints generated against, any emitter surprises (formatting, natives, imprecision markers).
+**Checkpoint 1 findings.** Engine `0.47.0`; crate fingerprints `ba867bee932c` (extract-entities), `3e1c36f8a330` (summarize-pdf), `0c688d0aae77` (generate-image). Each method emits exactly `types.ts` + `binder.ts` + `codegen.lock`, and input concepts get schemas too (`Text`, `Document`) — harmless, and all exported, so `noUnusedLocals` is satisfied. zod 4.4.3 accepts the emitter's output with no complaint, and `tsc --listFiles` confirmed every generated file is in the program. The D4 exclusion proved **load-bearing rather than precautionary**: `prettier --check --ignore-path /dev/null 'src/generated/**/*.ts'` flags two of the three binders, so without `.prettierignore` the commit hook really would have broken those stamps. One environment surprise: `@next/env` is CommonJS, so the named import `playwright.config.ts` uses does not survive native ESM — Playwright transpiles its config to CJS first, this script does not, so it takes the default export and destructures.
 
-### Phase 2 — Offline check
+### Phase 2 — Offline check — **DONE**
 
-Write `scripts/codegen-check.mts` (`runCodegenCheck` per tree + `sources.json` comparison) and `scripts/codegen-verify.mts` (the keyed fingerprint gate), add the `codegen:check` / `codegen:verify` npm scripts and their Make wrappers, fold `codegen-check` into `make check`. Add `.gitattributes` with `src/generated/** -text` — not load-bearing for the verdict (the SDK normalizes line endings), but worth it for diff hygiene on a committed generated tree. Verify the failure modes by hand: touch a generated file (hand-edited), delete one (missing), add a stamped stray (orphan), edit a bundle without regenerating (stale sidecar) — each must fail `make check` with an actionable message.
+Landed as designed, plus one module the plan did not have: **`scripts/codegenShared.mts`**. Three scripts now have to agree on the same directories, the same source hashing, and the same sidecar, and any disagreement between them shows up as a _false verdict_ rather than an error — so the paths, the recursive walk, `sha256`, `discoverMethods`, and `readGeneratedTree` (which discharges the SDK's two load-bearing caller obligations in one place) live there. It reads no `process.env` and constructs no client, so the check stays key-free.
 
-### Phase 3 — Adoption in the app
+Every failure mode was exercised by hand and each fails `make check` with the CLI's own wording: `hand-edited: types.ts — Body was edited below the stamp (stamp hash no longer matches).`, `missing: binder.ts — Locked artifact is absent on disk.`, `orphan: stray.ts — Stamped generated file not tracked by the lock — stale; remove or regenerate.`, `stale-source: methods/summarize-pdf/main.mthds — edited since the types were generated`, and both `CodegenLockError` flavours (an unknown `lock_version`, and unparseable TOML) exiting 2. `codegen:verify`'s mismatch path was exercised too: editing one concept description moved `summarize-pdf`'s crate to `8911d874f957` and the gate failed with both fingerprints printed.
 
-Migrate the narrowers onto the binders per D6, switch components to the wire-native field names, retire `runOutput.ts`, update the unit tests (the mocked `main_stuff` fixtures barely change; assertions on error messages move to zod's wording). Run `make test-e2e` — this touches the SDK call path's output handling, exactly what only e2e exercises live.
+**Two whole-tree holes the design did not name**, both invisible from inside a single tree, so the check grew a pass over the pair of directories: a method under `methods/` with **no generated tree at all** (a new method nobody regenerated for), and a `src/generated/<x>/` with **no `methods/<x>/` behind it** — regeneration prunes stale files _within_ a tree but never removes a whole tree. Both exit 1. The sidecar's staleness check likewise covers three cases rather than one: a changed hash, a _new_ bundle the types do not cover, and a recorded source that has vanished.
 
-**Checkpoint 2** — the feature is functionally complete; what remains is documentation. Record here: any narrower that kept semantic validation beyond the schema, and any field-name churn that reached the components.
+### Phase 3 — Adoption in the app — **DONE**
 
-### Phase 4 — Docs
+Migrated per D6, retired `runOutput.ts` and its tests, and switched the components to the wire-native names. `make test-e2e` passed live (the offline `error-display` spec correctly skipped, since the API was reachable).
 
-README (a "Generated types" section: the two commands, the trust chain in two sentences, the api-dev caveat until production serves the route); CLAUDE.md (project structure, the codegen workflow rule — "after editing `methods/`, run `npm run codegen`" — the formatter-exclusion gotcha, and rewriting the narrower-contract sections that currently describe `findOutputContent`); CHANGELOG under `[Unreleased]`. Then archive this design doc's open questions into the checkpoint notes and mark it implemented.
+**Checkpoint 2 findings.**
+
+- **Only one narrower kept semantic validation beyond the schema**, exactly as D6 predicted: `parseGeneratedImage` parses with the generated `parseImage`, then applies the web-renderable-scheme check to `public_url ?? url`. The concept declares a URL; it does not declare that a browser can load one. The other two narrowers are now pure delegation plus error translation.
+- **The field-name churn that reached components** was `summary.docType` → `summary.doc_type` and `summary.keyPoints` → `summary.key_points` in `PdfSummaryResult.tsx`, and `image.publicUrl` → `image.public_url` in `ImageResult.tsx`. `ExtractedEntities` was the predicted drop-in. `GeneratedImage` became an **alias** of the generated `Image` rather than a re-export under that name, because `Image` is a DOM global in a `.tsx` file.
+- **The tests got stricter, not looser.** Several shape-mismatch cases now assert that zod names the offending field (`toThrow(/key_points/)`) where they previously only asserted that something threw.
+- **Two deliberate behaviour changes** fell out of the schema owning the shape: an empty-string `url` now fails the scheme check rather than a separate "no usable URL" branch (a falsy `nonWebUrl` routes it to the generic classification, which is the better guidance anyway), and `public_url: ""` no longer silently falls back to `url` — the narrower and `<ImageResult>` both use `??`, so they agree.
+
+### Phase 4 — Docs — **DONE**
+
+README gained a "Generated types" section; CLAUDE.md gained a "Generated types (`src/generated/`)" section and had its narrower-contract, project-structure, workflow, anti-pattern, and gotcha sections rewritten off `findOutputContent`; the CHANGELOG records the whole feature under `[Unreleased]`, including the breaking snake_case rename.
+
+## What execution changed
+
+One discovery, found before any Phase 3 code was written, and it is the reason `src/lib/wireOutput.ts` exists at all rather than the narrowers calling the binders directly:
+
+**The ts-zod projection cannot parse the runtime's own wire payload.** A non-required concept field is projected `.optional()`, which in zod means `| undefined` and **rejects `null`** — but the runtime serializes an unset optional field as an explicit `null`, because `WorkingMemory.dump_for_transport()` is a `model_dump(serialize_as_any=True)` with no `exclude_none`. The chain of inference was traced through the emitter, `image_content.py`'s pydantic defaults, and the transport dump, and then **confirmed against a live hosted run** rather than trusted: a `PipeImgGen` run's `main_stuff` carries `source_negative_prompt: null`, `caption: null`, and `filename: null`, and `ImageSchema.parse` rejects it. `parseImage(main_stuff)` would have thrown on **every real image run** — the naive adoption would have shipped an example that is broken in production and green in unit tests.
+
+`dropWireNulls` is the local workaround: recursively strip null-valued object _keys_ before the binder sees the payload, leaving null list _items_ alone, since only object keys are optional on the wire. It normalizes **values, never names**, so it re-declares no field and is not the duplicated surface D6 removes, and it is deletable the day the emitter emits `.nullish()`. Known limit: a legitimate `null` inside an opaque `z.unknown()` field is dropped with it. Filed upstream as `../wip/inbox/2026-08-20-pipelex-ts-zod-optional-rejects-wire-null.md`, with the live payload as evidence and both candidate fixes (`.nullish()` in the emitter, or `exclude_none=True` in the transport dump) named.
+
+This also settles the question the design left open for Phase 3 — `undefined` vs `null` on optional generated fields — as **both, and they are two separate questions.** On the _output_ side the recommendation held: the generated type is re-exported as-is and the render sites use `??`, so no hand-written shape came back. On the _input_ side it was never a style choice at all — the wire really does carry `null`, and `.optional()` really does reject it, so normalization was mandatory for the code to work.
 
 ## Open questions
 
 _Resolved by `@pipelex/sdk` 0.13.0: the lock is parsed with `smol-toml` (no new package here, it dedupes with `mthds`), and the helper is named `runCodegenCheck`._
 
+_Resolved during execution:_ **whether `codegen:verify` runs in CI** — no; it stays a manual, pre-release target for the same reason `test-e2e` is, and `make check` gets the offline check, which runs anywhere. **Engine-bump churn policy** — an engine move is a note, not a failure: `codegen:verify` gates on `crate_fingerprint` and only _reports_ an `engine_version` difference, which keeps a pipelex release from reddening the gate and leaves the whole-tree restamp to a deliberate commit.
+
+Still open:
+
+- **The `.optional()`-versus-wire-`null` mismatch** is the one thing here that is a workaround rather than a design. `dropWireNulls` should be deleted, not maintained — the fix belongs in the emitter (or the transport dump). Tracked in the inbox item named above; revisit at the next pipelex release.
 - **`sources.json` upstreaming**: if the staleness sidecar proves its worth, it may belong in the engine's own lock story rather than a starter convention — revisit after it has lived here a while.
 - **Production 403**: when `api.pipelex.com` deploys the crate routes, drop the api-dev caveat from the docs; nothing in the code changes.
 - **`lock_version` upgrade ordering**: an SDK that tolerates a new lock version must ship _before_ the pipelex release that starts writing it. Nothing to do now — but if `make check` ever fails with a version message naming a version this SDK does not know, the fix is bumping `@pipelex/sdk`, not touching the generated tree.

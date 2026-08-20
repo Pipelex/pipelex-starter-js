@@ -5,7 +5,7 @@ A minimal Next.js 16 starter that calls the [Pipelex](https://pipelex.com) API v
 It ships three demo pipelines, presented as tabs:
 
 - **Text entities** (`methods/extract-entities`) — extracts `{ people, orgs, dates }` from pasted text.
-- **PDF summary** (`methods/summarize-pdf`) — uploads a PDF in the browser and returns a structured `{ title, docType, keyPoints }` summary from a cheap OpenAI model.
+- **PDF summary** (`methods/summarize-pdf`) — uploads a PDF in the browser and returns a structured `{ title, doc_type, key_points }` summary from a cheap OpenAI model.
 - **Image generation** (`methods/generate-image`) — turns a text prompt into an image with `gpt-image-1-mini`.
 
 ## Use this template
@@ -52,25 +52,29 @@ Open [http://localhost:4100](http://localhost:4100) and try the three example ta
 ```
 methods/
   extract-entities/main.mthds            # text → { people, orgs, dates }
-  summarize-pdf/main.mthds    # PDF Document → { title, docType, keyPoints }
+  summarize-pdf/main.mthds    # PDF Document → { title, doc_type, key_points }
   generate-image/main.mthds   # text prompt → generated Image
 public/sample-invoice.pdf     # sample PDF, so the PDF example works out of the box
+scripts/                      # npm run codegen / codegen:check / codegen:verify
 src/
   config.ts                   # ExecutionMode + DEFAULT_EXECUTION_MODE
   app/                        # Next.js App Router (layout, page, globals.css)
   actions/                    # 'use server' Server Actions — blocking + start + poll trio per pipeline
+  generated/                  # generated from methods/ — committed, never hand-edited
+    summarize-pdf/            # types.ts (zod schemas) + binder.ts + codegen.lock + sources.json
   lib/
     pipelexClient.ts          # PipelexApiClient singleton
     loadBundle.ts             # reads the .mthds bundles from disk
     blockingRun.ts            # the blocking execute path
     durableRun.ts             # the durable start + poll path
-    runOutput.ts              # main_stuff ?? pipe_output narrowing
+    wireOutput.ts             # reads main_stuff and readies it for a generated binder
     errors.ts                 # classifyPipelineError + PipelineError model
-    fileEncoding.ts           # data-URL validation + Document input envelope
+    fileEncoding.ts           # data-URL MIME + size validation
+    usageReport.ts            # token usage → the render-ready cost report
     clientFile.ts             # browser File → base64 data URL
   hooks/useRun.ts             # unified blocking|durable client state machine
   components/                 # ExampleTabs + per-example form/result + ModeToggle + RunStatus
-  types/                      # concept types + parseXxx(RunResults) narrowers
+  types/                      # thin adapters over src/generated/ — parseXxx(RunResults)
 ```
 
 ## How it works
@@ -84,8 +88,8 @@ The flow, end to end:
 
 1. A form calls the `useRun({ mode, blocking, start, poll })` hook, which dispatches to the right **Server Actions** by mode.
 2. The Server Action reads the `.mthds` bundle from disk and calls the SDK (`execute` for blocking, `start` + `getRunStatus`/`getRunResult` for durable) with the bundle TOML + inputs.
-3. The Pipelex API runs the pipe and returns loosely-typed output (`main_stuff` on the durable path, `pipe_output` on blocking — one `findOutputContent` helper reads both).
-4. A `parseXxx(results)` narrower in `src/types/` validates the output into a typed shape.
+3. The Pipelex API runs the pipe and returns the main output as `main_stuff` — the same resolved field on both paths.
+4. A `parseXxx(results)` narrower in `src/types/` validates it into a typed shape, using a zod schema generated from the method's own `.mthds` bundle (see [Generated types](#generated-types)).
 5. The hook drives the result: a live-status card while running, then the result component, or a classified `PipelineError` shown by `<ErrorDisplay>`.
 
 ## File & image inputs
@@ -98,30 +102,56 @@ Text inputs are plain strings. File inputs (the PDF example) go through one extr
 
 Image **outputs** (the image example) come back as a URL — a storage URL or a base64 data URL — which renders directly in an `<img>`.
 
+## Generated types
+
+The typed shapes this app validates against are **not hand-written** — each one is projected from the `.mthds` bundle that declares it, so the TypeScript and the method cannot drift apart:
+
+```bash
+npm run codegen        # regenerate src/generated/ from methods/ — needs an API key
+npm run codegen:check  # prove the committed trees are current — offline, no key
+```
+
+`npm run codegen` sends each method to the API's `/v1/codegen` route, which returns a `types.ts` (zod schemas plus their inferred TypeScript types), a `binder.ts` (`parseXxx` / `serializeXxx` over those schemas), and a `codegen.lock`. Every artifact carries a stamp and the lock records their hashes, so `npm run codegen:check` re-derives the whole verdict **offline** — no key, no network — and fails if a generated file was edited, deleted, or left behind. Beside each lock, a `sources.json` records a hash of every source `.mthds`, which catches the other kind of staleness: editing a bundle and forgetting to regenerate. `make check` runs that check, so `make all` does too.
+
+A few things worth knowing:
+
+- **The generated trees are committed on purpose.** `git clone && make all` passes with no API key, and the diff of a regeneration is itself a readable summary of what a bundle edit changed.
+- **Never edit a file under `src/generated/`** — the stamp stops matching and `make check` says so. Customize by wrapping instead: `src/types/*.ts` is exactly that wrapper layer, and it is where hand-written semantics belong (`parseGeneratedImage`, for instance, additionally checks that the image URL is one a browser can load).
+- **Field names stay wire-native.** `DocumentSummary` is `{ title, doc_type, key_points }`, not a camelCase mirror — a hand-maintained mirror is the duplication this removes.
+- **`src/generated/` is excluded from Prettier and ESLint** (see `.prettierignore`), because reformatting the files would break their stamps. TypeScript still checks them in full.
+
+**After editing anything under `methods/`, run `npm run codegen`** and commit the result alongside the bundle. `make check` fails until you do.
+
+> **Regeneration needs `PIPELEX_BASE_URL=https://api-dev.pipelex.com` for now.** The `/v1/codegen` route is served by any self-hosted [`pipelex-api`](https://github.com/Pipelex/pipelex-api) runner and by `api-dev.pipelex.com`, but `api.pipelex.com` still answers `403` pending its deploy. It affects regeneration only — `npm run codegen:check` needs no server at all, and the app itself runs fine against the default hosted URL. Nothing in the code changes when production catches up.
+
 ## Swap in your own pipeline
 
 1. Add `methods/<name>/main.mthds` (the `/mthds-build` skill from the [mthds-plugins](https://github.com/Pipelex/mthds-plugins) marketplace can generate one).
-2. Add a loader in `src/lib/loadBundle.ts`, a type + `parseXxx(results)` narrower in `src/types/`, and the action trio (`run<Name>Blocking`, `start<Name>Run`, `poll<Name>Run`) in `src/actions/`.
-3. Wire it from a component with `useRun({ mode, blocking, start, poll })`. The three existing examples are the canonical patterns to copy.
+2. Run `npm run codegen` — it writes `src/generated/<name>/` with the zod schemas and binders for the concepts that method declares.
+3. Add a loader in `src/lib/loadBundle.ts`, a `parseXxx(results)` adapter over the generated binder in `src/types/`, and the action trio (`run<Name>Blocking`, `start<Name>Run`, `poll<Name>Run`) in `src/actions/`.
+4. Wire it from a component with `useRun({ mode, blocking, start, poll })`. The three existing examples are the canonical patterns to copy.
 
 ## Make targets
 
-| Target              | Purpose                                                                                             |
-| ------------------- | --------------------------------------------------------------------------------------------------- |
-| `make dev`          | Start the Next.js dev server                                                                        |
-| `make build`        | Production build                                                                                    |
-| `make lint`         | ESLint                                                                                              |
-| `make format`       | Prettier write                                                                                      |
-| `make format-check` | Prettier check (CI)                                                                                 |
-| `make typecheck`    | `tsc --noEmit`                                                                                      |
-| `make test`         | Vitest single pass (unit tests, no API call)                                                        |
-| `make agent-test`   | Vitest, silent on success (for AI agents)                                                           |
-| `make test-e2e`     | **Optional** Playwright e2e — live API, costs an LLM call (prompts first; auto-skips without a key) |
-| `make test-e2e-ui`  | Same, with the Playwright UI runner                                                                 |
-| `make check`        | lint + format-check + typecheck                                                                     |
-| `make all`          | check + test + build (does **not** run e2e — see `test-e2e`)                                        |
-| `make use-local`    | Pack & install sibling `../pipelex-sdk-js` into `node_modules` (alias: `ul`)                        |
-| `make use-npm`      | Restore the latest npm-published `@pipelex/sdk` package (alias: `un`)                               |
+| Target                | Purpose                                                                                                  |
+| --------------------- | -------------------------------------------------------------------------------------------------------- |
+| `make dev`            | Start the Next.js dev server                                                                             |
+| `make build`          | Production build                                                                                         |
+| `make lint`           | ESLint                                                                                                   |
+| `make format`         | Prettier write                                                                                           |
+| `make format-check`   | Prettier check (CI)                                                                                      |
+| `make typecheck`      | `tsc --noEmit` — app, e2e specs, and `scripts/`                                                          |
+| `make codegen`        | Regenerate `src/generated/` from `methods/` (needs an API key — see [Generated types](#generated-types)) |
+| `make codegen-check`  | Prove `src/generated/` is current — offline, no key (part of `make check`)                               |
+| `make codegen-verify` | Ask the API whether the committed types still match the methods (needs an API key)                       |
+| `make test`           | Vitest single pass (unit tests, no API call)                                                             |
+| `make agent-test`     | Vitest, silent on success (for AI agents)                                                                |
+| `make test-e2e`       | **Optional** Playwright e2e — live API, costs an LLM call (prompts first; auto-skips without a key)      |
+| `make test-e2e-ui`    | Same, with the Playwright UI runner                                                                      |
+| `make check`          | lint + format-check + typecheck + codegen-check                                                          |
+| `make all`            | check + test + build (does **not** run e2e or `codegen` — both need a key)                               |
+| `make use-local`      | Pack & install sibling `../pipelex-sdk-js` into `node_modules` (alias: `ul`)                             |
+| `make use-npm`        | Restore the latest npm-published `@pipelex/sdk` package (alias: `un`)                                    |
 
 ## End-to-end testing (optional)
 
