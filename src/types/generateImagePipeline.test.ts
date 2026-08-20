@@ -69,6 +69,27 @@ describe("parseGeneratedImage", () => {
     expect(result.caption).toBeUndefined();
   });
 
+  it("refuses a data: URL whose media type is not an image", () => {
+    // Not an image-decoding concern: `<ImageResult>` puts the same string in an
+    // `<a download>`, so a text/html payload would be saved as a file that runs
+    // on a file:// origin when opened.
+    expect(() =>
+      parseGeneratedImage(mainStuff({ url: "data:text/html;base64,PHNjcmlwdD4=" })),
+    ).toThrow(BadImageOutputError);
+  });
+
+  it("refuses a data: URL with no media type at all", () => {
+    // `data:,Hello` defaults to text/plain — an image pipeline never emits it.
+    expect(() => parseGeneratedImage(mainStuff({ url: "data:,Hello" }))).toThrow(
+      BadImageOutputError,
+    );
+  });
+
+  it("accepts an image data: URL whose media type carries parameters", () => {
+    const url = "data:image/svg+xml;charset=utf-8,%3Csvg%2F%3E";
+    expect(parseGeneratedImage(mainStuff({ url })).url).toBe(url);
+  });
+
   it("throws BadImageOutputError when main_stuff carries no url", () => {
     expect(() => parseGeneratedImage(mainStuff({ caption: "no url here" }))).toThrow(
       BadImageOutputError,

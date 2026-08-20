@@ -26,20 +26,20 @@ Scope is deliberately narrow: no deep pass over `src/`. The template's patterns 
 
 ## Phase 3 — the two `src/` hardening items
 
-- [ ] **`src/types/generateImagePipeline.ts`: the `data:` arm admits any media type.** The validated string feeds both `<img src>` and `<a download>`, so a `data:text/html` output would hand the user an attacker-authored file that runs on a `file://` origin when saved and opened. Require `data:image/…`; `http:`/`https:` arms unchanged. Cover in `generateImagePipeline.test.ts`.
-- [ ] **`src/lib/wireOutput.ts`: cap `dropWireNulls` recursion depth.** The schema-guided walk resolves `z.lazy()` (concept references), so a recursive concept makes descent payload-driven again — a deep enough payload overflows the stack. Add a depth cap (beyond it the value passes through untouched; the generated schema still owns the verdict). Cover with a recursive `z.lazy()` schema in `wireOutput.test.ts`: nulls stripped below the cap, pass-through beyond it, no overflow on a pathologically deep payload.
+- [x] **`src/types/generateImagePipeline.ts`: the `data:` arm admits any media type.** The validated string feeds both `<img src>` and `<a download>`, so a `data:text/html` output would hand the user an attacker-authored file that runs on a `file://` origin when saved and opened. Require `data:image/…`; `http:`/`https:` arms unchanged. Cover in `generateImagePipeline.test.ts`.
+- [x] **`src/lib/wireOutput.ts`: cap `dropWireNulls` recursion depth.** The schema-guided walk resolves `z.lazy()` (concept references), so a recursive concept makes descent payload-driven again — a deep enough payload overflows the stack. Add a depth cap (beyond it the value passes through untouched; the generated schema still owns the verdict). Cover with a recursive `z.lazy()` schema in `wireOutput.test.ts`: nulls stripped below the cap, pass-through beyond it, no overflow on a pathologically deep payload.
 
 ## Phase 4 — docs and changelog
 
-- [ ] **`CLAUDE.md`**: the project-structure block for `scripts/`, and any sentence describing the old flat layout.
-- [ ] **`docs/codegen.md`**: the layout block and the shared-layer reference.
-- [ ] **`docs/adopt-in-an-existing-project.md`**: the file list naming `codegenShared.mts`.
-- [ ] **`CHANGELOG.md` `[Unreleased]`**: one Changed bullet for the scripts restructure (entries + tested lib), one Fixed/Changed bullet each for the `data:` media-type gate and the `dropWireNulls` depth cap.
+- [x] **`CLAUDE.md`**: the project-structure block for `scripts/`, and any sentence describing the old flat layout.
+- [x] **`docs/codegen.md`**: the layout block and the shared-layer reference.
+- [x] **`docs/adopt-in-an-existing-project.md`**: the file list naming `codegenShared.mts`.
+- [x] **`CHANGELOG.md` `[Unreleased]`**: one Changed bullet for the scripts restructure (entries + tested lib), one Fixed/Changed bullet each for the `data:` media-type gate and the `dropWireNulls` depth cap.
 
 ## Phase 5 — verification and landing
 
-- [ ] `make all` (lint + format-check + typecheck + codegen-check + unit tests + build).
-- [ ] Run each script once from the CLI to confirm identical behavior: `npm run codegen:check` (exit 0 on the committed trees), and `npm run codegen:check` from a non-root cwd.
+- [x] `make all` (lint + format-check + typecheck + codegen-check + unit tests + build).
+- [x] Run each script once from the CLI to confirm identical behavior: `npm run codegen:check` (exit 0 on the committed trees), and `npm run codegen:check` from a non-root cwd.
 - [ ] Commit on `refactor/Codegen-script-restructure`, push, open the stacked PR against `docs/Hosted-api`.
 - [ ] Mark the corresponding items done in `wip/_top_priorities.md` (machine-local).
 

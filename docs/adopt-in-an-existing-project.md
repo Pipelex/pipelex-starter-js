@@ -17,11 +17,12 @@ npm install --save-dev @types/node   # skip if your app already has it
 
 Copy these files, keeping their relative arrangement:
 
-- `scripts/codegen.mts` — the generator (`npm run codegen`): sends every method under `methods/` to `POST /v1/codegen` and writes the returned artifacts verbatim.
-- `scripts/codegen-check.mts` — the offline drift check (`npm run codegen:check`): no key, no network; proves the committed trees are current.
-- `scripts/codegen-verify.mts` — the keyed semantic gate (`npm run codegen:verify`).
-- `scripts/codegenShared.mts` — the paths, tree walk, hashing, and sidecar logic the three scripts share.
-- `scripts/codegenShared.test.mts` — unit tests over the shared pure helpers (optional, but they guard the hashing and walk behavior).
+- `scripts/codegen.mts`, `scripts/codegen-check.mts`, `scripts/codegen-verify.mts` — the three CLI entries, one line each. They exist to be what `npm run` invokes; all the behavior is in `scripts/lib/`.
+- `scripts/lib/generate.mts` — the generator (`npm run codegen`): sends every method under `methods/` to `POST /v1/codegen` and writes the returned artifacts verbatim.
+- `scripts/lib/check.mts` — the offline drift check (`npm run codegen:check`): no key, no network; proves the committed trees are current.
+- `scripts/lib/verify.mts` — the keyed semantic gate (`npm run codegen:verify`).
+- `scripts/lib/shared.mts` — the paths, tree walk, hashing, and sidecar logic the three share.
+- `scripts/lib/*.test.mts` — unit tests over the lib (optional, but they guard the hashing, the walk, the delete rule, and the exit-code contract).
 - `tsconfig.scripts.json` — type-checks `scripts/` with Node-flavored module resolution, without letting your app build chew on those files.
 
 Then wire the surrounding config — each entry exists for a reason stated inline where it lives:
@@ -33,7 +34,7 @@ Then wire the surrounding config — each entry exists for a reason stated inlin
 
 ## 3. The one framework-specific seam: env loading
 
-`scripts/codegen.mts` and `scripts/codegen-verify.mts` load `PIPELEX_API_KEY` / `PIPELEX_BASE_URL` from `.env.local` via `@next/env` — the one Next.js-specific import in the kit, chosen so the scripts read the same env file the Next app does. In a non-Next project, replace that import with `dotenv` (or read plain `process.env`) at the two call sites. Nothing else in `scripts/` touches a framework.
+`scripts/lib/generate.mts` and `scripts/lib/verify.mts` load `PIPELEX_API_KEY` / `PIPELEX_BASE_URL` from `.env.local` via `@next/env` — the one Next.js-specific import in the kit, chosen so the scripts read the same env file the Next app does. In a non-Next project, replace that import with `dotenv` (or read plain `process.env`) at the two call sites. Nothing else in `scripts/` touches a framework.
 
 ## 4. The server pattern
 
