@@ -398,7 +398,12 @@ export function assertSecureBaseUrl(url: string): void {
   if (parsed.protocol === "https:") return;
   if (parsed.protocol === "http:") {
     const host = parsed.hostname;
-    if (host === "localhost" || host.endsWith(".localhost") || host === "127.0.0.1" || host === "[::1]") {
+    if (
+      host === "localhost" ||
+      host.endsWith(".localhost") ||
+      host === "127.0.0.1" ||
+      host === "[::1]"
+    ) {
       return;
     }
     throw new Error(
