@@ -1,3 +1,9 @@
+// Build-time boundary guard: a consumer importing a `parseXxx` narrower from a
+// "use client" component gets a Next build error instead of silently shipping
+// zod plus every generated schema to the browser. (Unit tests alias this to a
+// stub — see vitest.server-only-stub.ts.)
+import "server-only";
+
 import { z } from "zod";
 import type { RunResults } from "@pipelex/sdk";
 

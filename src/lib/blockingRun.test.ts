@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ApiResponseError, ApiUnreachableError } from "@pipelex/sdk";
+import { ApiResponseError, ApiUnreachableError, type RunResults } from "@pipelex/sdk";
 
 const execute = vi.fn();
 
@@ -8,8 +8,7 @@ vi.mock("@/lib/pipelexClient", () => ({
 }));
 
 import { executeBlockingRun } from "./blockingRun";
-import { parseEntities } from "@/types/extractEntitiesPipeline";
-import { parseGeneratedImage } from "@/types/generateImagePipeline";
+import { BadImageOutputError, BadPipelineOutputError } from "@/types/pipelineError";
 
 beforeEach(() => execute.mockReset());
 
@@ -19,22 +18,44 @@ const OPTIONS = {
   inputs: { text: "x" },
 };
 
+// Inline fixture narrowers, so the shared-helper tests import no removable
+// example's adapter (the examples stay deletable without touching this file).
+// They honor the real `parseXxx` contract: read `main_stuff`, throw a tagged
+// error on shape mismatch.
+type FixtureOutput = { items: string[] };
+
+function parseFixture(results: RunResults): FixtureOutput {
+  const stuff = results.main_stuff;
+  if (typeof stuff !== "object" || stuff === null || !("items" in stuff)) {
+    throw new BadPipelineOutputError("fixture output is missing `items`");
+  }
+  return stuff as FixtureOutput;
+}
+
+function parseImageFixture(results: RunResults): { url: string } {
+  const stuff = results.main_stuff;
+  if (typeof stuff !== "object" || stuff === null || !("url" in stuff)) {
+    throw new BadImageOutputError("fixture image output has no url");
+  }
+  return stuff as { url: string };
+}
+
 describe("executeBlockingRun", () => {
   it("calls execute with the built options, adapts the response to RunResults, and narrows it", async () => {
     // `execute` returns a PipelexExecuteResult whose `.main_stuff` the SDK has already
     // resolved out of the working memory — the blocking path reads it like the durable one.
     execute.mockResolvedValueOnce({
       pipeline_run_id: "run-1",
-      main_stuff: { people: ["Ada"], orgs: [], dates: [] },
+      main_stuff: { items: ["Ada"] },
     });
 
-    const result = await executeBlockingRun(async () => OPTIONS, parseEntities);
+    const result = await executeBlockingRun(async () => OPTIONS, parseFixture);
 
     expect(execute).toHaveBeenCalledWith(OPTIONS);
     // No `pipe_output` on the response → the usage pair is absent → "unavailable".
     expect(result).toEqual({
       ok: true,
-      output: { people: ["Ada"], orgs: [], dates: [] },
+      output: { items: ["Ada"] },
       usage: {
         calls: [],
         totalCostUsd: null,
@@ -50,7 +71,7 @@ describe("executeBlockingRun", () => {
     // the adapter lifts it onto RunResults so `buildUsageReport` reads it like durable.
     execute.mockResolvedValueOnce({
       pipeline_run_id: "run-1",
-      main_stuff: { people: ["Ada"], orgs: [], dates: [] },
+      main_stuff: { items: ["Ada"] },
       pipe_output: {
         pipeline_run_id: "run-1",
         working_memory: { root: {}, aliases: {} },
@@ -66,7 +87,7 @@ describe("executeBlockingRun", () => {
       },
     });
 
-    const result = await executeBlockingRun(async () => OPTIONS, parseEntities);
+    const result = await executeBlockingRun(async () => OPTIONS, parseFixture);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.usage.state).toBe("records");
@@ -78,7 +99,7 @@ describe("executeBlockingRun", () => {
     execute.mockRejectedValueOnce(
       new ApiUnreachableError("unreachable", "http://localhost:8081", "ECONNREFUSED"),
     );
-    const result = await executeBlockingRun(async () => OPTIONS, parseEntities);
+    const result = await executeBlockingRun(async () => OPTIONS, parseFixture);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("api_unreachable");
@@ -98,7 +119,7 @@ describe("executeBlockingRun", () => {
         undefined,
       ),
     );
-    const result = await executeBlockingRun(async () => OPTIONS, parseEntities);
+    const result = await executeBlockingRun(async () => OPTIONS, parseFixture);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("execute_timeout");
@@ -109,7 +130,7 @@ describe("executeBlockingRun", () => {
       pipeline_run_id: "run-1",
       main_stuff: { caption: "no url" },
     });
-    const result = await executeBlockingRun(async () => OPTIONS, parseGeneratedImage);
+    const result = await executeBlockingRun(async () => OPTIONS, parseImageFixture);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("bad_image_output");

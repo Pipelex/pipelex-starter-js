@@ -9,16 +9,33 @@
  * the agreement lives here rather than being restated in each script.
  *
  * Nothing here touches the network, `process.env`, or the SDK client: the check
- * has to stay runnable in CI with no API key.
+ * has to stay runnable in CI with no API key. Pure validators are fine —
+ * `assertSecureBaseUrl` lives here so the two keyed scripts agree on it.
+ *
+ * Two policies are enforced at this layer, because every caller needs them to
+ * produce a *true* verdict rather than a silent wrong one:
+ *
+ *  - **Only regular files and directories.** A symlink, FIFO, or socket under
+ *    `methods/` or a generated tree — or a symlinked tree root, method
+ *    directory, or `methods/` / `src/generated/` root — throws
+ *    `SymlinkRefusedError` naming the path. Following
+ *    symlinks would need cycle handling and would let a symlinked `.mthds`
+ *    drop out of the staleness closure; refusing loudly beats both.
+ *  - **Fatal UTF-8 decoding.** Every text read goes through `readTextFile`,
+ *    which throws `NonUtf8FileError` instead of substituting U+FFFD — a lossy
+ *    decode can hash a corrupted artifact to its locked value and report it
+ *    `current`.
  */
 import { createHash } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { lstat, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import process from "node:process";
 
 import { isStampableArtifactPath, type CodegenTreeFile, type MthdsFileItem } from "@pipelex/sdk";
 
-export const REPO_ROOT = process.cwd();
+// Anchored on this file's location, not `process.cwd()`, so the scripts produce
+// the same verdict no matter which directory they are launched from.
+export const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 export const METHODS_DIR = path.join(REPO_ROOT, "methods");
 export const GENERATED_ROOT = path.join(REPO_ROOT, "src", "generated");
 
@@ -58,8 +75,95 @@ export interface MethodClosure {
   sourceHashes: Record<string, string>;
 }
 
-/** Recursively collect file paths under `dir`, relative to it, sorted for determinism. */
+/**
+ * Thrown when a file that must be UTF-8 text is not. The caller maps it by
+ * ownership: in a generated tree it is drift (regenerating rewrites the file),
+ * in a `.mthds` source it is a refusal (regenerating would ship garbage).
+ */
+export class NonUtf8FileError extends Error {
+  readonly filePath: string;
+
+  constructor(filePath: string) {
+    super(`${filePath} is not valid UTF-8.`);
+    this.name = "NonUtf8FileError";
+    this.filePath = filePath;
+  }
+}
+
+/**
+ * Thrown on any directory entry that is not a regular file or a directory
+ * (symlink, FIFO, socket, …) under a codegen-governed tree. Refusal produces
+ * no verdict — following a symlink would silently defeat the staleness gate.
+ */
+export class SymlinkRefusedError extends Error {
+  readonly filePath: string;
+
+  constructor(filePath: string, kind: string) {
+    super(
+      `refusing ${kind} at ${filePath} — only regular files and directories are allowed ` +
+        `under methods/ and src/generated/.`,
+    );
+    this.name = "SymlinkRefusedError";
+    this.filePath = filePath;
+  }
+}
+
+/** Repo-relative when the path is inside the repo, absolute otherwise (e.g. test fixtures). */
+function describePath(absPath: string): string {
+  const relative = path.relative(REPO_ROOT, absPath);
+  return relative && !relative.startsWith("..") ? relative : absPath;
+}
+
+function isEnoent(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
+}
+
+/**
+ * Read a file as UTF-8 text, fatally: invalid bytes throw `NonUtf8FileError`
+ * instead of decoding to U+FFFD. `readFile(p, "utf-8")` never throws on bad
+ * bytes, and a lossy decode is exactly how a corrupted artifact still hashes
+ * to its locked value and reports `current`.
+ */
+export async function readTextFile(filePath: string): Promise<string> {
+  const bytes = await readFile(filePath);
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new NonUtf8FileError(describePath(filePath));
+  }
+}
+
+/**
+ * Refuse a directory that is itself a symlink. `lstat` only inspects the final
+ * path component, so this guards exactly the case the per-entry checks cannot:
+ * a symlinked root (`methods/`, `src/generated/`, or a tree directory) would
+ * otherwise be followed transparently, letting the scripts certify — or
+ * regeneration rewrite — external content. An absent path passes: ENOENT is
+ * the caller's story (no-tree, empty scan, or the readdir error).
+ */
+export async function refuseSymlinkRoot(dirPath: string): Promise<void> {
+  let rootStat;
+  try {
+    rootStat = await lstat(dirPath);
+  } catch (error) {
+    if (isEnoent(error)) return;
+    throw error;
+  }
+  if (rootStat.isSymbolicLink()) {
+    throw new SymlinkRefusedError(describePath(dirPath), "a symlink");
+  }
+}
+
+/**
+ * Recursively collect file paths under `dir`, relative to it, sorted for
+ * determinism. Enforces the entry policy above: the root is `lstat`ed once
+ * (recursive calls descend only vetted dirents), and every entry that is not
+ * a regular file or a directory throws `SymlinkRefusedError`.
+ */
 export async function walk(dir: string, prefix = ""): Promise<string[]> {
+  if (prefix === "") {
+    await refuseSymlinkRoot(dir);
+  }
   const entries = await readdir(dir, { withFileTypes: true });
   const found: string[] = [];
   for (const entry of entries) {
@@ -69,6 +173,11 @@ export async function walk(dir: string, prefix = ""): Promise<string[]> {
       found.push(...(await walk(path.join(dir, entry.name), relative)));
     } else if (entry.isFile()) {
       found.push(relative);
+    } else {
+      throw new SymlinkRefusedError(
+        describePath(path.join(dir, entry.name)),
+        entry.isSymbolicLink() ? "a symlink" : "a special file",
+      );
     }
   }
   return found.sort();
@@ -93,21 +202,34 @@ export function hashSource(content: string): string {
 }
 
 /** Discover every method directory under `methods/` and read its `.mthds` closure. */
-export async function discoverMethods(): Promise<MethodClosure[]> {
-  const entries = await readdir(METHODS_DIR, { withFileTypes: true });
-  const methods: MethodClosure[] = [];
+export async function discoverMethods(methodsDir = METHODS_DIR): Promise<MethodClosure[]> {
+  await refuseSymlinkRoot(methodsDir);
+  const entries = await readdir(methodsDir, { withFileTypes: true });
+  const dirs: Dirent[] = [];
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      dirs.push(entry);
+    } else if (!entry.isFile()) {
+      // A symlinked method directory silently dropping out of the closure is
+      // exactly the wrong-verdict class this policy exists for.
+      throw new SymlinkRefusedError(
+        describePath(path.join(methodsDir, entry.name)),
+        entry.isSymbolicLink() ? "a symlink" : "a special file",
+      );
+    }
+    // A plain file at the methods/ root (.DS_Store, a stray README) is not a method.
+  }
 
-  for (const entry of entries
-    .filter((e) => e.isDirectory())
-    .sort((a, b) => a.name.localeCompare(b.name))) {
-    const methodDir = path.join(METHODS_DIR, entry.name);
+  const methods: MethodClosure[] = [];
+  for (const entry of dirs.sort((a, b) => a.name.localeCompare(b.name))) {
+    const methodDir = path.join(methodsDir, entry.name);
     const bundlePaths = (await walk(methodDir)).filter((p) => p.endsWith(".mthds"));
     if (bundlePaths.length === 0) continue;
 
     const files: MthdsFileItem[] = [];
     const sourceHashes: Record<string, string> = {};
     for (const relative of bundlePaths) {
-      const content = await readFile(path.join(methodDir, relative), "utf-8");
+      const content = await readTextFile(path.join(methodDir, relative));
       // `source` is the repo-relative path, so a validation error points at a real file.
       const source = `methods/${entry.name}/${relative}`;
       files.push({ content, source });
@@ -134,6 +256,12 @@ export type GeneratedTree =
  * entirely. And the text is passed exactly as read — reformatting or
  * re-encoding an artifact reports it `hand-edited`.
  *
+ * Only ENOENT maps to `no-tree` / `no-lock`. Any other failure — a refused
+ * symlink, a non-UTF-8 file, a permissions error — propagates, because "this
+ * tree could not be read" is not the same verdict as "this tree is absent":
+ * the absent tree's remedy is to regenerate, and the unreadable tree has no
+ * verdict at all.
+ *
  * Filtering with the SDK's own `isStampableArtifactPath` is what lets the
  * starter-owned `sources.json` sit beside the lock without being called an orphan.
  */
@@ -141,21 +269,188 @@ export async function readGeneratedTree(outDir: string): Promise<GeneratedTree> 
   let treePaths: string[];
   try {
     treePaths = await walk(outDir);
-  } catch {
-    return { status: "no-tree" };
+  } catch (error) {
+    if (isEnoent(error)) return { status: "no-tree" };
+    throw error;
   }
 
   let lockContent: string;
   try {
-    lockContent = await readFile(path.join(outDir, LOCK_FILENAME), "utf-8");
-  } catch {
-    return { status: "no-lock", treePaths };
+    lockContent = await readTextFile(path.join(outDir, LOCK_FILENAME));
+  } catch (error) {
+    if (isEnoent(error)) return { status: "no-lock", treePaths };
+    throw error;
   }
 
   const files: CodegenTreeFile[] = [];
   for (const relative of treePaths) {
     if (!isStampableArtifactPath(relative)) continue;
-    files.push({ path: relative, content: await readFile(path.join(outDir, relative), "utf-8") });
+    files.push({ path: relative, content: await readTextFile(path.join(outDir, relative)) });
   }
   return { status: "ok", lockContent, files, treePaths };
+}
+
+/**
+ * Compare the sidecar's recorded source hashes against the bundles on disk.
+ *
+ * Returns one line per stale source; an empty array means the generated tree was
+ * produced from exactly these bytes. A missing or unreadable sidecar counts as
+ * stale rather than as a no-verdict: it is starter-owned, and regenerating both
+ * restores it and re-proves the tree.
+ */
+export async function compareSources(
+  outDir: string,
+  current: Record<string, string>,
+): Promise<string[]> {
+  let recorded: Record<string, string>;
+  try {
+    const raw = await readTextFile(path.join(outDir, SOURCES_SIDECAR));
+    const parsed: unknown = JSON.parse(raw);
+    const sources =
+      typeof parsed === "object" && parsed !== null
+        ? (parsed as { sources?: unknown }).sources
+        : undefined;
+    if (typeof sources !== "object" || sources === null) {
+      return [`stale-source: ${SOURCES_SIDECAR} — no "sources" map in the sidecar`];
+    }
+    recorded = sources as Record<string, string>;
+  } catch {
+    return [
+      `stale-source: ${SOURCES_SIDECAR} — missing or unreadable, so staleness cannot be ruled out`,
+    ];
+  }
+
+  const stale: string[] = [];
+  for (const [source, hash] of Object.entries(current)) {
+    if (!(source in recorded)) {
+      stale.push(`stale-source: ${source} — a new bundle the generated types do not cover`);
+    } else if (recorded[source] !== hash) {
+      stale.push(`stale-source: ${source} — edited since the types were generated`);
+    }
+  }
+  for (const source of Object.keys(recorded)) {
+    if (!(source in current)) {
+      stale.push(`stale-source: ${source} — recorded as a source but no longer on disk`);
+    }
+  }
+  return stale.sort();
+}
+
+/** What `findOrphanTrees` reports — the two verdicts carry different remedies. */
+export interface OrphanScan {
+  /** Tree directories with no method behind them at all — the delete remedy. */
+  orphans: string[];
+  /** Tree directories that case-fold onto a method name but differ byte-wise — the rename remedy. */
+  caseMismatches: { actual: string; expected: string }[];
+}
+
+/**
+ * Generated trees with no matching directory under `methods/` — regeneration never removes these.
+ *
+ * A tree is a *directory*, so this enumerates directory entries rather than
+ * walking files and reading their first path segment. Walking got both verdicts
+ * wrong in opposite directions: a plain file at the root of `src/generated/`
+ * (`.DS_Store`, which Finder writes into any folder you browse) contributed its
+ * own filename as a tree name and failed the check with a remedy naming a
+ * directory that does not exist, while an *empty* orphan directory contributed
+ * no files at all and was never reported. A non-recursive read answers the
+ * question the function actually asks, and it is the whole tree cheaper.
+ *
+ * The case-fold comparison exists for case-insensitive filesystems (macOS's
+ * default): there, `readGeneratedTree` happily opens a tree whose on-disk name
+ * differs from the method's in case only, certifies it current — and a
+ * byte-wise orphan scan would then print a delete remedy for the very tree it
+ * just certified. That is a rename, never a delete.
+ */
+export async function findOrphanTrees(
+  generatedRoot: string,
+  expected: Set<string>,
+): Promise<OrphanScan> {
+  await refuseSymlinkRoot(generatedRoot);
+  let entries: Dirent[];
+  try {
+    entries = await readdir(generatedRoot, { withFileTypes: true });
+  } catch (error) {
+    if (isEnoent(error)) return { orphans: [], caseMismatches: [] };
+    throw error;
+  }
+
+  const byFold = new Map<string, string>();
+  for (const name of expected) byFold.set(name.toLowerCase(), name);
+
+  const orphans: string[] = [];
+  const caseMismatches: { actual: string; expected: string }[] = [];
+  for (const entry of entries) {
+    if (entry.isFile()) continue; // a stray root file (.DS_Store) is not a tree
+    if (!entry.isDirectory()) {
+      throw new SymlinkRefusedError(
+        describePath(path.join(generatedRoot, entry.name)),
+        entry.isSymbolicLink() ? "a symlink" : "a special file",
+      );
+    }
+    if (expected.has(entry.name)) continue;
+    const match = byFold.get(entry.name.toLowerCase());
+    if (match !== undefined) {
+      caseMismatches.push({ actual: entry.name, expected: match });
+    } else {
+      orphans.push(entry.name);
+    }
+  }
+  orphans.sort();
+  caseMismatches.sort((a, b) => a.actual.localeCompare(b.actual));
+  return { orphans, caseMismatches };
+}
+
+/**
+ * Refuse a plaintext-`http:` base URL anywhere but loopback.
+ *
+ * The keyed scripts send `PIPELEX_API_KEY` as a bearer token and write
+ * server-supplied TypeScript into the repo, so a non-local plaintext base URL
+ * exposes both to the network. `https:` is allowed anywhere; `http:` only for
+ * `localhost`, `*.localhost`, `127.0.0.1`, and `[::1]`.
+ */
+export function assertSecureBaseUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`PIPELEX_BASE_URL is not a valid URL: ${url}`);
+  }
+  if (parsed.protocol === "https:") return;
+  if (parsed.protocol === "http:") {
+    const host = parsed.hostname;
+    if (
+      host === "localhost" ||
+      host.endsWith(".localhost") ||
+      host === "127.0.0.1" ||
+      host === "[::1]"
+    ) {
+      return;
+    }
+    throw new Error(
+      `PIPELEX_BASE_URL uses plaintext http: for a non-local host (${url}). The codegen scripts ` +
+        `send the API key as a bearer token and write server-supplied TypeScript into the repo, ` +
+        `so anything beyond localhost/127.0.0.1/[::1] must be https:.`,
+    );
+  }
+  throw new Error(`PIPELEX_BASE_URL must be an http(s) URL: ${url}`);
+}
+
+/**
+ * Does `relativePath` name a file that stays inside `outDir`?
+ *
+ * The codegen response names each artifact's own path, and `path.join` resolves
+ * a `..` in one without complaint — so a single bad path turns a regeneration
+ * into a write anywhere the process can reach (`.husky/pre-commit`, say), in a
+ * place no stamp guards and the offline check never looks. `assertSecureBaseUrl`
+ * closes the transport half of that exposure; this closes the response half.
+ * An absolute path is refused for the same reason, and so is one that resolves
+ * to the directory itself rather than to a file within it.
+ */
+export function isContainedPath(outDir: string, relativePath: string): boolean {
+  if (path.isAbsolute(relativePath)) return false;
+  const root = path.resolve(outDir);
+  // The trailing separator matters: without it a sibling `…/tree-backup/` would
+  // pass the prefix test against `…/tree`.
+  return path.resolve(root, relativePath).startsWith(`${root}${path.sep}`);
 }

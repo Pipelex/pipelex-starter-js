@@ -30,7 +30,10 @@ import {
 } from "@pipelex/sdk";
 
 import {
+  assertSecureBaseUrl,
   discoverMethods,
+  isContainedPath,
+  refuseSymlinkRoot,
   GENERATED_ROOT,
   LOCK_FILENAME,
   METHODS_DIR,
@@ -39,6 +42,7 @@ import {
   SIDECAR_COMMENT,
   SOURCES_SIDECAR,
   type SourcesSidecar,
+  walk,
 } from "./codegenShared.mts";
 
 const { loadEnvConfig } = nextEnv;
@@ -82,6 +86,17 @@ async function writeTree(
   report: CodegenValidReport,
   sourceHashes: Record<string, string>,
 ): Promise<string[]> {
+  // Vet the whole pre-existing tree — root and nested entries alike — BEFORE
+  // the first write. `walk` refuses any symlink or special file, so a write
+  // can never be routed through a link into an external target; the post-write
+  // readGeneratedTree scan alone would refuse only after the damage was done.
+  // An absent tree (first generation) is fine.
+  try {
+    await walk(outDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code !== "ENOENT") throw error;
+  }
+
   const changed: string[] = [];
 
   for (const artifact of [
@@ -126,10 +141,8 @@ function explain(error: unknown, baseUrl: string): string {
     return [
       `this base URL does not serve POST /v1/codegen (HTTP ${error.status}).`,
       `  Base URL: ${baseUrl}`,
-      "  Hosted: the route is live on https://api-dev.pipelex.com but not yet on",
+      "  The route is live on https://api-dev.pipelex.com but not yet on",
       "  api.pipelex.com — point PIPELEX_BASE_URL at api-dev in .env.local.",
-      "  Self-hosted: upgrade your pipelex-api runner to a version that serves",
-      "  /v1/codegen (https://github.com/Pipelex/pipelex-api).",
     ].join("\n");
   }
   if (error instanceof ApiResponseError) {
@@ -142,6 +155,12 @@ async function main(): Promise<void> {
   loadEnvConfig(REPO_ROOT, false, { info: () => {}, error: console.error });
 
   const baseUrl = process.env.PIPELEX_BASE_URL ?? DEFAULT_API_BASE_URL;
+  try {
+    assertSecureBaseUrl(baseUrl);
+  } catch (error) {
+    console.error(`codegen: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
   if (!process.env.PIPELEX_API_KEY) {
     console.error("codegen: PIPELEX_API_KEY is not set — add it to .env.local.");
     process.exit(1);
@@ -152,6 +171,10 @@ async function main(): Promise<void> {
     console.error(`codegen: no methods found under ${path.relative(REPO_ROOT, METHODS_DIR)}/.`);
     process.exit(1);
   }
+
+  // A symlinked src/generated/ root would route reads — and for the writer,
+  // writes and deletes — into an external target. Same refusal as the check's.
+  await refuseSymlinkRoot(GENERATED_ROOT);
 
   // Constructed bare, not via `@/lib/pipelexClient`: the `@/` alias is a tsconfig
   // path mapping that Node's runtime resolver never reads. The client picks up the
@@ -211,6 +234,22 @@ async function main(): Promise<void> {
       console.error(
         `\n✗ ${method.name} — the server returned lock_filename '${report.lock_filename}', ` +
           `not '${LOCK_FILENAME}'. Nothing was written; bump @pipelex/sdk or report it upstream.`,
+      );
+      failed = true;
+      continue;
+    }
+
+    // The server names each artifact's path too, and `path.join` would resolve a
+    // `..` in one into a write outside the tree — somewhere no stamp guards the
+    // file and the offline check never looks, while `writeIfChanged`'s recursive
+    // `mkdir` creates whatever directory the path asks for. Refuse the method
+    // whole rather than write the containable ones, so the promise above holds.
+    const escaping = artifacts.filter((artifact) => !isContainedPath(outDir, artifact.path));
+    if (escaping.length > 0) {
+      console.error(
+        `\n✗ ${method.name} — the server returned artifact path(s) that escape ` +
+          `${path.relative(REPO_ROOT, outDir)}/: ${escaping.map((artifact) => artifact.path).join(", ")}. ` +
+          `Nothing was written; report it upstream.`,
       );
       failed = true;
       continue;

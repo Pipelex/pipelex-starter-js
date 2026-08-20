@@ -27,7 +27,9 @@ import {
 } from "@pipelex/sdk";
 
 import {
+  assertSecureBaseUrl,
   discoverMethods,
+  refuseSymlinkRoot,
   GENERATED_ROOT,
   LOCK_FILENAME,
   METHODS_DIR,
@@ -41,6 +43,12 @@ async function main(): Promise<void> {
   loadEnvConfig(REPO_ROOT, false, { info: () => {}, error: console.error });
 
   const baseUrl = process.env.PIPELEX_BASE_URL ?? DEFAULT_API_BASE_URL;
+  try {
+    assertSecureBaseUrl(baseUrl);
+  } catch (error) {
+    console.error(`codegen:verify: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
   if (!process.env.PIPELEX_API_KEY) {
     console.error("codegen:verify: PIPELEX_API_KEY is not set — add it to .env.local.");
     process.exit(1);
@@ -53,6 +61,10 @@ async function main(): Promise<void> {
     );
     process.exit(1);
   }
+
+  // A symlinked src/generated/ root would route reads — and for the writer,
+  // writes and deletes — into an external target. Same refusal as the check's.
+  await refuseSymlinkRoot(GENERATED_ROOT);
 
   const client = new PipelexApiClient();
   console.log(`codegen:verify: ${methods.length} method(s), against ${baseUrl}`);

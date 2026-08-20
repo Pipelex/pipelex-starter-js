@@ -18,23 +18,29 @@
  * needs the engine, and it is `npm run codegen:verify`.
  *
  * Exit codes follow the codegen spec: 0 current · 1 drift or stale sources ·
- * 2 no verdict could be produced.
+ * 2 no verdict could be produced. Aggregation across methods is by precedence,
+ * deliberately: a no-verdict (2) outranks drift (1), because as long as any
+ * method could not be checked the run has not produced the full verdict a 0
+ * or 1 would claim. The per-category summary line at the end shows the mix
+ * the single exit code cannot.
  */
-import type { Dirent } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
 import { CodegenLockError, runCodegenCheck } from "@pipelex/sdk";
 
 import {
+  compareSources,
   discoverMethods,
+  findOrphanTrees,
   GENERATED_ROOT,
   LOCK_FILENAME,
   METHODS_DIR,
+  NonUtf8FileError,
   readGeneratedTree,
   REPO_ROOT,
-  SOURCES_SIDECAR,
+  SymlinkRefusedError,
+  type MethodClosure,
 } from "./codegenShared.mts";
 
 const EXIT_CURRENT = 0;
@@ -43,151 +49,145 @@ const EXIT_NO_VERDICT = 2;
 
 const REGENERATE = "Run `npm run codegen` to regenerate.";
 
-/**
- * Compare the sidecar's recorded source hashes against the bundles on disk.
- *
- * Returns one line per stale source; an empty array means the generated tree was
- * produced from exactly these bytes. A missing or unreadable sidecar counts as
- * stale rather than as a no-verdict: it is starter-owned, and regenerating both
- * restores it and re-proves the tree.
- */
-async function compareSources(outDir: string, current: Record<string, string>): Promise<string[]> {
-  let recorded: Record<string, string>;
+/** Check one method's generated tree; print its report and return its exit code. */
+async function checkMethod(method: MethodClosure): Promise<number> {
+  const outDir = path.join(GENERATED_ROOT, method.name);
+  const where = path.relative(REPO_ROOT, outDir);
+
+  let tree;
   try {
-    const raw = await readFile(path.join(outDir, SOURCES_SIDECAR), "utf-8");
-    const parsed: unknown = JSON.parse(raw);
-    const sources =
-      typeof parsed === "object" && parsed !== null
-        ? (parsed as { sources?: unknown }).sources
-        : undefined;
-    if (typeof sources !== "object" || sources === null) {
-      return [`stale-source: ${SOURCES_SIDECAR} — no "sources" map in the sidecar`];
+    tree = await readGeneratedTree(outDir);
+  } catch (error) {
+    if (error instanceof NonUtf8FileError) {
+      // In a generated tree a bad decode is drift, not a refusal: regenerating
+      // rewrites the file, so the standard remedy genuinely fixes it.
+      console.error(`\n✗ ${method.name} — ${error.message}`);
+      console.error(`    ${REGENERATE}`);
+      return EXIT_DRIFT;
     }
-    recorded = sources as Record<string, string>;
-  } catch {
-    return [
-      `stale-source: ${SOURCES_SIDECAR} — missing or unreadable, so staleness cannot be ruled out`,
-    ];
+    if (error instanceof SymlinkRefusedError) {
+      console.error(`\n✗ ${method.name} — ${error.message}`);
+      return EXIT_NO_VERDICT;
+    }
+    // Any other walk failure (permissions, I/O): no verdict was produced, so
+    // never print the regenerate remedy — it would claim a drift verdict.
+    console.error(
+      `\n✗ ${method.name} — cannot read ${where}/: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return EXIT_NO_VERDICT;
   }
 
-  const stale: string[] = [];
-  for (const [source, hash] of Object.entries(current)) {
-    if (!(source in recorded)) {
-      stale.push(`stale-source: ${source} — a new bundle the generated types do not cover`);
-    } else if (recorded[source] !== hash) {
-      stale.push(`stale-source: ${source} — edited since the types were generated`);
-    }
+  if (tree.status === "no-tree") {
+    console.error(`\n✗ ${method.name} — no generated tree at ${where}/`);
+    console.error(`    ${REGENERATE}`);
+    return EXIT_DRIFT;
   }
-  for (const source of Object.keys(recorded)) {
-    if (!(source in current)) {
-      stale.push(`stale-source: ${source} — recorded as a source but no longer on disk`);
-    }
+  if (tree.status === "no-lock") {
+    console.error(`\n✗ ${method.name} — no ${LOCK_FILENAME} in ${where}/, so there is no verdict.`);
+    console.error(`    Found: ${tree.treePaths.join(", ") || "(empty directory)"}`);
+    console.error(`    ${REGENERATE}`);
+    return EXIT_NO_VERDICT;
   }
-  return stale.sort();
-}
+  const { lockContent, files } = tree;
 
-/**
- * Generated trees with no matching directory under `methods/` — regeneration never removes these.
- *
- * A tree is a *directory*, so this enumerates directory entries rather than
- * walking files and reading their first path segment. Walking got both verdicts
- * wrong in opposite directions: a plain file at the root of `src/generated/`
- * (`.DS_Store`, which Finder writes into any folder you browse) contributed its
- * own filename as a tree name and failed the check with a remedy naming a
- * directory that does not exist, while an *empty* orphan directory contributed
- * no files at all and was never reported. A non-recursive read answers the
- * question the function actually asks, and it is the whole tree cheaper.
- */
-async function findOrphanTrees(expected: Set<string>): Promise<string[]> {
-  let entries: Dirent[];
+  let drifts: { category: string; path: string; detail: string }[];
+  let fingerprint: string;
+  let engineVersion: string;
   try {
-    entries = await readdir(GENERATED_ROOT, { withFileTypes: true });
-  } catch {
-    return [];
+    const report = await runCodegenCheck({ lockContent, files });
+    drifts = report.drifts;
+    fingerprint = report.crateFingerprint;
+    engineVersion = report.engineVersion;
+  } catch (error) {
+    if (error instanceof CodegenLockError) {
+      // A no-verdict condition, not a drift: the message already names the fix
+      // (an unknown `lock_version` says which side to upgrade), so print it as-is.
+      console.error(`\n✗ ${method.name} — ${error.message}`);
+      return EXIT_NO_VERDICT;
+    }
+    throw error;
   }
-  return entries
-    .filter((entry) => entry.isDirectory() && !expected.has(entry.name))
-    .map((entry) => entry.name)
-    .sort();
+
+  const stale = await compareSources(outDir, method.sourceHashes);
+
+  if (drifts.length === 0 && stale.length === 0) {
+    console.log(
+      `\n✓ ${method.name} — ${files.length} artifact(s) current  (crate ${fingerprint.slice(0, 12)}, engine ${engineVersion})`,
+    );
+    return EXIT_CURRENT;
+  }
+
+  console.error(`\n✗ ${method.name} — ${where}/`);
+  for (const drift of drifts) {
+    console.error(`    ${drift.category}: ${drift.path} — ${drift.detail}`);
+  }
+  for (const line of stale) console.error(`    ${line}`);
+  console.error(`    ${REGENERATE}`);
+  return EXIT_DRIFT;
 }
 
 async function main(): Promise<void> {
-  const methods = await discoverMethods();
-  if (methods.length === 0) {
+  let methods: MethodClosure[];
+  try {
+    methods = await discoverMethods();
+  } catch (error) {
+    if (error instanceof SymlinkRefusedError || error instanceof NonUtf8FileError) {
+      // A refusal on the source side: regenerating would ship garbage to the
+      // API (or follow a link out of the closure), so there is no verdict and
+      // no remedy to print beyond the message itself.
+      console.error(`codegen:check: ${error.message}`);
+      process.exit(EXIT_NO_VERDICT);
+    }
+    throw error;
+  }
+
+  // Orphan detection runs even when methods/ is empty: generated trees left
+  // behind after the last method was removed are drift, not "nothing to check".
+  let scan;
+  try {
+    scan = await findOrphanTrees(GENERATED_ROOT, new Set(methods.map((m) => m.name)));
+  } catch (error) {
+    if (error instanceof SymlinkRefusedError) {
+      // A symlinked src/generated/ root, or a symlinked entry directly under
+      // it. The scan runs before the per-method loop precisely so a refusal
+      // here means no verdict was ever produced over external content.
+      console.error(`codegen:check: ${error.message}`);
+      process.exit(EXIT_NO_VERDICT);
+    }
+    throw error;
+  }
+
+  const counts = { current: 0, drift: 0, noVerdict: 0 };
+  const record = (code: number): void => {
+    if (code === EXIT_CURRENT) counts.current += 1;
+    else if (code === EXIT_DRIFT) counts.drift += 1;
+    else counts.noVerdict += 1;
+  };
+
+  if (methods.length === 0 && scan.orphans.length === 0 && scan.caseMismatches.length === 0) {
     console.error(
       `codegen:check: no methods found under ${path.relative(REPO_ROOT, METHODS_DIR)}/ — nothing to check.`,
     );
     process.exit(EXIT_NO_VERDICT);
   }
 
-  let worst = EXIT_CURRENT;
-  const record = (code: number): void => {
-    worst = Math.max(worst, code);
-  };
-
   console.log(`codegen:check: ${methods.length} method(s), offline`);
 
   for (const method of methods) {
-    const outDir = path.join(GENERATED_ROOT, method.name);
-    const where = path.relative(REPO_ROOT, outDir);
+    record(await checkMethod(method));
+  }
 
-    const tree = await readGeneratedTree(outDir);
-    if (tree.status === "no-tree") {
-      console.error(`\n✗ ${method.name} — no generated tree at ${where}/`);
-      console.error(`    ${REGENERATE}`);
-      record(EXIT_DRIFT);
-      continue;
-    }
-    if (tree.status === "no-lock") {
-      console.error(
-        `\n✗ ${method.name} — no ${LOCK_FILENAME} in ${where}/, so there is no verdict.`,
-      );
-      console.error(`    Found: ${tree.treePaths.join(", ") || "(empty directory)"}`);
-      console.error(`    ${REGENERATE}`);
-      record(EXIT_NO_VERDICT);
-      continue;
-    }
-    const { lockContent, files } = tree;
-
-    let drifts: { category: string; path: string; detail: string }[];
-    let fingerprint: string;
-    let engineVersion: string;
-    try {
-      const report = await runCodegenCheck({ lockContent, files });
-      drifts = report.drifts;
-      fingerprint = report.crateFingerprint;
-      engineVersion = report.engineVersion;
-    } catch (error) {
-      if (error instanceof CodegenLockError) {
-        // A no-verdict condition, not a drift: the message already names the fix
-        // (an unknown `lock_version` says which side to upgrade), so print it as-is.
-        console.error(`\n✗ ${method.name} — ${error.message}`);
-        record(EXIT_NO_VERDICT);
-        continue;
-      }
-      throw error;
-    }
-
-    const stale = await compareSources(outDir, method.sourceHashes);
-
-    if (drifts.length === 0 && stale.length === 0) {
-      console.log(
-        `\n✓ ${method.name} — ${files.length} artifact(s) current  (crate ${fingerprint.slice(0, 12)}, engine ${engineVersion})`,
-      );
-      continue;
-    }
-
-    console.error(`\n✗ ${method.name} — ${where}/`);
-    for (const drift of drifts) {
-      console.error(`    ${drift.category}: ${drift.path} — ${drift.detail}`);
-    }
-    for (const line of stale) console.error(`    ${line}`);
-    console.error(`    ${REGENERATE}`);
+  for (const { actual, expected } of scan.caseMismatches) {
+    // On a case-insensitive filesystem this tree may be the very one the loop
+    // above just certified, so the remedy is a rename — never a delete.
+    console.error(
+      `\n✗ ${actual} — a generated tree whose name matches methods/${expected}/ in case only.`,
+    );
+    console.error(`    Rename src/generated/${actual}/ to src/generated/${expected}/.`);
     record(EXIT_DRIFT);
   }
 
-  const orphans = await findOrphanTrees(new Set(methods.map((m) => m.name)));
-  for (const name of orphans) {
+  for (const name of scan.orphans) {
     console.error(`\n✗ ${name} — a generated tree with no methods/${name}/ behind it.`);
     console.error(
       `    Regeneration never removes a whole tree: delete src/generated/${name}/ or restore the method.`,
@@ -195,6 +195,13 @@ async function main(): Promise<void> {
     record(EXIT_DRIFT);
   }
 
+  console.log(
+    `\ncodegen:check: ${counts.current} current · ${counts.drift} drift · ${counts.noVerdict} no verdict`,
+  );
+
+  // Precedence documented in the header: no-verdict outranks drift outranks current.
+  const worst =
+    counts.noVerdict > 0 ? EXIT_NO_VERDICT : counts.drift > 0 ? EXIT_DRIFT : EXIT_CURRENT;
   process.exit(worst);
 }
 
