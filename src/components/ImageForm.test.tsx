@@ -32,7 +32,7 @@ async function flush(ms = 0) {
 }
 
 function submitForm() {
-  const form = screen.getByLabelText(/image prompt/i).closest("form");
+  const form = screen.getByRole("button", { name: /generate image/i }).closest("form");
   if (!form) throw new Error("form not found");
   fireEvent.submit(form);
 }

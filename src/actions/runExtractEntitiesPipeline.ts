@@ -1,5 +1,6 @@
 "use server";
 
+import { PIPE_IO_CONTRACTS } from "@/generated/extract-entities/contracts";
 import { loadExtractEntitiesBundle } from "@/lib/loadBundle";
 import { parseEntities, type ExtractedEntities } from "@/types/extractEntitiesPipeline";
 import { executeBlockingRun, type BlockingOutcome } from "@/lib/blockingRun";
@@ -9,26 +10,21 @@ import {
   type PollOutcome,
   type StartOutcome,
 } from "@/lib/durableRun";
-import type { PipelineError } from "@/lib/errors";
+import { gateRunInputs, requireContract } from "@/lib/runInputs";
 import type { StartOptions } from "@pipelex/sdk";
 
 const PIPE_CODE = "extract_entities";
 
-function emptyInputError(): PipelineError {
-  return {
-    kind: "bad_request",
-    title: "Input required",
-    message: "Enter some text to extract entities from.",
-    details: "Empty input",
-  };
-}
+// The same generated contract the browser rendered the form from. One gate, two
+// call sites, zero drift — and the server's copy is the one that's trusted.
+const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "extract_entities", PIPE_CODE);
 
 /** SDK options shared by both paths — `execute` and `start` take the same shape. */
-async function buildOptions(text: string): Promise<StartOptions> {
+async function buildOptions(inputs: Record<string, unknown>): Promise<StartOptions> {
   return {
     pipe_code: PIPE_CODE,
     mthds_contents: [await loadExtractEntitiesBundle()],
-    inputs: { text },
+    inputs,
   };
 }
 
@@ -39,18 +35,20 @@ async function buildOptions(text: string): Promise<StartOptions> {
  * outcome (never throws across the server→client boundary).
  */
 export async function runExtractEntitiesBlocking(
-  text: string,
+  data: Record<string, unknown>,
 ): Promise<BlockingOutcome<ExtractedEntities>> {
-  const trimmed = text.trim();
-  if (!trimmed) return { ok: false, error: emptyInputError() };
-  return executeBlockingRun(() => buildOptions(trimmed), parseEntities);
+  const gated = gateRunInputs(CONTRACT, data);
+  if (!gated.ok) return gated;
+  return executeBlockingRun(() => buildOptions(gated.inputs), parseEntities);
 }
 
 /** DURABLE path — start the run (`POST /v1/start`) and return its id to poll. */
-export async function startExtractEntitiesRun(text: string): Promise<StartOutcome> {
-  const trimmed = text.trim();
-  if (!trimmed) return { ok: false, error: emptyInputError() };
-  return startDurableRun(() => buildOptions(trimmed));
+export async function startExtractEntitiesRun(
+  data: Record<string, unknown>,
+): Promise<StartOutcome> {
+  const gated = gateRunInputs(CONTRACT, data);
+  if (!gated.ok) return gated;
+  return startDurableRun(() => buildOptions(gated.inputs));
 }
 
 /** DURABLE path — poll one tick of a started run by id. */

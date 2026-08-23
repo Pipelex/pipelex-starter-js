@@ -26,6 +26,15 @@ const PARSED = { url: "https://cdn.pipelex.com/x.png", mime_type: "image/png" };
 // Blocking execute returns a PipelexExecuteResult with the resolved `main_stuff`.
 const BLOCKING_RESPONSE = { pipeline_run_id: "run-1", main_stuff: IMAGE_CONTENT };
 
+// The schema-shaped data dict the form hands the action (`rjsfDataFromRunValues`):
+// a `native.Text` input is `{ text }` in schema shape.
+const DATA = { image_prompt: { text: "a red bicycle" } };
+// What the kernel's gate puts on the wire — the runtime's explicit
+// `{ concept, content }` envelope, built from the method's own contract.
+const WIRE_INPUTS = {
+  image_prompt: { concept: "native.Text", content: { text: "a red bicycle" } },
+};
+
 beforeEach(() => {
   execute.mockReset();
   start.mockReset();
@@ -34,31 +43,37 @@ beforeEach(() => {
 });
 
 describe("runGenerateImageBlocking", () => {
-  it("calls execute with the bundle, pipe code, and trimmed prompt; returns narrowed output", async () => {
+  it("calls execute with the bundle, pipe code, and gated inputs; returns narrowed output", async () => {
     execute.mockResolvedValueOnce(BLOCKING_RESPONSE);
-    const result = await runGenerateImageBlocking("  a red bicycle  ");
+    const result = await runGenerateImageBlocking(DATA);
     expect(execute).toHaveBeenCalledWith({
       pipe_code: "generate_image",
       mthds_contents: ["DUMMY_BUNDLE_TOML"],
-      inputs: { image_prompt: "a red bicycle" },
+      inputs: WIRE_INPUTS,
     });
     // `toMatchObject`: these tests assert delegation + narrowed output; the `usage`
     // sibling now on the outcome is covered in the helper/model tests.
     expect(result).toMatchObject({ ok: true, output: PARSED });
   });
 
-  it("returns a bad_request error on empty input without calling the SDK", async () => {
-    const result = await runGenerateImageBlocking("   ");
+  it("returns a bad_request error on missing input without calling the SDK", async () => {
+    // The kernel gate runs server-side too: the browser's readiness check is the
+    // Run button's UX, this is the trust boundary.
+    const result = await runGenerateImageBlocking({});
     expect(result).toEqual({
       ok: false,
-      error: expect.objectContaining({ kind: "bad_request", title: "Prompt required" }),
+      error: expect.objectContaining({
+        kind: "bad_request",
+        title: "Input required",
+        details: expect.stringContaining("image_prompt"),
+      }),
     });
     expect(execute).not.toHaveBeenCalled();
   });
 
   it("classifies a missing image URL as bad_image_output", async () => {
     execute.mockResolvedValueOnce({ pipeline_run_id: "run-1", main_stuff: { caption: "no url" } });
-    const result = await runGenerateImageBlocking("a red bicycle");
+    const result = await runGenerateImageBlocking(DATA);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("bad_image_output");
@@ -68,7 +83,7 @@ describe("runGenerateImageBlocking", () => {
     execute.mockRejectedValueOnce(
       new ApiUnreachableError("unreachable", "https://api.unreachable.example", "ECONNREFUSED"),
     );
-    const result = await runGenerateImageBlocking("a red bicycle");
+    const result = await runGenerateImageBlocking(DATA);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("api_unreachable");
@@ -76,19 +91,19 @@ describe("runGenerateImageBlocking", () => {
 });
 
 describe("startGenerateImageRun", () => {
-  it("calls start with the bundle, pipe code, and trimmed prompt; returns the run id", async () => {
+  it("calls start with the bundle, pipe code, and gated inputs; returns the run id", async () => {
     start.mockResolvedValueOnce({ pipeline_run_id: "run-1" });
-    const result = await startGenerateImageRun("  a red bicycle  ");
+    const result = await startGenerateImageRun(DATA);
     expect(start).toHaveBeenCalledWith({
       pipe_code: "generate_image",
       mthds_contents: ["DUMMY_BUNDLE_TOML"],
-      inputs: { image_prompt: "a red bicycle" },
+      inputs: WIRE_INPUTS,
     });
     expect(result).toEqual({ ok: true, runId: "run-1" });
   });
 
-  it("returns a bad_request error on empty input without calling start", async () => {
-    const result = await startGenerateImageRun("   ");
+  it("returns a bad_request error on missing input without calling start", async () => {
+    const result = await startGenerateImageRun({});
     expect(result.ok).toBe(false);
     expect(start).not.toHaveBeenCalled();
   });

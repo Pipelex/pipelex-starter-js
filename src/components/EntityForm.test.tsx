@@ -31,8 +31,11 @@ async function flush(ms = 0) {
   });
 }
 
+// Reached through the submit button rather than the input's label: the labels
+// are the kernel's humanized contract names now, so a bundle rename would
+// otherwise break every test in this file rather than just the one asserting it.
 function submitForm() {
-  const form = screen.getByLabelText(/input text/i).closest("form");
+  const form = screen.getByRole("button", { name: /extract entities/i }).closest("form");
   if (!form) throw new Error("form not found");
   fireEvent.submit(form);
 }
@@ -55,6 +58,23 @@ const USAGE = {
 };
 
 describe("EntityForm", () => {
+  it("renders the input the method's contract declares, seeded with the sample", () => {
+    render(<EntityForm />);
+    // The bundle's `text` input → "Text" through the kernel's `app`
+    // presentation. Nothing in this component names the input: the label, the
+    // control and the readiness rule all come from the generated contract.
+    expect(screen.getByLabelText("Text")).toHaveDisplayValue(/Tim Cook/);
+  });
+
+  it("gates Run on the contract's required inputs, not a hand-written check", () => {
+    render(<EntityForm />);
+    const runButton = screen.getByRole("button", { name: /extract entities/i });
+    expect(runButton).toBeEnabled();
+
+    fireEvent.change(screen.getByLabelText("Text"), { target: { value: "" } });
+    expect(runButton).toBeDisabled();
+  });
+
   it("durable mode (default): streams live status, then renders the result", async () => {
     start.mockResolvedValueOnce({ ok: true, runId: "run-1" });
     poll

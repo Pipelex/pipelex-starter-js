@@ -52,35 +52,39 @@ Tracker for `wip/adopt-form/design.md` (read it first; decisions A–E and the k
 
 ---
 
-## → RESUME HERE (cold start): Phase 2
+## → RESUME HERE (cold start): Phase 3
 
-**Read first, in this order:** `wip/adopt-form/design.md` (its Checkpoint 1 section is the current state and Decisions C/D govern Phase 2), then `wip/adopt-form/integration-log.md`'s entry discipline at the top. `CLAUDE.md` is unchanged so far — Phase 4 updates it.
+**Read first, in this order:** `wip/adopt-form/design.md` (Decision E governs Phase 3), then `wip/adopt-form/integration-log.md` — its entry discipline at the top, and its Phase 2 entries, which carry the patterns Phase 3 repeats. `CLAUDE.md` is unchanged so far; Phase 4 updates it.
 
-**Branch state:** `feature/Adopt-form`, two commits on top of `32edc66 plan` — `2239824` (Phase 0) and `5474235` (Phase 1). No PR is open yet; the PR is Checkpoint 2's last item.
+**Branch state:** `feature/Adopt-form`, on top of `32edc66 plan` — `2239824` (Phase 0), `5474235` (Phase 1), `592f0ec` (Checkpoint 1), plus Phase 2. No PR is open yet; the PR is Checkpoint 2's last item.
 
-**What already exists that Phase 2 builds on:**
+**What already exists that Phase 3 builds on:**
 
-- `@pipelex/mthds-form@0.2.0` installed, styling lane wired and proven. Import the headless core from `@pipelex/mthds-form` and the controls from `@pipelex/mthds-form/react` — stable specifiers only, never a deep `dist/` path.
-- `PIPE_IO_CONTRACTS` exported from `src/generated/<method>/contracts.ts` for all three methods. Keys are namespaced: `extract_entities.extract_entities`, `generate_image.generate_image`, `summarize_pdf.summarize_pdf`. Each method has exactly one required input — `text`, `image_prompt`, `document` — all `optional: false`, so readiness gating is a single field per form.
-- `getPipeIOContract(PIPE_IO_CONTRACTS, domain, pipeCode)` — **domain second, pipe code third.** The kernel's README shows them transposed; it is silent (both are `string`, and a miss returns `undefined`, which renders as an empty form with a live Run button).
-- The canonical composition to copy is `pipelex-app/src/components/method-app/method-app-form.tsx` — derive → fold empty optionals behind `OptionalToggle` → `FieldRenderer` per field → `FieldPresentationProvider presentation="app"`. It also shows the `onDropFile` → `setValueAtPath` seam Phase 3 needs.
+- `@pipelex/mthds-form@0.2.0`, styling lane proven, `PIPE_IO_CONTRACTS` committed for all three methods. `summarize_pdf.summarize_pdf` has one required input, `document`.
+- `src/lib/runInputs.ts` — `requireContract` + `gateRunInputs`. The PDF action reshapes onto exactly the same gate; nothing new is needed there.
+- `src/hooks/useRunInputs.ts` and `src/components/RunInputsForm.tsx`. `RunInputsForm` already threads a `FieldEnv` through (`env` prop, merged so the form's `disabled` always wins) — that is the seam `onDropFile` plugs into, no component change required.
+- `src/lib/clientFile.ts`'s `fileToDataUrl` is the host upload handler; write the result back with `setValueAtPath(values, id.split("."), { url, filename })` via the hook's `setValues`.
 
 **Gotchas already paid for, don't rediscover:**
 
-- The shell may export `PIPELEX_BASE_URL` / `PIPELEX_API_KEY`, which **silently beat `.env.local`** (`loadEnvConfig` never overrides an existing `process.env` value). Run keyed scripts as `env -u PIPELEX_BASE_URL -u PIPELEX_API_KEY npm run codegen` and read the endpoint the banner prints.
-- `src/generated/` is out of Prettier's and ESLint's reach on purpose. Never hand-edit anything there, `contracts.ts` included — the sidecar's `derived` map now makes that a `make check` failure.
+- Query kernel-rendered controls by **role plus name** (`getByRole("textbox", { name: "Text" })`), never `getByLabelText` — humanized labels are short and collide with page chrome under Playwright/Testing Library strict mode.
+- The shell may export `PIPELEX_BASE_URL` / `PIPELEX_API_KEY`, which **silently beat `.env.local`**. Run keyed scripts as `env -u PIPELEX_BASE_URL -u PIPELEX_API_KEY npm run codegen`.
+- `make test-e2e` prompts before spending; `npx playwright test <spec>` runs one spec directly, and `playwright.config.ts` reuses an existing dev server on port 4100.
+- `src/generated/` is out of Prettier's and ESLint's reach on purpose — never hand-edit anything there, `contracts.ts` included.
 
-## Phase 2 — the text path (Decisions C + D)
+## Phase 2 — the text path (Decisions C + D) — **DONE**
 
-- [ ] `src/components/RunInputsForm.tsx` (`"use client"`), the one shared kernel composition: props ≈ `{ contract, values, onValuesChange, disabled, env? }`; internals: `fieldsForContract(contract)` mapped over `FieldRenderer`, empty optionals folded behind `OptionalToggle`, readiness via `computeReadiness` surfaced to the parent (recommend an `onReadinessChange` callback or a readiness return from a small companion hook — decide, log the Decision and what would flip it), all wrapped in `FieldPresentationProvider presentation="app"` (humanized labels, no concept pill; strings stay the kernel's English defaults).
-- [ ] Swap `EntityForm`: contract from `src/generated/extract-entities/contracts.ts` via `getPipeIOContract(PIPE_IO_CONTRACTS, "extract_entities", "extract_entities")` — argument order is contracts, domain, pipe code; the domains are `extract_entities` / `generate_image` / `summarize_pdf` (each bundle's `domain` line). Keep the sample text as the seeded initial value. On submit: `rjsfDataFromRunValues` → pass the schema-shaped data dict to the action. Run button gates on readiness (replacing `!text.trim()`).
-- [ ] Reshape `runExtractEntitiesPipeline.ts` per Decision D: the trio's input becomes the schema-shaped data dict. In a shared per-action preamble (server side): `buildRunInputsSchema(contract.inputs)` → `prepareRunInputs` → `validateRunInputs` — invalid verdict returns `{ ok: false, error }` as a `bad_request` `PipelineError` built from the verdict (`missingInputs`, falling back to `errors` + `describeValidationError`; never throw across the boundary) — → `apiInputsFromSchemaData` → `inputs` for `buildOptions`. Delete `emptyInputError` and the trim guards: one gate, two call sites. The server imports the same generated contract the client rendered from.
-  - [ ] Consider one tiny shared helper in `src/lib/` (e.g. `gateRunInputs(contract, data)` returning `{ok: true, inputs} | {ok: false, error}`) so the three actions stay thin trios — log the Decision either way.
-- [ ] Same swap for `ImageForm` + `runGenerateImagePipeline.ts`.
-- [ ] Rewrite `EntityForm.test.tsx` and `ImageForm.test.tsx` against kernel-rendered controls: accessible queries still, but the labels are now the kernel's humanized input names, not the hand-written "Input text" / "Image prompt". Watch for happy-dom gaps around Radix primitives (these two are plain text/prose controls so risk is low; if a control needs `hasPointerCapture`/`scrollIntoView` shims, that's a Trap entry with the shim).
-- [ ] Keep `useRun`, `ModeToggle`, `RunStatus`, `ErrorDisplay`, results, `CostReport` untouched (design's non-goals).
-- [ ] `make all` clean.
-- [ ] Log entries written (the action-boundary reshape as the skill's canonical pattern, the readiness-wiring Decision, the invalid-verdict → structured-error mapping, label changes breaking tests as a pre-warned Trap).
+- [x] `src/components/RunInputsForm.tsx` (`"use client"`), the one shared kernel composition — **presentational only**: props are `{ fields, values, onValuesChange, disabled, env? }` (deviation: `fields`, not `contract`, so the derivation happens once in the hook), `FieldRenderer` per field, empty optionals folded behind `OptionalToggle`, all wrapped in `FieldPresentationProvider presentation="app"`.
+- [x] **Readiness decision: a companion hook, `src/hooks/useRunInputs.ts`** — owns the value state, derives `fields` once, exposes `ready` (`computeReadiness`) and `toData()` (`rjsfDataFromRunValues`, built on submit rather than per keystroke). Chosen over an `onReadinessChange` callback (needs an effect, classic loop shape) and over parent-derives-everything (correct but repeated per form). Logged with what would flip it.
+- [x] Swapped `EntityForm` and `ImageForm` onto it; sample text/prompt survive as the hook's seeded initial values. Run gates on `ready`, not `!text.trim()`.
+- [x] Reshaped both action trios per Decision D: the argument is now the schema-shaped data dict, `emptyInputError` and the trim guards are gone, and `gateRunInputs` runs the four kernel steps server-side.
+- [x] **Shared helper decided: `src/lib/runInputs.ts`** — `gateRunInputs(contract, data)` returning `{ok:true,inputs} | {ok:false,error}`, plus `requireContract` (throws at module load; `getPipeIOContract` returning `undefined` renders as an empty form with a live Run button). Pure module, importable from either side. Covered by `src/lib/runInputs.test.ts`.
+- [x] Invalid verdict → `bad_request` `PipelineError`: `missingInputs` when the scan names something, otherwise `errors` through `describeValidationError` with a local 6-key English translator typed on `ValidationMessageKey`.
+- [x] Rewrote `EntityForm.test.tsx` and `ImageForm.test.tsx` against kernel-rendered controls (labels are now `humanizeFieldName` of the contract's input names — "Text", "Image prompt"). Two new EntityForm tests pin the contract-derived label and the contract-driven Run gating. No happy-dom shims needed (plain text controls).
+- [x] `useRun`, `ModeToggle`, `RunStatus`, `ErrorDisplay`, results and `CostReport` untouched.
+- [x] `make all` clean.
+- [x] **Live verification of the wire-shape change** (bare value → `{concept, content}` envelope), which unit tests cannot reach: `e2e/extract.spec.ts` (1 passed) and `e2e/generate-image.spec.ts` (2 passed, durable + blocking cap) against the hosted API. Their label selectors were updated here rather than deferred to Phase 4 — a knowingly-broken spec must not straddle two phases. `summarize-pdf.spec.ts` still waits on Phase 3.
+- [x] Log entries written: 5 Decisions, 2 Traps (label churn + the strict-mode label collision; whitespace-only input), 1 Upstream (`isFilled` and blank strings, filed at `../wip/inbox/2026-08-23-mthds-form-isfilled-blank-string.md`), 1 Command (the live e2e proof).
 
 ## Phase 3 — the file path (Decision E)
 
