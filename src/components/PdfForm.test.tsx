@@ -109,6 +109,28 @@ describe("PdfForm", () => {
     expect(blocking).not.toHaveBeenCalled();
   });
 
+  it("drops the previous PDF when its replacement is rejected", async () => {
+    render(<PdfForm />);
+    await selectFile(pdfFile("first.pdf"));
+
+    // Once a file is chosen the kernel renders a file chip and hides the drop
+    // zone, so the one way to select a replacement is this form's own shortcut.
+    // Hand it an oversized sample: the replacement is rejected, and the point is
+    // that the *first* PDF must not survive as a submittable value.
+    const oversized = new Blob([new Uint8Array(9 * 1024 * 1024)], { type: "application/pdf" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce({ ok: true, blob: async () => oversized }),
+    );
+    try {
+      fireEvent.click(screen.getByRole("button", { name: /use sample pdf/i }));
+      expect(await screen.findByText("PDF too large")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /summarize pdf/i })).toBeDisabled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("renders the structured error when a poll returns ok:false", async () => {
     start.mockResolvedValueOnce({ ok: true, runId: "run-1" });
     poll.mockResolvedValueOnce({

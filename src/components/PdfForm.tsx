@@ -82,6 +82,12 @@ export function PdfForm() {
     async (id: string, file: File) => {
       setFileError(null);
       reset(); // clear any prior run result/error so only the new selection shows
+      // The new selection replaces the old one *now* — before the size check and
+      // before the encode — so the form's value is only ever a successfully
+      // encoded file. Leaving the previous value in place while a replacement is
+      // read (or after one is rejected) would keep `ready` true and let a submit
+      // silently run the document the user just replaced.
+      setValues((current) => setValueAtPath(current, id.split("."), undefined));
       // Checked here, before encoding, purely to save the work: base64 inflates
       // a file ~37%, and past this cap the payload would not fit the Server
       // Action body limit anyway. The same constant is re-checked server-side,
