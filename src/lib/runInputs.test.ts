@@ -8,6 +8,7 @@ import {
 import { gateRunInputs, requireContract, schemaFor } from "./runInputs";
 import { PIPE_IO_CONTRACTS } from "@/generated/extract-entities/contracts";
 import { PIPE_IO_CONTRACTS as PDF_CONTRACTS } from "@/generated/summarize-pdf/contracts";
+import { PIPE_IO_CONTRACTS as COMPLEX_CONTRACTS } from "@/generated/complex-form/contracts";
 
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "extract_entities", "extract_entities");
 /** A file-shaped input, to cover the `{url}` envelope alongside `{text}`. */
@@ -170,11 +171,13 @@ describe("gateRunInputs", () => {
  * table drives the real `computeReadiness` and the real gate over the same
  * inputs and demands the same verdict.
  *
- * The structured case is the one that matters most and the one no method in
- * `methods/` can produce: every committed contract derives to a `prose` or
- * `document` field, and for those `fieldFilled` collapses to `isFilled`, so a
- * gate built on the wrong predicate looks correct against this repo's own
- * methods. It is wrong for the first adopter with an object-shaped concept.
+ * The structured case is the one that matters most. The synthetic contracts
+ * below predate `methods/complex-form/`, and they are kept rather than replaced
+ * by it: they isolate one shape each, including shapes no committed method has
+ * (a struct with required children, a half-filled struct). For a `prose` or
+ * `document` field — all the other three methods derive to those —
+ * `fieldFilled` collapses to `isFilled`, so a gate built on the wrong predicate
+ * still looks correct against them.
  */
 describe("the gate agrees with the Run button", () => {
   const person: PipeIOContracts = {
@@ -222,8 +225,7 @@ describe("the gate agrees with the Run button", () => {
    * A plural input — an `array` json_schema, which is exactly what the kernel's
    * `isPluralInput` keys off. `mustBeFilled` singles those out with an explicit
    * `kind !== "list"` branch: a list never gates, even declared non-optional.
-   * No method in `methods/` declares one, so nothing else here reaches that
-   * branch.
+   * `methods/complex-form/` declares one too; this isolates the branch.
    */
   const plural: PipeIOContracts = {
     "d.p": {
@@ -320,6 +322,42 @@ describe("the gate agrees with the Run button", () => {
       domain: "d",
       pipe: "p",
       values: { pages: ["first page"] },
+    },
+    // The complex-form example, from its committed contract — the one method in
+    // `methods/` that reaches the structured and plural branches for real. Every
+    // state its form can be in belongs here, because a redesign of that method
+    // is the likeliest way to reintroduce the failure the next row describes.
+    {
+      label: "complex-form untouched",
+      contracts: COMPLEX_CONTRACTS,
+      domain: "complex_form",
+      pipe: "extract_brief",
+      values: { text: "Ada met Charles" },
+    },
+    {
+      label: "complex-form with the optional struct's enum picked",
+      contracts: COMPLEX_CONTRACTS,
+      domain: "complex_form",
+      pipe: "extract_brief",
+      values: { text: "Ada met Charles", focus: { audience: "legal" } },
+    },
+    {
+      label: "complex-form with only the optional struct's free-text child",
+      contracts: COMPLEX_CONTRACTS,
+      domain: "complex_form",
+      pipe: "extract_brief",
+      values: { text: "Ada met Charles", focus: { notes: "formal names" } },
+    },
+    {
+      label: "complex-form fully filled",
+      contracts: COMPLEX_CONTRACTS,
+      domain: "complex_form",
+      pipe: "extract_brief",
+      values: {
+        text: "Ada met Charles",
+        focus: { audience: "legal", notes: "formal names" },
+        must_include: ["Cupertino"],
+      },
     },
   ];
 

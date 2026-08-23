@@ -23,6 +23,7 @@ methods/                      # the source of truth — everything in src/genera
   extract-entities/main.mthds # text → entities pipeline (TOML)
   summarize-pdf/main.mthds    # PDF Document → structured summary
   generate-image/main.mthds   # text prompt → image (gpt-image-2)
+  complex-form/main.mthds     # text + optional struct + plural text → brief
 public/
   sample-invoice.pdf          # sample PDF the PDF example loads out of the box
 scripts/                      # native-Node TypeScript (node --experimental-strip-types)
@@ -42,6 +43,7 @@ src/
     runExtractEntitiesPipeline.ts         # runExtractEntitiesBlocking + startExtractEntitiesRun + pollExtractEntitiesRun
     runSummarizePdfPipeline.ts  # …Blocking + start… + poll…
     runGenerateImagePipeline.ts # …Blocking + start… + poll…
+    runComplexFormPipeline.ts   # …Blocking + start… + poll…
   generated/                  # COMMITTED and GENERATED — never hand-edit (see "Generated types")
     extract-entities/
       types.ts                # zod schemas + z.infer types, stamped
@@ -51,6 +53,7 @@ src/
       sources.json            # starter-owned sidecar — SHA-256 of each source .mthds + derived
     summarize-pdf/ …          # same set per method
     generate-image/ …
+    complex-form/ …
   lib/
     pipelexClient.ts          # PipelexApiClient singleton factory
     loadBundle.ts             # fs.readFile of the .mthds bundles
@@ -67,12 +70,12 @@ src/
     useRun.ts                 # unified blocking|durable state machine (client)
     useRunInputs.ts           # form values + derived fields + readiness + wire shape (client)
   components/
-    ExampleTabs.tsx           # client component — tab switcher for the 3 examples
+    ExampleTabs.tsx           # client component — tab switcher across the examples
     RunInputsForm.tsx         # client component — the one kernel composition (FieldRenderer per field)
-    EntityForm/PdfForm/ImageForm.tsx        # client components (per-example chrome, mode-agnostic)
+    EntityForm/PdfForm/ImageForm/ComplexForm.tsx  # client components (per-example chrome, mode-agnostic)
     ModeToggle.tsx            # client component — Blocking|Durable segmented control
     RunStatus.tsx             # live-status card (spinner + status label + elapsed)
-    EntityResult/PdfSummaryResult/ImageResult.tsx  # server components (render output)
+    EntityResult/PdfSummaryResult/ImageResult/ComplexFormResult.tsx  # server components (render output)
     CostReport.tsx            # per-run token usage + cost breakdown
     ErrorDisplay.tsx          # server component (renders classified PipelineError)
   types/                      # the adapter layer over src/generated/ — no shapes re-declared
@@ -80,6 +83,7 @@ src/
     extractEntitiesPipeline.ts          # re-exports ExtractedEntities + parseEntities(RunResults)
     summarizePipeline.ts      # re-exports DocumentSummary + parseDocumentSummary(RunResults)
     generateImagePipeline.ts  # aliases Image as GeneratedImage + parseGeneratedImage(RunResults)
+    complexFormPipeline.ts    # re-exports ExtractionBrief + parseExtractionBriefResult(RunResults)
 e2e/
   extract.spec.ts             # Playwright e2e (hits live API)
   summarize-pdf.spec.ts
