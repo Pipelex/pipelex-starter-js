@@ -2,7 +2,7 @@
 
 import { getPipelexClient } from "@/lib/pipelexClient";
 import { loadSummarizePdfBundle } from "@/lib/loadBundle";
-import { MAX_PDF_BYTES, fileInputErrorToPipelineError, validateDataUrl } from "@/lib/fileEncoding";
+import { MAX_PDF_BYTES, checkFileInputs } from "@/lib/fileEncoding";
 import { parseDocumentSummary, type DocumentSummary } from "@/types/summarizePipeline";
 import { executeBlockingRun, type BlockingOutcome } from "@/lib/blockingRun";
 import {
@@ -21,41 +21,23 @@ const PIPE_CODE = "summarize_pdf";
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "summarize_pdf", PIPE_CODE);
 
 /**
- * The gate proves the *shape*; this proves the *bytes*.
+ * Shape gate, then file gate, in that order. Shared by both execution paths.
  *
- * A method's contract says the document input carries a `url` — it cannot say
- * "under 8 MB, and actually a PDF". So the kernel gate runs first and this runs
- * after it, over the enveloped inputs the gate produced. It only fires on an
- * inline data URL: the kernel's paste-a-URL affordance yields an `https://` or
- * `pipelex-storage://` reference, which carries no bytes across this boundary
- * and is `prepareInputs`' business to resolve.
- *
- * This is the authoritative check. The browser's own size check is an early
- * exit that saves an encode, not a gate — it is trivially bypassed.
+ * The kernel gate proves the shape a contract can declare; `checkFileInputs`
+ * proves what it cannot — that the `url` is a reference we accept, and that any
+ * bytes riding inline are a PDF under the cap. The scheme half is the
+ * security-relevant one: `prepareInputs` reads an unrecognised string as a local
+ * filesystem path, and a Server Action is a public endpoint. See its docstring.
  */
-function checkDocumentBytes(inputs: Record<string, unknown>): PipelineError | null {
-  const envelope = inputs.document as { content?: { url?: unknown; filename?: unknown } };
-  const content = envelope?.content;
-  if (typeof content?.url !== "string" || !content.url.startsWith("data:")) return null;
-
-  const fileError = validateDataUrl(content.url, {
-    allowedMimes: ["application/pdf"],
-    maxBytes: MAX_PDF_BYTES,
-  });
-  if (!fileError) return null;
-  return fileInputErrorToPipelineError(
-    fileError,
-    typeof content.filename === "string" ? content.filename : "document.pdf",
-  );
-}
-
-/** Shape gate + byte gate, in that order. Shared by both execution paths. */
 function gatePdfInputs(
   data: Record<string, unknown>,
 ): { ok: true; inputs: Record<string, unknown> } | { ok: false; error: PipelineError } {
   const gated = gateRunInputs(CONTRACT, data);
   if (!gated.ok) return gated;
-  const error = checkDocumentBytes(gated.inputs);
+  const error = checkFileInputs(gated.inputs, {
+    allowedMimes: ["application/pdf"],
+    maxBytes: MAX_PDF_BYTES,
+  });
   return error ? { ok: false, error } : gated;
 }
 

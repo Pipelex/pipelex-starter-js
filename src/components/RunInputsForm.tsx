@@ -41,9 +41,21 @@ export function RunInputsForm({
 }: RunInputsFormProps) {
   const [showOptional, setShowOptional] = useState(false);
 
-  // Optional inputs that are still empty stay folded away, so the form opens at
-  // its simplest shape. Required — or already filled — inputs always show.
-  const isFoldable = (field: RunField) => !field.required && !isFilled(values[field.name]);
+  // Optional inputs that are still empty stay folded away, so the form *opens*
+  // at its simplest shape. Required — or already seeded — inputs always show.
+  //
+  // Decided once, at mount, which is what "opens at" means: recomputing it from
+  // the live value each render makes a control disappear out from under the
+  // person using it. Clear the last character of a seeded optional input while
+  // the optional section is collapsed and the field becomes foldable, drops out
+  // of `visibleFields`, unmounts mid-edit and drops focus to `<body>`. No method
+  // in `methods/` has an optional input, so nothing here reaches it — but this
+  // is the template's one kernel composition and adopters inherit it verbatim.
+  const [foldable] = useState(
+    () =>
+      new Set(fields.filter((f) => !f.required && !isFilled(values[f.name])).map((f) => f.name)),
+  );
+  const isFoldable = (field: RunField) => foldable.has(field.name);
   const foldableCount = fields.filter(isFoldable).length;
   const visibleFields = showOptional ? fields : fields.filter((field) => !isFoldable(field));
 

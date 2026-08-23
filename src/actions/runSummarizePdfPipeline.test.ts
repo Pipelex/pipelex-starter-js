@@ -186,4 +186,45 @@ describe("the paste-a-URL escape hatch", () => {
       },
     });
   });
+
+  it("passes a pipelex-storage reference through untouched", async () => {
+    prepareInputs.mockResolvedValueOnce(PREPARED);
+    start.mockResolvedValueOnce({ pipeline_run_id: "run-1" });
+    const result = await startSummarizePdfRun({
+      document: { url: "pipelex-storage://abc123" },
+    });
+    expect(result).toEqual({ ok: true, runId: "run-1" });
+  });
+});
+
+describe("the file gate's accepted schemes", () => {
+  // `prepareInputs` resolves any string it does not recognise as a *local
+  // filesystem path*, reads it and uploads it (`@pipelex/sdk`'s
+  // `prepare-inputs.js` → `readLocalPath`). These Server Actions are public
+  // endpoints, so an unconstrained `url` is an arbitrary server-side file read
+  // whose contents come back summarized to the caller. The accepted set is
+  // closed; anything outside it must be refused before the SDK is touched.
+  it.each([
+    ["an absolute path", "/etc/passwd"],
+    ["a relative path", "../../.env.local"],
+    ["a bare filename", "package.json"],
+    ["a file:// URL", "file:///etc/hosts"],
+    ["a cleartext http URL", "http://169.254.169.254/latest/meta-data/"],
+  ])("refuses %s without reaching the SDK", async (_label, url) => {
+    const result = await startSummarizePdfRun({ document: { url, filename: "invoice.pdf" } });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe("bad_request");
+    expect(result.error.title).toBe("Unsupported file reference");
+    expect(prepareInputs).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("refuses on the blocking path too, not just the durable one", async () => {
+    const result = await runSummarizePdfBlocking({ document: { url: "/etc/passwd" } });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe("bad_request");
+    expect(prepareInputs).not.toHaveBeenCalled();
+  });
 });

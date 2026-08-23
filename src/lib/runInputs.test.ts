@@ -5,7 +5,7 @@ import {
   rjsfDataFromRunValues,
   type PipeIOContracts,
 } from "@pipelex/mthds-form";
-import { gateRunInputs, requireContract } from "./runInputs";
+import { gateRunInputs, requireContract, schemaFor } from "./runInputs";
 import { PIPE_IO_CONTRACTS } from "@/generated/extract-entities/contracts";
 import { PIPE_IO_CONTRACTS as PDF_CONTRACTS } from "@/generated/summarize-pdf/contracts";
 
@@ -27,6 +27,17 @@ describe("requireContract", () => {
     expect(() => requireContract(PIPE_IO_CONTRACTS, "extract_entities", "nope")).toThrow(
       /extract_entities\.extract_entities/,
     );
+  });
+});
+
+describe("schemaFor", () => {
+  it("returns the same schema object for a contract, every time", () => {
+    // Object *identity*, not deep equality, and that is the whole point: the
+    // kernel's ajv singleton caches compiled validators keyed on the schema
+    // object and never evicts them, so a fresh-but-equal object per call
+    // retains another validator on every request to a public Server Action.
+    expect(schemaFor(CONTRACT)).toBe(schemaFor(CONTRACT));
+    expect(schemaFor(PDF_CONTRACT)).not.toBe(schemaFor(CONTRACT));
   });
 });
 
@@ -263,11 +274,15 @@ describe("the gate agrees with the Run button", () => {
     },
     { label: "plural input untouched", contracts: plural, domain: "d", pipe: "p", values: {} },
     {
+      // A bare string array, which is what a `kind: "list"` over a text item
+      // holds. The item-shaped `[{text: "first page"}]` looks right and is not:
+      // `rjsfDataFromRunValues` drops the content, this case collapses onto the
+      // untouched row above, and the filled-plural envelope goes untested.
       label: "plural input with one entry",
       contracts: plural,
       domain: "d",
       pipe: "p",
-      values: { pages: [{ text: "first page" }] },
+      values: { pages: ["first page"] },
     },
   ];
 
@@ -280,6 +295,19 @@ describe("the gate agrees with the Run button", () => {
     const gate = gateRunInputs(contract, rjsfDataFromRunValues(values, fields));
 
     expect(gate.ok).toBe(runButtonLive);
+  });
+
+  it("carries a filled list's items into the wire envelope", () => {
+    // Agreement alone cannot catch a fixture whose content is silently dropped:
+    // both sides say "ready" for an empty list too, so the row above passes
+    // either way. Assert the payload the plural case is there to exercise.
+    const contract = requireContract(plural, "d", "p");
+    const fields = fieldsForContract(contract);
+    const gate = gateRunInputs(contract, rjsfDataFromRunValues({ pages: ["first"] }, fields));
+    expect(gate).toEqual({
+      ok: true,
+      inputs: { pages: { concept: "native.Text", content: [{ text: "first" }] } },
+    });
   });
 });
 

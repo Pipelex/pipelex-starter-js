@@ -114,7 +114,7 @@ Text inputs are plain strings. File inputs (the PDF example) go through one extr
 2. The Server Action validates the shape against the contract, then the bytes (`validateDataUrl` in `src/lib/fileEncoding.ts` — the authoritative MIME + size gate; the browser's own size check is an early exit that saves an encode, not a gate).
 3. The Server Action hands the input to `client.prepareInputs()`, which reads the method's declared signature, recognizes the input as a file, uploads the bytes to Pipelex storage, and rewrites the input to a small `pipelex-storage://` URI. The run request carries that lightweight reference rather than fat inline base64 — the app never hosts the file itself.
 
-The kernel's file control also offers "paste a URL instead", so an `https://` or `pipelex-storage://` reference works without any upload at all.
+The kernel's file control also offers "paste a URL instead", so an `https://` or `pipelex-storage://` reference works without any upload at all. Those two schemes and `data:` are the whole accepted set, checked before anything else: the SDK reads an unrecognised string as a path on the server's own disk, so a public Server Action has to refuse by default rather than assume "no bytes" means "nothing to check".
 
 Image **outputs** (the image example) come back as a URL — a storage URL or a base64 data URL — which renders directly in an `<img>`.
 

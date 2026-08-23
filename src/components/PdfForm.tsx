@@ -185,9 +185,12 @@ export function PdfForm() {
           disabled={running}
           env={{ onDropFile: handleDropFile, uploadingIds: encodingIds }}
         />
-        {/* Disabled while the field is busy, which now spans this shortcut's own
-            fetch as well as any encode — the kernel's dropzone reads the same
-            set, so neither door is open while a selection is resolving. */}
+        {/* Disabled while the field is busy, which spans this shortcut's own
+            fetch as well as any encode. The kernel's *dropzone* reads the same
+            set, so drag-and-drop is closed too — but its "paste a URL instead"
+            control is not: `uploadingIds` reaches the dropzone only, so a URL
+            pasted mid-encode is overwritten when the earlier read lands. Filed
+            upstream; the host cannot close that door from here. */}
         <button
           type="button"
           onClick={handleUseSample}

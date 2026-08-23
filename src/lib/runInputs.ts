@@ -68,6 +68,32 @@ export type GateOutcome =
   | { ok: false; error: PipelineError };
 
 /**
+ * One schema object per contract, for the lifetime of the process.
+ *
+ * `buildRunInputsSchema` is a pure function of the contract, so rebuilding it is
+ * *semantically* free — but the kernel validates through a module-level ajv
+ * singleton whose compiled-schema cache is keyed on **schema object identity**
+ * and is never evicted (`ajv`'s `Map`-based `_cache`; the kernel never calls
+ * `removeSchema`). A fresh object per call therefore misses every time and
+ * retains another compiled validator. On a publicly callable Server Action that
+ * is unbounded growth driven by the cheapest request there is — an empty body,
+ * rejected in a fraction of a millisecond, costing no model spend.
+ *
+ * Weakly keyed so a contract that goes out of scope (a test fixture) takes its
+ * schema with it; in the app the contracts are module-level constants, so this
+ * holds exactly one entry per method.
+ */
+const SCHEMA_CACHE = new WeakMap<PipeIOContract, ReturnType<typeof buildRunInputsSchema>>();
+
+export function schemaFor(contract: PipeIOContract) {
+  const cached = SCHEMA_CACHE.get(contract);
+  if (cached) return cached;
+  const schema = buildRunInputsSchema(contract.inputs);
+  SCHEMA_CACHE.set(contract, schema);
+  return schema;
+}
+
+/**
  * The kernel's gate: combine the per-input schemas, repair the data, validate
  * it, reject required inputs that arrived empty, and build the
  * `{ concept, content }` map the run expects.
@@ -80,7 +106,7 @@ export function gateRunInputs(
   contract: PipeIOContract,
   data: Record<string, unknown>,
 ): GateOutcome {
-  const schema = buildRunInputsSchema(contract.inputs);
+  const schema = schemaFor(contract);
   const prepared = prepareRunInputs(data, schema);
   const verdict = validateRunInputs(prepared, contract.inputs, schema);
 

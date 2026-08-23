@@ -21,7 +21,27 @@ export type FileInputError = {
 };
 
 const BASE64_DATA_URL_RE = /^data:([^;,]+);base64,/;
-const BASE64_PAYLOAD_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const BASE64_ALPHABET_RE = /^[A-Za-z0-9+/]*={0,2}$/;
+
+/**
+ * Whether a base64 payload is well-formed — the alphabet, the length, and the
+ * padding, in one linear pass.
+ *
+ * Written the obvious way this is a *group* repetition,
+ * `/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/`, and V8
+ * walks a repeated group with a recursive backtracking stack. Past roughly
+ * 4.47 M payload characters — about 3.2 MB decoded — it does not return `false`,
+ * it throws `RangeError: Maximum call stack size exceeded`. That crashed the
+ * Server Action with an opaque transport digest for every PDF in the 3.2–8 MB
+ * band, i.e. inside the `MAX_PDF_BYTES` this module advertises, and made the
+ * `file_too_large` branch below unreachable: anything big enough to trip it blew
+ * the stack first. The flat alternation carries no repeated group, so it is
+ * linear (a 6 MB payload matches in a few milliseconds), and the explicit
+ * length check restores the `% 4` rule the group repetition used to imply.
+ */
+function isBase64Payload(payload: string): boolean {
+  return payload.length % 4 === 0 && BASE64_ALPHABET_RE.test(payload);
+}
 
 /** MIME type of a base64 data URL, or null if the string isn't one. */
 export function dataUrlMimeType(dataUrl: string): string | null {
@@ -71,19 +91,87 @@ export function validateDataUrl(
       message: `Unsupported file type "${mime}". Expected: ${opts.allowedMimes.join(", ")}.`,
     };
   }
-  const payload = dataUrl.slice(dataUrl.indexOf(",") + 1);
-  if (!BASE64_PAYLOAD_RE.test(payload)) {
-    return {
-      kind: "unsupported_file_type",
-      message: "Expected a valid base64-encoded data URL.",
-    };
-  }
+  // Size before shape: it is the cheaper rejection (a length arithmetic, no scan
+  // of the payload) and the more likely one, and it keeps the limit this module
+  // advertises the operative one rather than something a malformed-payload check
+  // might pre-empt.
   const bytes = dataUrlByteLength(dataUrl);
   if (bytes > opts.maxBytes) {
     return {
       kind: "file_too_large",
       message: `File is ${mb(bytes)} MB; the limit is ${mb(opts.maxBytes)} MB.`,
     };
+  }
+  const payload = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  if (!isBase64Payload(payload)) {
+    return {
+      kind: "unsupported_file_type",
+      message: "Expected a valid base64-encoded data URL.",
+    };
+  }
+  return null;
+}
+
+/**
+ * References a file input may carry. A **closed** set, and that is the point.
+ *
+ * `prepareInputs` resolves any string it does not recognise as a **local
+ * filesystem path**, reads it and uploads it (`@pipelex/sdk`'s
+ * `prepare-inputs.js` → `readLocalPath`). A Server Action is a public endpoint,
+ * so an unconstrained `url` is an arbitrary server-side file read whose contents
+ * come back rendered to the caller. `http://` is left out deliberately: nothing
+ * in this template needs a cleartext fetch, and the narrower set is the safer
+ * default for code adopters copy.
+ */
+const ALLOWED_FILE_SCHEMES = ["data:", "https://", "pipelex-storage://"];
+
+/**
+ * The scheme, MIME and size gate for every file-bearing input in a gated
+ * payload. The kernel gate proves the *shape*; this proves what the contract
+ * cannot express — "a reference we accept, and if it carries bytes, few enough
+ * of the right kind".
+ *
+ * Two properties worth keeping when adapting this:
+ *
+ * 1. **Scheme first, and refuse by default.** Treating "not a data URL" as
+ *    "nothing to check" is how the local-file read above opens — the absence of
+ *    bytes to inspect is not the absence of something to verify.
+ * 2. **Keyed on the values, not on an input's name.** Hard-coding `inputs.document`
+ *    makes this whole gate return "fine" the day the bundle renames that input,
+ *    while codegen carries the rename into the form, the readiness rules and the
+ *    wire envelope. It fails open, silently, on a routine edit.
+ *
+ * This is the authoritative check. The browser's own size check is an early exit
+ * that saves an encode, not a gate — it is trivially bypassed.
+ */
+export function checkFileInputs(
+  inputs: Record<string, unknown>,
+  opts: { allowedMimes: string[]; maxBytes: number },
+): PipelineError | null {
+  for (const [name, envelope] of Object.entries(inputs)) {
+    const content = (envelope as { content?: { url?: unknown; filename?: unknown } })?.content;
+    if (typeof content?.url !== "string") continue;
+    const url = content.url;
+
+    if (!ALLOWED_FILE_SCHEMES.some((scheme) => url.startsWith(scheme))) {
+      return {
+        kind: "bad_request",
+        title: "Unsupported file reference",
+        message:
+          `The "${name}" input must be an uploaded file, an https:// URL, or a ` +
+          `pipelex-storage:// reference.`,
+        details: `unsupported_scheme: ${name}`,
+      };
+    }
+    if (!url.startsWith("data:")) continue; // A reference, not bytes — `prepareInputs` resolves it.
+
+    const fileError = validateDataUrl(url, opts);
+    if (fileError) {
+      return fileInputErrorToPipelineError(
+        fileError,
+        typeof content.filename === "string" ? content.filename : "document",
+      );
+    }
   }
   return null;
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   MAX_PDF_BYTES,
+  checkFileInputs,
   dataUrlByteLength,
   dataUrlMimeType,
   fileInputErrorToPipelineError,
@@ -75,6 +76,84 @@ describe("validateDataUrl", () => {
     // Base64 padding only appears at the very end; embedded `==` is invalid.
     const result = validateDataUrl("data:application/pdf;base64,AB==A===", opts);
     expect(result?.kind).toBe("unsupported_file_type");
+  });
+
+  it("handles a payload large enough to have overflowed the old shape regex", () => {
+    // The previous group-repetition regex threw `RangeError: Maximum call stack
+    // size exceeded` above ~4.47 M payload characters, so every PDF between
+    // 3.2 MB and the 8 MB cap crashed the Server Action instead of running.
+    // 6 MB decoded: comfortably past that threshold, comfortably under the cap.
+    const payload = "A".repeat(8 * 1024 * 1024); // 8 M chars → 6 MB decoded.
+    expect(validateDataUrl(`data:application/pdf;base64,${payload}`, opts)).toBeNull();
+  });
+
+  it("reports a file over the cap rather than inspecting its payload", () => {
+    // Size is checked first, so `file_too_large` is reachable for a payload big
+    // enough that the old ordering would have crashed on the way to it.
+    const result = validateDataUrl(`data:application/pdf;base64,${"A".repeat(16 * 1024 * 1024)}`, {
+      allowedMimes: ["application/pdf"],
+      maxBytes: MAX_PDF_BYTES,
+    });
+    expect(result?.kind).toBe("file_too_large");
+  });
+});
+
+describe("checkFileInputs", () => {
+  const opts = { allowedMimes: ["application/pdf"], maxBytes: MAX_PDF_BYTES };
+  const enveloped = (url: string, filename?: string) => ({
+    document: { concept: "native.Document", content: { url, ...(filename && { filename }) } },
+  });
+
+  it("accepts the schemes a file input may legitimately carry", () => {
+    expect(checkFileInputs(enveloped(PDF_DATA_URL), opts)).toBeNull();
+    expect(checkFileInputs(enveloped("https://example.com/a.pdf"), opts)).toBeNull();
+    expect(checkFileInputs(enveloped("pipelex-storage://abc"), opts)).toBeNull();
+  });
+
+  it.each([
+    ["an absolute path", "/etc/passwd"],
+    ["a relative path", "../../.env.local"],
+    ["a bare filename", "package.json"],
+    ["a file:// URL", "file:///etc/hosts"],
+    ["a cleartext http URL", "http://169.254.169.254/latest/meta-data/"],
+  ])("refuses %s", (_label, url) => {
+    // Anything outside the accepted set reaches `prepareInputs` as a *local
+    // filesystem path*, which it reads and uploads. Refusing by default is the
+    // whole design; see the ALLOWED_FILE_SCHEMES docstring.
+    const error = checkFileInputs(enveloped(url), opts);
+    expect(error?.kind).toBe("bad_request");
+    expect(error?.title).toBe("Unsupported file reference");
+  });
+
+  it("gates a file input whatever the bundle calls it", () => {
+    // The rename case the old `inputs.document` lookup failed open on. Codegen
+    // carries a rename into the form, the readiness rules and the wire envelope;
+    // a gate keyed on the literal name would just stop applying.
+    const renamed = { attachment: { concept: "native.Document", content: { url: "/etc/passwd" } } };
+    expect(checkFileInputs(renamed, opts)?.kind).toBe("bad_request");
+
+    const oversized = {
+      attachment: {
+        concept: "native.Document",
+        content: { url: `data:application/pdf;base64,${"A".repeat(16 * 1024 * 1024)}` },
+      },
+    };
+    expect(checkFileInputs(oversized, opts)?.kind).toBe("file_too_large");
+  });
+
+  it("ignores inputs that carry no url, and checks every one that does", () => {
+    const mixed = {
+      text: { concept: "native.Text", content: { text: "not a file" } },
+      first: { concept: "native.Document", content: { url: "https://example.com/a.pdf" } },
+      second: { concept: "native.Document", content: { url: "/etc/passwd" } },
+    };
+    expect(checkFileInputs(mixed, opts)?.details).toBe("unsupported_scheme: second");
+  });
+
+  it("rejects a data URL of the wrong type, naming the file", () => {
+    const error = checkFileInputs(enveloped("data:image/png;base64,AAAA", "logo.png"), opts);
+    expect(error?.kind).toBe("unsupported_file_type");
+    expect(error?.details).toContain("logo.png");
   });
 });
 
