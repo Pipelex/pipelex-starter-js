@@ -66,7 +66,3 @@ Commit the generated tree in the same commit as the bundle. From here the conven
 - **Never edit generated files** — wrap them from your adapter layer instead.
 - **Regenerate after every bundle edit** — the offline check's `sources.json` comparison fails your CI gate until you do.
 - **Run the offline check in CI**, and `codegen:verify` before releases (it needs a key; an engine-version difference is a note, not a failure).
-
-## Known caveat
-
-`POST /v1/codegen` is live on `api-dev.pipelex.com`; `api.pipelex.com` still answers `403` pending its deploy, so regeneration currently needs `PIPELEX_BASE_URL=https://api-dev.pipelex.com`. Only regeneration is affected — the offline check needs no server, and the app itself runs against the default hosted URL.

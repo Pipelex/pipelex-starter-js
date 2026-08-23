@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **Regeneration no longer needs the dev gateway.** `POST /v1/codegen` is served on `api.pipelex.com`, so `npm run codegen` runs against the default hosted URL with nothing but `PIPELEX_API_KEY`. The v0.4.0 caveat that pointed `PIPELEX_BASE_URL` at `api-dev.pipelex.com` is removed from the README, the environment table, `.env.example`, `AGENTS.md`, the docs, and the codegen script's own error message, which used to steer readers at the dev origin.
+
 ## [v0.4.0] - 2026-08-21
 
 ### Added

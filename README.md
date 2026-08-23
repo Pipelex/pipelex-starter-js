@@ -123,9 +123,7 @@ A few things worth knowing:
 - **Field names stay wire-native.** `DocumentSummary` is `{ title, doc_type, key_points }`, not a camelCase mirror — a hand-maintained mirror is the duplication this removes.
 - **`src/generated/` is excluded from Prettier and ESLint** (see `.prettierignore`), because reformatting the files would break their stamps. TypeScript still checks them in full.
 
-**After editing anything under `methods/`, run `npm run codegen`** and commit the result alongside the bundle. `make check` fails until you do.
-
-> **Regeneration needs `PIPELEX_BASE_URL=https://api-dev.pipelex.com` for now.** The `/v1/codegen` route is live on `api-dev.pipelex.com`, but `api.pipelex.com` still answers `403` pending its deploy. It affects regeneration only — `npm run codegen:check` needs no server at all, and the app itself runs fine against the default hosted URL. Nothing in the code changes when production catches up.
+**After editing anything under `methods/`, run `npm run codegen`** and commit the result alongside the bundle. `make check` fails until you do. Regeneration needs only `PIPELEX_API_KEY` — the default hosted API serves `/v1/codegen`, so no base-URL override is involved.
 
 ## Swap in your own pipeline
 
@@ -194,11 +192,13 @@ Aliases: `make ul` / `make un`. **Re-run `make use-local` after every SDK edit**
 
 ## Environment variables
 
-| Variable                     | Purpose                                                                                                                       | Default                   |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| `PIPELEX_BASE_URL`           | Pipelex API base URL. Override only for another Pipelex endpoint — `https://api-dev.pipelex.com` while codegen rolls out, say | `https://api.pipelex.com` |
-| `PIPELEX_API_KEY`            | Bearer token used by the SDK                                                                                                  | (required at runtime)     |
-| `NEXT_PUBLIC_EXECUTION_MODE` | Default execution mode for the examples — `durable` or `blocking`. Each example also has a runtime toggle.                    | `durable`                 |
+| Variable                     | Purpose                                                                                                    | Default                   |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `PIPELEX_BASE_URL`           | Pipelex API base URL. Override only to point at another Pipelex endpoint                                   | `https://api.pipelex.com` |
+| `PIPELEX_API_KEY`            | Bearer token used by the SDK                                                                               | (required at runtime)     |
+| `NEXT_PUBLIC_EXECUTION_MODE` | Default execution mode for the examples — `durable` or `blocking`. Each example also has a runtime toggle. | `durable`                 |
+
+A variable already exported in your shell wins over `.env.local` — Next.js loads the file without overwriting what is already in the environment. If a run reaches an endpoint you did not configure here, check your shell first.
 
 ## License
 
