@@ -170,6 +170,35 @@ describe("the gate agrees with the Run button", () => {
     },
   };
 
+  /**
+   * A plural input — an `array` json_schema, which is exactly what the kernel's
+   * `isPluralInput` keys off. `mustBeFilled` singles those out with an explicit
+   * `kind !== "list"` branch: a list never gates, even declared non-optional.
+   * No method in `methods/` declares one, so nothing else here reaches that
+   * branch.
+   */
+  const plural: PipeIOContracts = {
+    "d.p": {
+      inputs: {
+        pages: {
+          concept_ref: "native.Text",
+          optional: false,
+          json_schema: {
+            type: "array",
+            title: "Pages",
+            items: {
+              type: "object",
+              title: "TextContent",
+              properties: { text: { type: "string", title: "Text" } },
+              required: ["text"],
+            },
+          },
+        },
+      },
+      output: { concept_ref: "native.Text", multiplicity: "single" },
+    },
+  };
+
   const cases: Array<{
     label: string;
     contracts: PipeIOContracts;
@@ -231,6 +260,14 @@ describe("the gate agrees with the Run button", () => {
       domain: "d",
       pipe: "p",
       values: {},
+    },
+    { label: "plural input untouched", contracts: plural, domain: "d", pipe: "p", values: {} },
+    {
+      label: "plural input with one entry",
+      contracts: plural,
+      domain: "d",
+      pipe: "p",
+      values: { pages: [{ text: "first page" }] },
     },
   ];
 
