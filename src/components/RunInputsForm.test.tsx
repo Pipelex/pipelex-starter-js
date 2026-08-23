@@ -34,7 +34,10 @@ describe("RunInputsForm", () => {
   });
 
   it("shows a seeded optional input, and keeps it mounted when it is cleared", () => {
-    render(<Harness initial={{ note: { text: "seeded" } }} />);
+    // A `kind: "text"` field's run-value is a bare string — `{text: "seeded"}`
+    // is the *wire* shape, and seeding it renders "[object Object]". Same
+    // mistake the integration log records catching in the plural case.
+    render(<Harness initial={{ note: "seeded" }} />);
     const note = screen.getByRole("textbox", { name: /note/i });
     note.focus();
 
@@ -47,5 +50,22 @@ describe("RunInputsForm", () => {
 
     expect(screen.getByRole("textbox", { name: /note/i })).toBe(note);
     expect(document.activeElement).toBe(note);
+  });
+
+  it("keeps an optional input the user filled on screen after collapsing", () => {
+    render(<Harness initial={{}} />);
+    fireEvent.click(screen.getByRole("button", { name: /optional/i }));
+    fireEvent.change(screen.getByRole("textbox", { name: /note/i }), {
+      target: { value: "written by hand" },
+    });
+
+    // Collapsing must not pull a filled control off the page while its value
+    // still goes out on the run — and the toggle must stop counting it as one
+    // of the empty ones it is offering to reveal.
+    fireEvent.click(screen.getByRole("button", { name: /optional/i }));
+
+    const note = screen.getByRole("textbox", { name: /note/i });
+    expect((note as HTMLInputElement | HTMLTextAreaElement).value).toBe("written by hand");
+    expect(screen.queryByRole("button", { name: /optional/i })).not.toBeInTheDocument();
   });
 });

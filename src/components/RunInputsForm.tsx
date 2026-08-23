@@ -51,10 +51,21 @@ export function RunInputsForm({
   // of `visibleFields`, unmounts mid-edit and drops focus to `<body>`. No method
   // in `methods/` has an optional input, so nothing here reaches it — but this
   // is the template's one kernel composition and adopters inherit it verbatim.
-  const [foldable] = useState(
-    () =>
-      new Set(fields.filter((f) => !f.required && !isFilled(values[f.name])).map((f) => f.name)),
-  );
+  const emptyOptionals = () =>
+    new Set(fields.filter((f) => !f.required && !isFilled(values[f.name])).map((f) => f.name));
+  const [foldable, setFoldable] = useState(emptyOptionals);
+
+  // Re-decided on the way *back* to collapsed, and only there. A field the user
+  // has since filled stops being foldable, so collapsing hides the still-empty
+  // ones and leaves the filled one on screen — rather than pulling a filled
+  // control off the page while its value stays on the wire, behind a toggle
+  // that now says "1 optional input" as though it were empty. Recomputing at
+  // this moment costs nothing the freeze was protecting: a collapsed field is
+  // not being edited, so there is no caret to drop.
+  const toggleOptional = () => {
+    if (showOptional) setFoldable(emptyOptionals());
+    setShowOptional((expanded) => !expanded);
+  };
   const isFoldable = (field: RunField) => foldable.has(field.name);
   const foldableCount = fields.filter(isFoldable).length;
   const visibleFields = showOptional ? fields : fields.filter((field) => !isFoldable(field));
@@ -78,7 +89,7 @@ export function RunInputsForm({
           <OptionalToggle
             count={foldableCount}
             expanded={showOptional}
-            onToggle={() => setShowOptional((expanded) => !expanded)}
+            onToggle={toggleOptional}
             noun="input"
           />
         )}

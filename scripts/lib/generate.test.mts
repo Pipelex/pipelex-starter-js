@@ -191,6 +191,29 @@ describe("writeTree", () => {
     expect(await readFile(path.join(outDir, CONTRACTS_FILENAME), "utf-8")).toBe(CONTRACTS);
   });
 
+  it("fails loudly if the orphan pass ever removes the derived artifact", async () => {
+    // The test above pins the behaviour today; this one pins the *detection* if
+    // the SDK's orphan rule ever stops exempting unstamped files. Without it the
+    // deletion is silent: the sidecar is hashed from the content we wrote, not
+    // from disk, so regeneration still exits 0 and only the next check notices.
+    noDrifts();
+    await writeTree(outDir, report([{ path: "types.ts", content: "export {};\n" }]), SOURCES, {
+      [CONTRACTS_FILENAME]: CONTRACTS,
+    });
+    checkMock.mockResolvedValue({
+      drifts: [{ category: "orphan", path: CONTRACTS_FILENAME, detail: "not in the lock" }],
+      isCurrent: false,
+    });
+
+    await expect(
+      writeTree(outDir, report([{ path: "types.ts", content: "export {};\n" }]), SOURCES, {
+        [CONTRACTS_FILENAME]: CONTRACTS,
+      }),
+    ).rejects.toThrow(/orphan pass removed/);
+    // Refused, not half-done: the file is still there.
+    expect(await readFile(path.join(outDir, CONTRACTS_FILENAME), "utf-8")).toBe(CONTRACTS);
+  });
+
   it("refuses a symlink nested in the pre-existing tree before writing anything", async () => {
     const target = path.join(path.dirname(outDir), "outside.ts");
     await writeFile(target, "// external\n");

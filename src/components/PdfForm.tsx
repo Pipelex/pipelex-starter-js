@@ -39,14 +39,20 @@ const NO_UPLOADS: ReadonlySet<string> = new Set<string>();
  * The kernel previews a file it took through its own dropzone from an object
  * URL it made itself. For a value it did not produce it asks the host to
  * resolve `value.url` first — and shows a spinner until that answers, so with
- * no resolver at all the spinner never stops. The "Use sample PDF" shortcut
- * writes exactly such a value (the kernel never saw the drop), which is how
- * previewing the sample used to spin forever.
+ * no resolver at all the spinner never stops.
  *
- * A `data:` URL is already displayable, so hand it straight back. A
- * `pipelex-storage://` reference is not, and this template has nothing to
- * resolve it with: returning it unchanged lets the kernel's own "Preview
- * unavailable" fallback render, which beats a spinner that never resolves.
+ * The path that reaches it here is a `pipelex-storage://…/x.pdf` pasted through
+ * the control's own "paste a URL instead". This template has nothing to resolve
+ * such a reference with, so hand it straight back: the kernel then renders its
+ * `<object>`, whose "Preview unavailable" child is what a browser shows for a
+ * scheme it cannot fetch — which beats a spinner that never resolves.
+ *
+ * Not, as an earlier version of this comment claimed, the "Use sample PDF"
+ * shortcut. That writes a `data:` URL, and the kernel decides what is
+ * previewable by testing `/\.pdf(\?|$)/i` against `` `${filename} ${url}` `` —
+ * so a filename's extension is always followed by a space and never matches,
+ * and a `data:` URL has none of its own. No Preview control is offered there at
+ * all, and the spinner is never reached. Both halves are filed upstream.
  */
 async function resolvePreviewUrl(url: string): Promise<string> {
   return url;
@@ -210,7 +216,14 @@ export function PdfForm() {
         <RunInputsForm
           fields={fields}
           values={values}
-          onValuesChange={setValues}
+          onValuesChange={(next) => {
+            // A rejection belongs to the value that caused it. The kernel's
+            // "paste a URL instead" writes straight through this setter without
+            // touching `acceptFile`, so without clearing here a "File is too
+            // large" alert sits under a field the user has already fixed.
+            setFileError(null);
+            setValues(next);
+          }}
           disabled={busy}
           env={{
             onDropFile: handleDropFile,

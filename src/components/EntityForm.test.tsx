@@ -99,6 +99,12 @@ describe("EntityForm", () => {
     expect(screen.getByText("gpt-4o")).toBeInTheDocument();
     expect(start).toHaveBeenCalledTimes(1);
     expect(blocking).not.toHaveBeenCalled();
+    // The seam this whole branch turns on: the action receives the
+    // *schema-shaped* dict the contract declares, not the raw run-values the
+    // form holds. `run(values)` in place of `run(toData())` sends
+    // `{text: "…"}`, every real run is rejected by the gate as `bad_request`,
+    // and without this assertion the suite stays green all the way to ship.
+    expect(start).toHaveBeenCalledWith({ text: { text: expect.stringContaining("Tim Cook") } });
   });
 
   it("blocking mode: toggling to Blocking calls the blocking action and renders the result", async () => {
@@ -112,6 +118,8 @@ describe("EntityForm", () => {
     expect(blocking).toHaveBeenCalledTimes(1);
     expect(start).not.toHaveBeenCalled();
     expect(screen.getByText("Tim Cook")).toBeInTheDocument();
+    // Both modes hand over the same shape — the forms are mode-agnostic.
+    expect(blocking).toHaveBeenCalledWith({ text: { text: expect.stringContaining("Tim Cook") } });
   });
 
   it("renders the structured error when a poll returns ok:false", async () => {

@@ -68,6 +68,22 @@ describe("ImageForm", () => {
     await flush();
     expect(screen.getByRole("img", { name: /generated image/i })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    // The action receives the schema-shaped dict, keyed by the contract's own
+    // input name. Two slips this catches and nothing else does: sending the
+    // raw run-values instead of `toData()`, and seeding under a key the
+    // contract does not declare (which ships an empty box and a dead Run
+    // button — every other test here submits the form element directly, so a
+    // disabled button never fails them).
+    expect(start).toHaveBeenCalledWith({
+      image_prompt: { text: expect.stringContaining("friendly robot") },
+    });
+  });
+
+  it("seeds the prompt under the contract's declared input name", () => {
+    render(<ImageForm />);
+    const box = screen.getByRole("textbox", { name: /image prompt/i });
+    expect((box as HTMLTextAreaElement | HTMLInputElement).value).toContain("friendly robot");
+    expect(screen.getByRole("button", { name: /generate image/i })).toBeEnabled();
   });
 
   it("blocking mode demonstrates the ~30s cap (execute_timeout error)", async () => {

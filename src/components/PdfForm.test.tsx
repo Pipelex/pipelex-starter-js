@@ -109,6 +109,25 @@ describe("PdfForm", () => {
     expect(blocking).not.toHaveBeenCalled();
   });
 
+  it("clears a rejection once the user fixes the input by pasting a URL", async () => {
+    render(<PdfForm />);
+    const huge = pdfFile("huge.pdf");
+    Object.defineProperty(huge, "size", { value: 9 * 1024 * 1024 });
+    fireEvent.change(fileInput(), { target: { files: [huge] } });
+    expect(await screen.findByText("File too large")).toBeInTheDocument();
+
+    // "paste a URL instead" writes straight through `onValuesChange`, never
+    // touching the handler that set the error — so the alert outlives the value
+    // that caused it unless the setter clears it.
+    fireEvent.click(screen.getByRole("button", { name: /paste a url instead/i }));
+    fireEvent.change(screen.getByPlaceholderText(/pipelex-storage/i), {
+      target: { value: "https://example.com/ok.pdf" },
+    });
+
+    await waitFor(() => expect(screen.queryByText("File too large")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /summarize pdf/i })).toBeEnabled();
+  });
+
   it("drops the previous PDF when its replacement is rejected", async () => {
     render(<PdfForm />);
     await selectFile(pdfFile("first.pdf"));
@@ -179,6 +198,37 @@ describe("PdfForm", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("resolves a pasted storage URL for preview instead of spinning forever", async () => {
+    // The kernel previews a *dropped* file from private state it made itself.
+    // Any other value it treats as needing resolution, and with no `resolveUrl`
+    // in the field env its effect returns early — leaving a spinner that never
+    // stops. `pipelex-storage://…` pasted through "paste a URL instead" is the
+    // path that reaches it here (a data: URL from the sample shortcut does not:
+    // the kernel's `.pdf(\?|$)` test runs against `"<filename> <url>"`, so the
+    // extension is followed by a space and no preview is offered at all).
+    render(<PdfForm />);
+    fireEvent.click(screen.getByRole("button", { name: /paste a url instead/i }));
+    fireEvent.change(screen.getByPlaceholderText(/pipelex-storage/i), {
+      target: { value: "pipelex-storage://bucket/invoice.pdf" },
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /summarize pdf/i })).toBeEnabled(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+
+    // The identity resolver hands the URI straight back, so the kernel renders
+    // its <object> (whose own "Preview unavailable" child is what a browser
+    // shows for a non-web scheme) rather than spinning on an unanswered resolve.
+    const preview = await waitFor(() => {
+      const el = document.querySelector('object[type="application/pdf"]');
+      if (!el) throw new Error("no pdf preview rendered");
+      return el;
+    });
+    expect(preview.getAttribute("data")).toContain("pipelex-storage://bucket/invoice.pdf");
+    expect(document.querySelector(".animate-spin")).toBeNull();
   });
 
   it("renders the structured error when a poll returns ok:false", async () => {

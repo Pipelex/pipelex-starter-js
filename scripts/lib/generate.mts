@@ -141,6 +141,18 @@ export async function writeTree(
     });
     for (const drift of drifts) {
       if (drift.category !== "orphan") continue;
+      // The docstring above promises this ordering makes an orphan-rule change
+      // visible here. That is only true if someone looks: without this, a
+      // deleted `contracts.ts` still gets its hash recorded below (the sidecar
+      // is hashed from the content we wrote, not from disk), so regeneration
+      // exits 0 on a tree the very next check calls stale.
+      if (drift.path in derived) {
+        throw new Error(
+          `the orphan pass removed '${drift.path}', which this script emits. ` +
+            `@pipelex/sdk's orphan rule no longer exempts unstamped files — ` +
+            `the derived artifacts need a new home or a stamp.`,
+        );
+      }
       await rm(path.join(outDir, drift.path), { force: true });
       changed.push(`${drift.path} (removed)`);
     }
@@ -324,6 +336,24 @@ async function runGenerateInner(): Promise<number> {
       continue;
     }
 
+    // The derived artifacts are written last, so a server artifact sharing one
+    // of their names would be silently overwritten by ours: `writeTree` returns
+    // normally, the sidecar records our content, and the lock still expects the
+    // server's — leaving `codegen:check` reporting `hand-edited` forever, with a
+    // remedy ("run npm run codegen") that reproduces the same tree. Same class
+    // as the `lock_filename` guard above, and not hypothetical: the roadmap has
+    // the API serving an input-form descriptor at exactly this seam.
+    const colliding = artifacts.filter((artifact) => artifact.path === CONTRACTS_FILENAME);
+    if (colliding.length > 0) {
+      console.error(
+        `\n✗ ${method.name} — the server now returns an artifact named '${CONTRACTS_FILENAME}', ` +
+          `which this script also emits. Nothing was written; stop emitting it locally ` +
+          `and take the server's, or report it upstream.`,
+      );
+      failed = true;
+      continue;
+    }
+
     // The form's half of the tree, and the last thing that can fail this method:
     // by here every codegen guard has passed, so a failure now leaves the whole
     // tree untouched rather than half-updated.
@@ -333,9 +363,24 @@ async function runGenerateInner(): Promise<number> {
       continue;
     }
 
-    const changed = await writeTree(outDir, report, method.sourceHashes, {
-      [CONTRACTS_FILENAME]: renderContracts(contracts),
-    });
+    // The only per-method step that can throw rather than return a verdict, so
+    // it needs the same treatment as every other failure in this loop: report
+    // the method and keep going. Escaping here would print a bare stack and
+    // skip every method after this one, leaving their trees untouched for no
+    // reason connected to them.
+    let changed: string[];
+    try {
+      changed = await writeTree(outDir, report, method.sourceHashes, {
+        [CONTRACTS_FILENAME]: renderContracts(contracts),
+      });
+    } catch (error) {
+      console.error(
+        `\n✗ ${method.name} — writing the tree failed: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+      failed = true;
+      continue;
+    }
     const fingerprint = report.crate_fingerprint.slice(0, 12);
     const where = path.relative(REPO_ROOT, outDir);
     console.log(
