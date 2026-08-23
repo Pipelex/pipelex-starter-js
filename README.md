@@ -6,7 +6,7 @@ It ships three demo pipelines, presented as tabs:
 
 - **Text entities** (`methods/extract-entities`) — extracts `{ people, orgs, dates }` from pasted text.
 - **PDF summary** (`methods/summarize-pdf`) — uploads a PDF in the browser and returns a structured `{ title, doc_type, key_points }` summary from a cheap OpenAI model.
-- **Image generation** (`methods/generate-image`) — turns a text prompt into an image with `gpt-image-1-mini`.
+- **Image generation** (`methods/generate-image`) — turns a text prompt into an image with `gpt-image-2`.
 
 Starting from zero? Use this template (next section). Adding Pipelex to an app you already have? This repo doubles as the worked example of the pattern — [`docs/adopt-in-an-existing-project.md`](docs/adopt-in-an-existing-project.md) is the transplant checklist.
 

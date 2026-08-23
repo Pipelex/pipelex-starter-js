@@ -212,8 +212,8 @@ function hidesFilePosition(content: unknown): boolean {
  *    while codegen carries the rename into the form, the readiness rules and the
  *    wire envelope. It fails open, silently, on a routine edit.
  * 3. **It reads one level — `content.url`, or a bare `content` string, which
- *    the SDK treats the same way — and refuses any shape that hides a file
- *    position deeper.** `prepareInputs` walks the method's signature, so it
+ *    the SDK treats the same way — and refuses a deeper shape that hides a file
+ *    position *carrying a `url` key*.** `prepareInputs` walks the method's signature, so it
  *    resolves a file inside a list (`documents: list[Document]`) or nested in a
  *    structured concept, both of which `content.url` misses entirely. Property 2
  *    is worth nothing if pluralising an input reopens the hole instead — so an
@@ -221,11 +221,22 @@ function hidesFilePosition(content: unknown): boolean {
  *    *unconditionally*, not merely when `content.url` is absent: guarding it
  *    behind a missing `url` lets the caller switch it off with a benign outer
  *    `url` beside the nested one, which is the bypass shape
- *    {@link hidesFilePosition} exists to close. Widening the walk to descend the
- *    contract's `json_schema` in lockstep (the way `wireOutput`'s
- *    `dropWireNulls` descends a zod schema, and for the same reason: a blind
- *    value walk cannot tell a file position from a data field named `url`) is
- *    the real fix, and is worth doing the day a method needs one of those shapes.
+ *    {@link hidesFilePosition} exists to close.
+ *
+ *    The `url` key is what makes that walk possible, and it is also its limit:
+ *    the SDK accepts a *bare source string* at a file position too, and a bare
+ *    string carries nothing to recognise it by. So a hypothetical
+ *    `documents: list[Document]` declared with string items would reach
+ *    `prepareInputs` unread by this gate, which resolves an unrecognised string
+ *    as a local filesystem path. No committed method declares a plural or nested
+ *    file input, so nothing reaches that today — and the obvious patch is worse
+ *    than the gap: treating any nested string as a file position refuses
+ *    `list[Text]` and every structured concept, because a blind value walk
+ *    cannot tell a document string from a text one. Widening the walk to descend
+ *    the contract's `json_schema` in lockstep (the way `wireOutput`'s
+ *    `dropWireNulls` descends a zod schema, and for the same reason) is the real
+ *    fix, and it is a prerequisite for the first method that needs one of those
+ *    shapes — not an optional hardening.
  *
  * This is the authoritative check. The browser's own size check is an early exit
  * that saves an encode, not a gate — it is trivially bypassed.

@@ -22,7 +22,7 @@ This repo is a **reference template**. Keep it small, clear, and high-quality �
 methods/                      # the source of truth — everything in src/generated/ comes from here
   extract-entities/main.mthds # text → entities pipeline (TOML)
   summarize-pdf/main.mthds    # PDF Document → structured summary
-  generate-image/main.mthds   # text prompt → image (gpt-image-1-mini)
+  generate-image/main.mthds   # text prompt → image (gpt-image-2)
 public/
   sample-invoice.pdf          # sample PDF the PDF example loads out of the box
 scripts/                      # native-Node TypeScript (node --experimental-strip-types)

@@ -104,6 +104,16 @@ export function schemaFor(contract: PipeIOContract) {
  * Returns a classified error rather than throwing — a Server Action must never
  * throw across the server→client boundary, because Next.js strips the message
  * to an opaque digest in production builds.
+ *
+ * One payload still defeats that, and it is recorded rather than patched here:
+ * a value nested a few thousand levels deep under an *undeclared* key survives
+ * ajv (the schema sets no `additionalProperties: false`, so the key is never
+ * walked) and overflows the stack inside the kernel's own `isFilled`, which
+ * recurses without a depth cap. The caller only breaks their own request — no
+ * bypass, no run started, nothing exposed — and the recursion belongs to
+ * `@pipelex/mthds-form`, so the cap belongs there too; it is filed upstream. A
+ * cap bolted on here would guard one caller's route into a kernel function that
+ * every other caller reaches by another.
  */
 export function gateRunInputs(contract: PipeIOContract, data: unknown): GateOutcome {
   // `data` is typed `unknown` because that is what it is. A Server Action is a
