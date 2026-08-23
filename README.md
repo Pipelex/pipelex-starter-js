@@ -71,7 +71,7 @@ src/
     blockingRun.ts            # the blocking execute path
     durableRun.ts             # the durable start + poll path
     wireOutput.ts             # reads main_stuff and readies it for a generated binder
-    runInputs.ts              # requireContract + gateRunInputs — the input gate, both sides
+    runInputs.ts              # requireContract + gateRunInputs — the server-side input gate
     errors.ts                 # classifyPipelineError + PipelineError model
     fileEncoding.ts           # data-URL MIME + size validation
     usageReport.ts            # token usage → the render-ready cost report
@@ -102,9 +102,9 @@ The flow, end to end:
 
 **No form field in this app is written by hand.** Each form is rendered from its method's input contract by the [`@pipelex/mthds-form`](https://www.npmjs.com/package/@pipelex/mthds-form) kernel: `npm run codegen` commits a `contracts.ts` beside the generated types, the form derives its fields from it, and the Run button gates on whatever that method actually requires. Add an input to a `.mthds` bundle, re-run codegen, and it shows up with the right control and the right label — no component edit.
 
-The same kernel gate runs on **both** sides of the Server Action boundary, from one implementation (`src/lib/runInputs.ts`). In the browser it decides whether Run is live; on the server it is the trust boundary, because a Server Action is a public endpoint. That is why there are no hand-written per-input guards left anywhere.
+The same kernel supplies the input rules on **both** sides of the Server Action boundary, so there are no hand-written per-input guards left anywhere. The two sides call it differently, on purpose: the browser runs `computeReadiness` to decide whether Run is live, and the server runs `gateRunInputs` (`src/lib/runInputs.ts`), which re-applies those same emptiness predicates _and_ validates shapes _and_ builds the wire envelope. The server side is deliberately a strict superset — it is the trust boundary, because a Server Action is a public endpoint.
 
-The full reference — the contract artifact, the four-step gate, the file seam, and the Tailwind setup (including the silent purge trap) — is [`docs/input-form.md`](docs/input-form.md).
+The full reference — the contract artifact, the server-side gate, the file seam, and the Tailwind setup (including the silent purge trap) — is [`docs/input-form.md`](docs/input-form.md).
 
 ### File & image inputs
 

@@ -1,6 +1,6 @@
 # Input forms: rendered from the method, not written by hand
 
-This is the reference for how the three demo forms are built — why none of them names its own inputs, how the browser and the server share one validation gate, and what the styling setup is doing. The day-to-day rules live in [`CLAUDE.md`](../CLAUDE.md); this document is the "why" behind them, and its companion is [`docs/codegen.md`](codegen.md), which owns the artifact these forms read.
+This is the reference for how the three demo forms are built — why none of them names its own inputs, how the browser and the server share one set of validation rules, and what the styling setup is doing. The day-to-day rules live in [`CLAUDE.md`](../CLAUDE.md); this document is the "why" behind them, and its companion is [`docs/codegen.md`](codegen.md), which owns the artifact these forms read.
 
 ## Why
 
@@ -44,7 +44,7 @@ Drift is covered the same way the rest of the tree is: `contracts.ts` carries no
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `src/hooks/useRunInputs.ts`        | Form values, the derived `fields`, readiness, and the wire shape. The companion to `useRun`: this one owns what goes **in**, `useRun` owns the run and what comes **out**.           |
 | `src/components/RunInputsForm.tsx` | The kernel composition, purely presentational — `FieldRenderer` per field, empty optionals folded behind `OptionalToggle`, all under `FieldPresentationProvider presentation="app"`. |
-| `src/lib/runInputs.ts`             | `requireContract` and `gateRunInputs` — the four-step gate, and the mapping from an invalid verdict to a `PipelineError`.                                                            |
+| `src/lib/runInputs.ts`             | `requireContract` and `gateRunInputs` — the server-side gate, and the mapping from an invalid verdict to a `PipelineError`.                                                          |
 
 A form is then two lines of wiring plus its own chrome:
 
@@ -62,16 +62,21 @@ const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, { te
 The kernel's headless core is server-safe on purpose, and that is the whole design:
 
 - **In the browser, for UX.** `computeReadiness(fields, values)` decides whether the Run button is live. Nothing more — the browser's checks are trivially bypassed and are not a gate.
-- **On the server, for trust.** A Server Action is a public endpoint. It runs the full four-step gate itself against the same committed contract the browser rendered from:
+- **On the server, for trust.** A Server Action is a public endpoint. It runs the full gate itself against the same committed contract the browser rendered from:
 
   ```
   buildRunInputsSchema(contract.inputs)   # combine the per-input schemas; `required` is the gating set
   prepareRunInputs(data, schema)          # heal legacy wrappers, prune empty optionals
   validateRunInputs(prepared, …)          # ajv, plus the scan that names the VARIABLE at fault
+  inputMustBeFilled + isFilled            # the emptiness rule readiness is built from, re-applied
   apiInputsFromSchemaData(prepared, …)    # the {concept, content} payload the run expects
   ```
 
-Because both sides run the same implementation, the hand-written guards on both sides are **deleted**, not kept as belt-and-braces. Two rules that can disagree is the failure mode this removes.
+Because both sides get their rules from the same kernel, the hand-written guards on both sides are **deleted**, not kept as belt-and-braces. Two rules that can disagree is the failure mode this removes.
+
+**The fourth step is not redundant with the third, and the reason is worth keeping in mind if you ever trim it.** ajv's `required` asserts only that a key is _present_, and no generated contract carries a `minLength` — so `{text: {text: ""}}` and `{document: {url: ""}}` satisfy the schema. That is not a contrived payload: `rjsfDataFromRunValues({}, fields)` emits exactly `{document: {url: ""}}` for an untouched form. Readiness already refuses it in the browser, so without that step the trust boundary would be _weaker_ than the button in front of it, and an empty input could start a paid run. Re-using the kernel's own two predicates is what keeps this a shared rule rather than a second one that can drift.
+
+The invariant to preserve is therefore not "the two sides are identical" — they are not, and should not be — but "**the server side is a strict superset of the client side**". Readiness is UX; this is the gate.
 
 The action's argument is therefore the schema-shaped data dict rather than a hand-typed `text: string`:
 

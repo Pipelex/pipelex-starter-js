@@ -29,7 +29,7 @@ typecheck: ## Run TypeScript type checking (app + e2e specs + scripts)
 	npm run typecheck:scripts
 
 # Regenerates src/generated/<method>/ from methods/<method>/. Needs PIPELEX_API_KEY
-# and a base URL that serves POST /v1/codegen (api-dev today, not yet api.pipelex.com).
+# and nothing else: POST /v1/codegen is served on the default hosted URL.
 # Deliberately OUT of `make all`, for the same reason test-e2e is: key + network.
 codegen: ## Regenerate the typed artifacts in src/generated/ from methods/ (needs PIPELEX_API_KEY)
 	npm run codegen

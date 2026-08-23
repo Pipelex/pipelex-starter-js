@@ -1,11 +1,15 @@
 /**
- * The run-input gate — one implementation, two call sites.
+ * The run-input gate — the server half of the kernel's input rules.
  *
- * The form kernel's headless core is deliberately server-safe (no React, no
- * `"use client"`), so the same four steps that shape the browser's form values
- * also guard the Server Action. The client gates the Run button on readiness for
- * UX; this module is the trust boundary, because a Server Action is a public
- * endpoint and the browser's checks are trivially bypassed.
+ * The two sides are not the same call, and it is worth being exact about that.
+ * The browser runs `computeReadiness` to decide whether Run is live (`useRunInputs`);
+ * this module runs the kernel's schema gate, then re-applies the *same* two
+ * emptiness predicates readiness is built from (`inputMustBeFilled` + `isFilled`).
+ * So the rules are shared — one kernel, no hand-written per-input guards on
+ * either side — while this side stays a strict superset: it also validates
+ * shapes and builds the wire envelope. That superset property is the invariant
+ * to preserve, because a Server Action is a public endpoint and the browser's
+ * checks are trivially bypassed. This is the trust boundary; readiness is UX.
  *
  * Pure module — no `process.env`, no Node built-ins — so it is safe to import
  * from either side (same rule as `fileEncoding.ts`).
@@ -15,6 +19,8 @@ import {
   buildRunInputsSchema,
   describeValidationError,
   getPipeIOContract,
+  inputMustBeFilled,
+  isFilled,
   prepareRunInputs,
   validateRunInputs,
   type PipeIOContract,
@@ -55,8 +61,9 @@ export type GateOutcome =
   | { ok: false; error: PipelineError };
 
 /**
- * The kernel's four-step gate: combine the per-input schemas, repair the data,
- * validate it, and build the `{ concept, content }` map the run expects.
+ * The kernel's gate: combine the per-input schemas, repair the data, validate
+ * it, reject required inputs that arrived empty, and build the
+ * `{ concept, content }` map the run expects.
  *
  * Returns a classified error rather than throwing — a Server Action must never
  * throw across the server→client boundary, because Next.js strips the message
@@ -76,6 +83,24 @@ export function gateRunInputs(
       error: invalidInputsError(verdict.missingInputs, verdict.errors, prepared),
     };
   }
+
+  // The schema alone is not enough: ajv's `required` asserts only that the key
+  // is *present*, and no generated contract carries a `minLength`. So a required
+  // input that arrived empty — `{document: {url: ""}}`, `{text: {text: ""}}` —
+  // satisfies the schema. That is not a contrived payload but the natural one:
+  // `rjsfDataFromRunValues({}, fields)` emits exactly `{document: {url: ""}}`
+  // when nothing is selected. The browser already refuses it (`computeReadiness`
+  // keeps Run disabled), so without this the trust boundary would be *weaker*
+  // than the button in front of it — a direct call to this public endpoint could
+  // start a paid run on an empty input. Re-using the kernel's own two predicates
+  // is what keeps that a shared rule rather than a second, drifting one.
+  const empty = Object.entries(contract.inputs)
+    .filter(([name, input]) => inputMustBeFilled(input) && !isFilled(prepared[name]))
+    .map(([name]) => name);
+  if (empty.length) {
+    return { ok: false, error: invalidInputsError(empty, [], prepared) };
+  }
+
   return { ok: true, inputs: apiInputsFromSchemaData(prepared, contract.inputs) };
 }
 

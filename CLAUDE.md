@@ -59,6 +59,7 @@ src/
     wireOutput.ts             # wireOutput + schema-guided dropWireNulls + describeSchemaFailure (pure; `import "server-only"` build-enforces the boundary)
     errors.ts                 # classifyPipelineError + classifyTransportError + PipelineError model
     serverEnv.ts              # readClassifyEnv — the ClassifyEnv process.env read (server)
+    runInputs.ts              # requireContract + gateRunInputs — the server-side input gate (pure)
     fileEncoding.ts           # data-URL MIME + size validation (pure)
     usageReport.ts            # tokens_usages → the render-ready cost report (pure)
     clientFile.ts             # browser File → base64 data URL (client)
@@ -124,7 +125,7 @@ The rules below are each load-bearing — breaking one produces a wrong verdict 
 
 The forms are **mode-agnostic** — they call `useRun({ mode, blocking, start, poll })` and render by `state.phase`. Only the unified hook knows which Server Actions to call.
 
-**No method input is written by hand.** Each form renders its inputs from the method's committed contract through the `@pipelex/mthds-form` kernel — `useRunInputs(CONTRACT)` for values/readiness/wire shape, `<RunInputsForm>` for the controls — and the _same_ kernel gate runs again inside the Server Action, which is the trust boundary. One implementation (`src/lib/runInputs.ts`), two call sites, zero drift; the per-input guards that used to sit on both sides are deleted, not kept as belt-and-braces. Full reference: [`docs/input-form.md`](docs/input-form.md).
+**No method input is written by hand.** Each form renders its inputs from the method's committed contract through the `@pipelex/mthds-form` kernel — `useRunInputs(CONTRACT)` for values/readiness/wire shape, `<RunInputsForm>` for the controls — and the Server Action gates the same contract with `gateRunInputs` (`src/lib/runInputs.ts`), which is the trust boundary. Both sides take their rules from the one kernel, so the per-input guards that used to sit on either side are deleted rather than kept as belt-and-braces; the two calls differ deliberately, and **the server's must stay a strict superset of the browser's** (it re-applies the same emptiness predicates readiness uses, then also checks shapes and builds the wire envelope). Full reference: [`docs/input-form.md`](docs/input-form.md).
 
 ```ts
 // src/actions/runExtractEntitiesPipeline.ts — a thin trio per pipeline
@@ -333,7 +334,7 @@ Other targets that matter:
 - **Husky `prepare` warning**: `npm install` prints `.git can't be found` if you install before `git init`. Harmless — just re-run `npm install` after `git init` to wire `.husky/_/`.
 - **Renaming App Router directories**: delete `.next/` before running `make check` — stale type references in `.next/types/` will fail typecheck.
 - **`next-env.d.ts` is generated** (gitignored). Next regenerates it on dev/build. Don't edit by hand.
-- **Tailwind `content` globs** are scoped to `src/app/` and `src/components/`. If you add a new top-level dir with classes, extend `tailwind.config.ts`.
+- **Tailwind `content` globs** cover `src/app/`, `src/components/` and the form kernel's package bundle (see the bullet below — that third entry is load-bearing, not stray). If you add a new top-level dir with classes, extend `tailwind.config.ts`.
 - **`src/generated/` is out of Prettier's and ESLint's reach on purpose.** A reformat rewrites bytes and breaks every stamp, which `make check` then reports as `hand-edited`. See "Generated types" — do not add it back.
 - **A kernel-rendered control has no label of your choosing, and sometimes no label at all.** Labels are `humanizeFieldName` of the contract's input name (`image_prompt` → "Image prompt"), so a bundle rename breaks selectors. Query by **role plus name** (`getByRole("textbox", { name: "Text" })`): the humanized names are short and collide with page chrome under strict-mode queries. The file control links no label at all — reach its `input[type="file"]` directly.
 - **The form kernel's classes live in its package bundle, not in `src/`.** `tailwind.config.ts` must keep `"./node_modules/@pipelex/mthds-form/dist/**/*.js"` in `content`, or the controls render _mostly_ styled — a silent failure that looks like a broken design system. The deterministic check is diffing the built stylesheet with and without the glob; see [`docs/input-form.md`](docs/input-form.md).

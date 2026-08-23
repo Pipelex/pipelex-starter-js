@@ -2,8 +2,11 @@ import { describe, it, expect } from "vitest";
 import type { PipeIOContracts } from "@pipelex/mthds-form";
 import { gateRunInputs, requireContract } from "./runInputs";
 import { PIPE_IO_CONTRACTS } from "@/generated/extract-entities/contracts";
+import { PIPE_IO_CONTRACTS as PDF_CONTRACTS } from "@/generated/summarize-pdf/contracts";
 
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "extract_entities", "extract_entities");
+/** A file-shaped input, to cover the `{url}` envelope alongside `{text}`. */
+const PDF_CONTRACT = requireContract(PDF_CONTRACTS, "summarize_pdf", "summarize_pdf");
 
 describe("requireContract", () => {
   it("looks a pipe up by domain and pipe code", () => {
@@ -41,6 +44,43 @@ describe("gateRunInputs", () => {
     expect(result.error.details).toContain("text");
   });
 
+  it("rejects a required input that arrived present but empty", () => {
+    // The schema is satisfied here — ajv's `required` only asserts the key is
+    // present, and the contracts carry no `minLength`. This is the payload the
+    // kernel itself produces from an untouched form (`rjsfDataFromRunValues`),
+    // so an empty string reaching a paid run is the natural failure, not a
+    // contrived one. The browser refuses it via readiness; so must this side.
+    const result = gateRunInputs(CONTRACT, { text: { text: "" } });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe("bad_request");
+    expect(result.error.title).toBe("Input required");
+    expect(result.error.details).toContain("text");
+  });
+
+  it("still accepts a filled input, so the emptiness check is not over-eager", () => {
+    const result = gateRunInputs(CONTRACT, { text: { text: "Ada met Charles" } });
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects an empty file input, where the byte check cannot catch it", () => {
+    // The file-shaped equivalent, and the costlier one: `checkDocumentBytes`
+    // no-ops on anything that is not a `data:` URL, so an empty `url` would
+    // sail past it into `prepareInputs` and start a run.
+    const result = gateRunInputs(PDF_CONTRACT, { document: { url: "" } });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.title).toBe("Input required");
+    expect(result.error.details).toContain("document");
+  });
+
+  it("accepts a file input that carries a URL but no bytes", () => {
+    // The kernel's "paste a URL instead" path — filled, so the gate passes it
+    // and resolving it is `prepareInputs`' job.
+    const result = gateRunInputs(PDF_CONTRACT, { document: { url: "https://example.com/a.pdf" } });
+    expect(result.ok).toBe(true);
+  });
+
   it("falls back to the kernel's error descriptions when nothing can be named missing", () => {
     // A value of the wrong shape passes the missing-input scan (the key is
     // present) but fails ajv, so the verdict carries `errors` and no
@@ -51,7 +91,11 @@ describe("gateRunInputs", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.title).toBe("Invalid input");
-    expect(result.error.details).not.toBe("");
+    // Assert the rendered wording, not merely that *something* was rendered:
+    // `invalidInputsError` falls back to a fixed sentence when the lines come
+    // back empty, so `not.toBe("")` would hold even if the translator produced
+    // nothing. This is the only test that exercises `VALIDATION_MESSAGES`.
+    expect(result.error.details).toContain("must be string");
   });
 
   it("omits an optional input the caller left blank, so the runtime sees a real absence", () => {
