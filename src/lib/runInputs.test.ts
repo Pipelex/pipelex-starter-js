@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import type { PipeIOContracts } from "@pipelex/mthds-form";
+import {
+  computeReadiness,
+  fieldsForContract,
+  rjsfDataFromRunValues,
+  type PipeIOContracts,
+} from "@pipelex/mthds-form";
 import { gateRunInputs, requireContract } from "./runInputs";
 import { PIPE_IO_CONTRACTS } from "@/generated/extract-entities/contracts";
 import { PIPE_IO_CONTRACTS as PDF_CONTRACTS } from "@/generated/summarize-pdf/contracts";
@@ -58,11 +63,6 @@ describe("gateRunInputs", () => {
     expect(result.error.details).toContain("text");
   });
 
-  it("still accepts a filled input, so the emptiness check is not over-eager", () => {
-    const result = gateRunInputs(CONTRACT, { text: { text: "Ada met Charles" } });
-    expect(result.ok).toBe(true);
-  });
-
   it("rejects an empty file input, where the byte check cannot catch it", () => {
     // The file-shaped equivalent, and the costlier one: `checkDocumentBytes`
     // no-ops on anything that is not a `data:` URL, so an empty `url` would
@@ -109,6 +109,140 @@ describe("gateRunInputs", () => {
     };
     const contract = requireContract(withOptional, "d", "p");
     expect(gateRunInputs(contract, {})).toEqual({ ok: true, inputs: {} });
+  });
+});
+
+/**
+ * The invariant the gate exists to hold, asserted by running *both* sides.
+ *
+ * `gateRunInputs` is only trustworthy if it refuses everything the Run button
+ * refuses; it is only usable if it accepts everything the Run button accepts.
+ * Neither direction can be established by reading the two implementations —
+ * they call different kernel functions on differently-shaped values — so this
+ * table drives the real `computeReadiness` and the real gate over the same
+ * inputs and demands the same verdict.
+ *
+ * The structured case is the one that matters most and the one no method in
+ * `methods/` can produce: every committed contract derives to a `prose` or
+ * `document` field, and for those `fieldFilled` collapses to `isFilled`, so a
+ * gate built on the wrong predicate looks correct against this repo's own
+ * methods. It is wrong for the first adopter with an object-shaped concept.
+ */
+describe("the gate agrees with the Run button", () => {
+  const person: PipeIOContracts = {
+    "d.p": {
+      inputs: {
+        person: {
+          concept_ref: "d.Person",
+          optional: false,
+          json_schema: {
+            type: "object",
+            title: "Person",
+            properties: {
+              first_name: { type: "string", title: "First name" },
+              last_name: { type: "string", title: "Last name" },
+            },
+            required: ["first_name", "last_name"],
+          },
+        },
+      },
+      output: { concept_ref: "native.Text", multiplicity: "single" },
+    },
+  };
+
+  const allOptional: PipeIOContracts = {
+    "d.p": {
+      inputs: {
+        opts: {
+          concept_ref: "d.Options",
+          optional: false,
+          json_schema: {
+            type: "object",
+            title: "Options",
+            properties: {
+              tone: { type: "string", title: "Tone" },
+              style: { type: "string", title: "Style" },
+            },
+          },
+        },
+      },
+      output: { concept_ref: "native.Text", multiplicity: "single" },
+    },
+  };
+
+  const cases: Array<{
+    label: string;
+    contracts: PipeIOContracts;
+    domain: string;
+    pipe: string;
+    /** Form values as the browser holds them, not the wire shape. */
+    values: Record<string, unknown>;
+  }> = [
+    {
+      label: "text untouched",
+      contracts: PIPE_IO_CONTRACTS,
+      domain: "extract_entities",
+      pipe: "extract_entities",
+      values: {},
+    },
+    {
+      label: "text filled",
+      contracts: PIPE_IO_CONTRACTS,
+      domain: "extract_entities",
+      pipe: "extract_entities",
+      values: { text: "Ada met Charles" },
+    },
+    {
+      label: "document untouched",
+      contracts: PDF_CONTRACTS,
+      domain: "summarize_pdf",
+      pipe: "summarize_pdf",
+      values: {},
+    },
+    {
+      label: "document pasted as a URL",
+      contracts: PDF_CONTRACTS,
+      domain: "summarize_pdf",
+      pipe: "summarize_pdf",
+      values: { document: { url: "https://example.com/a.pdf" } },
+    },
+    { label: "struct untouched", contracts: person, domain: "d", pipe: "p", values: {} },
+    // Half-filled: `isFilled` says yes (some child), `fieldFilled` says no (a
+    // required child is empty). The gate must side with the button.
+    {
+      label: "struct half-filled",
+      contracts: person,
+      domain: "d",
+      pipe: "p",
+      values: { person: { first_name: "Ada", last_name: "" } },
+    },
+    {
+      label: "struct filled",
+      contracts: person,
+      domain: "d",
+      pipe: "p",
+      values: { person: { first_name: "Ada", last_name: "Lovelace" } },
+    },
+    // Nothing required inside, so the button is live on an untouched form; the
+    // gate must not then demand it be filled.
+    {
+      label: "all-optional struct untouched",
+      contracts: allOptional,
+      domain: "d",
+      pipe: "p",
+      values: {},
+    },
+  ];
+
+  it.each(cases)("$label", ({ contracts, domain, pipe, values }) => {
+    const contract = requireContract(contracts, domain, pipe);
+    const fields = fieldsForContract(contract);
+    const runButtonLive = computeReadiness(fields, values).missing.length === 0;
+
+    // Exactly what the form sends: the hook's `toData()`.
+    const gate = gateRunInputs(contract, rjsfDataFromRunValues(values, fields));
+
+    expect(gate.ok).toBe(runButtonLive);
   });
 });
 

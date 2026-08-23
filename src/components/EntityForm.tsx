@@ -43,8 +43,8 @@ export function EntityForm() {
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    // The action re-runs the same kernel gate server-side — that is the trust
-    // boundary; `ready` below is only the button's UX.
+    // The action gates the same contract server-side, applying the kernel's
+    // rules in full — that is the trust boundary; `ready` below is only UX.
     run(toData());
   }
 

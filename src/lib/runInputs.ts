@@ -2,14 +2,20 @@
  * The run-input gate — the server half of the kernel's input rules.
  *
  * The two sides are not the same call, and it is worth being exact about that.
- * The browser runs `computeReadiness` to decide whether Run is live (`useRunInputs`);
- * this module runs the kernel's schema gate, then re-applies the *same* two
- * emptiness predicates readiness is built from (`inputMustBeFilled` + `isFilled`).
- * So the rules are shared — one kernel, no hand-written per-input guards on
- * either side — while this side stays a strict superset: it also validates
- * shapes and builds the wire envelope. That superset property is the invariant
- * to preserve, because a Server Action is a public endpoint and the browser's
- * checks are trivially bypassed. This is the trust boundary; readiness is UX.
+ * The browser runs `computeReadiness` to decide whether Run is live
+ * (`useRunInputs`); this module runs the kernel's schema gate, then re-applies
+ * the emptiness rule by calling `computeReadiness`'s own two functions —
+ * `mustBeFilled` and `fieldFilled` — over the same derived fields. So the rules
+ * are shared by construction, not by resemblance, while this side stays a
+ * strict superset: it also validates shapes and builds the wire envelope.
+ *
+ * That superset property is the invariant to preserve, because a Server Action
+ * is a public endpoint and the browser's checks are trivially bypassed. This is
+ * the trust boundary; readiness is UX. `runInputs.test.ts` asserts it by
+ * running both sides over one table rather than by describing them, which is
+ * the only form of that claim worth trusting — the near-miss pair
+ * `inputMustBeFilled` + `isFilled` matches on every field kind this repo's
+ * methods produce and diverges on a structured concept.
  *
  * Pure module — no `process.env`, no Node built-ins — so it is safe to import
  * from either side (same rule as `fileEncoding.ts`).
@@ -18,9 +24,10 @@ import {
   apiInputsFromSchemaData,
   buildRunInputsSchema,
   describeValidationError,
+  fieldFilled,
+  fieldsForContract,
   getPipeIOContract,
-  inputMustBeFilled,
-  isFilled,
+  mustBeFilled,
   prepareRunInputs,
   validateRunInputs,
   type PipeIOContract,
@@ -92,11 +99,23 @@ export function gateRunInputs(
   // when nothing is selected. The browser already refuses it (`computeReadiness`
   // keeps Run disabled), so without this the trust boundary would be *weaker*
   // than the button in front of it — a direct call to this public endpoint could
-  // start a paid run on an empty input. Re-using the kernel's own two predicates
-  // is what keeps that a shared rule rather than a second, drifting one.
-  const empty = Object.entries(contract.inputs)
-    .filter(([name, input]) => inputMustBeFilled(input) && !isFilled(prepared[name]))
-    .map(([name]) => name);
+  // start a paid run on an empty input.
+  //
+  // This runs `computeReadiness`'s *own* two functions over the same derived
+  // fields, which is the only way to be sure the two sides cannot disagree.
+  // Picking a pair that merely looks equivalent is not enough, and that is not
+  // hypothetical: the obvious choice, `inputMustBeFilled` + `isFilled`, agrees
+  // for every leaf kind and diverges on a structured concept in *both*
+  // directions — `isFilled` on an object is `some(child filled)` where
+  // `fieldFilled` is `every(required child filled)`. That accepts a
+  // half-filled struct the browser refuses (a paid run past a disabled button)
+  // and rejects an all-optional struct the browser accepts. No contract in
+  // `methods/` derives to a structured input today, so nothing here would have
+  // caught it — but this file is one adopters copy verbatim.
+  const empty = fieldsForContract(contract)
+    .filter(mustBeFilled)
+    .filter((field) => !fieldFilled(field, prepared[field.name]))
+    .map((field) => field.name);
   if (empty.length) {
     return { ok: false, error: invalidInputsError(empty, [], prepared) };
   }

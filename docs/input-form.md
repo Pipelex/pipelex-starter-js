@@ -10,7 +10,7 @@ Now the form is derived from the method's own input contract. Swap the method, r
 
 The kernel doing the deriving is [`@pipelex/mthds-form`](https://www.npmjs.com/package/@pipelex/mthds-form), which ships in two halves and this app uses both:
 
-- **`@pipelex/mthds-form`** — the headless core. No React: the `RunField` descriptor, the derivation that produces it, the run gate, the wire format. Server-safe, which is what makes one gate serve two call sites.
+- **`@pipelex/mthds-form`** — the headless core. No React: the `RunField` descriptor, the derivation that produces it, the run gate, the wire format. Server-safe, which is what lets the browser and the Server Action take their input rules from one implementation.
 - **`@pipelex/mthds-form/react`** — the themed control set: `FieldRenderer` and the per-kind controls it dispatches to.
 
 Import from those two specifiers only. Never reach into `dist/`.
@@ -57,7 +57,7 @@ const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, { te
 
 `presentation="app"` is the kernel's own seam for a use-facing surface: labels become humanized questions (`image_prompt` → "Image prompt") and the concept pills disappear, because `native.Text` is implementation detail to somebody filling in a form. The `studio` presentation shows the identifier verbatim with its type, which is what a method _builder_ wants.
 
-## One gate, two call sites
+## One set of rules, two sides
 
 The kernel's headless core is server-safe on purpose, and that is the whole design:
 
@@ -68,15 +68,17 @@ The kernel's headless core is server-safe on purpose, and that is the whole desi
   buildRunInputsSchema(contract.inputs)   # combine the per-input schemas; `required` is the gating set
   prepareRunInputs(data, schema)          # heal legacy wrappers, prune empty optionals
   validateRunInputs(prepared, …)          # ajv, plus the scan that names the VARIABLE at fault
-  inputMustBeFilled + isFilled            # the emptiness rule readiness is built from, re-applied
+  mustBeFilled + fieldFilled              # readiness's OWN two functions, over the same derived fields
   apiInputsFromSchemaData(prepared, …)    # the {concept, content} payload the run expects
   ```
 
 Because both sides get their rules from the same kernel, the hand-written guards on both sides are **deleted**, not kept as belt-and-braces. Two rules that can disagree is the failure mode this removes.
 
-**The fourth step is not redundant with the third, and the reason is worth keeping in mind if you ever trim it.** ajv's `required` asserts only that a key is _present_, and no generated contract carries a `minLength` — so `{text: {text: ""}}` and `{document: {url: ""}}` satisfy the schema. That is not a contrived payload: `rjsfDataFromRunValues({}, fields)` emits exactly `{document: {url: ""}}` for an untouched form. Readiness already refuses it in the browser, so without that step the trust boundary would be _weaker_ than the button in front of it, and an empty input could start a paid run. Re-using the kernel's own two predicates is what keeps this a shared rule rather than a second one that can drift.
+**The fourth step is not redundant with the third, and the reason is worth keeping in mind if you ever trim it.** ajv's `required` asserts only that a key is _present_, and no generated contract carries a `minLength` — so `{text: {text: ""}}` and `{document: {url: ""}}` satisfy the schema. That is not a contrived payload: `rjsfDataFromRunValues({}, fields)` emits exactly `{document: {url: ""}}` for an untouched form. Readiness already refuses it in the browser, so without that step the trust boundary would be _weaker_ than the button in front of it, and an empty input could start a paid run.
 
-The invariant to preserve is therefore not "the two sides are identical" — they are not, and should not be — but "**the server side is a strict superset of the client side**". Readiness is UX; this is the gate.
+**Which functions that step calls is load-bearing, and the near-miss is instructive.** The obvious pair is `inputMustBeFilled` + `isFilled`, and it is wrong. `computeReadiness` is built from `mustBeFilled` + `fieldFilled`, and `fieldFilled` differs from `isFilled` on exactly one field kind: for a `kind: "object"` field it requires _every required child_ to be filled, where `isFilled` on an object is satisfied by _any one_ child. So the near-miss pair diverges on a structured concept in both directions — it accepts a half-filled struct the browser refuses (a paid run past a disabled button) and rejects an all-optional struct the browser accepts (an error on a live button). Every input the methods in `methods/` declare derives to a `prose` or `document` field, and for those `fieldFilled` collapses to `isFilled` — so the wrong pair passes this repo's whole suite, and breaks for the first adopter with an object-shaped concept. Calling readiness's own functions removes the question rather than answering it.
+
+The invariant to preserve is therefore not "the two sides are identical" — they are not, and should not be — but "**the server side is a strict superset of the client side**". Readiness is UX; this is the gate. And that invariant is asserted by _running_ both sides: `src/lib/runInputs.test.ts` drives a table of inputs (the structured cases included, which no committed method can produce) through `computeReadiness` and through `gateRunInputs`, and demands the same verdict. A comment claiming the two agree is worth very little; this PR shipped one that was wrong.
 
 The action's argument is therefore the schema-shaped data dict rather than a hand-typed `text: string`:
 

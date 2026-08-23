@@ -93,7 +93,7 @@ Each example runs in one of **two execution modes**, switchable per-example at r
 The flow, end to end:
 
 1. A form renders its inputs with `useRunInputs(contract)` + `<RunInputsForm>` — **no form field is written by hand**; every label, control and required-ness comes from the method's own contract, committed by `npm run codegen` (see [Input forms](#input-forms)). It then calls the `useRun({ mode, blocking, start, poll })` hook, which dispatches to the right **Server Actions** by mode.
-2. The Server Action re-runs the same input gate (a Server Action is a public endpoint; the browser's check is only UX), then reads the `.mthds` bundle from disk and calls the SDK (`execute` for blocking, `start` + `getRunStatus`/`getRunResult` for durable) with the bundle TOML + inputs.
+2. The Server Action gates the same contract, applying the kernel's rules in full (a Server Action is a public endpoint; the browser's check is only UX), then reads the `.mthds` bundle from disk and calls the SDK (`execute` for blocking, `start` + `getRunStatus`/`getRunResult` for durable) with the bundle TOML + inputs.
 3. The Pipelex API runs the pipe and returns the main output as `main_stuff` — the same resolved field on both paths.
 4. A `parseXxx(results)` narrower in `src/types/` validates it into a typed shape, using a zod schema generated from the method's own `.mthds` bundle (see [Generated types](#generated-types)).
 5. The hook drives the result: a live-status card while running, then the result component, or a classified `PipelineError` shown by `<ErrorDisplay>`.
@@ -102,7 +102,7 @@ The flow, end to end:
 
 **No form field in this app is written by hand.** Each form is rendered from its method's input contract by the [`@pipelex/mthds-form`](https://www.npmjs.com/package/@pipelex/mthds-form) kernel: `npm run codegen` commits a `contracts.ts` beside the generated types, the form derives its fields from it, and the Run button gates on whatever that method actually requires. Add an input to a `.mthds` bundle, re-run codegen, and it shows up with the right control and the right label — no component edit.
 
-The same kernel supplies the input rules on **both** sides of the Server Action boundary, so there are no hand-written per-input guards left anywhere. The two sides call it differently, on purpose: the browser runs `computeReadiness` to decide whether Run is live, and the server runs `gateRunInputs` (`src/lib/runInputs.ts`), which re-applies those same emptiness predicates _and_ validates shapes _and_ builds the wire envelope. The server side is deliberately a strict superset — it is the trust boundary, because a Server Action is a public endpoint.
+The same kernel supplies the input rules on **both** sides of the Server Action boundary, so there are no hand-written per-input guards left anywhere. The two sides call it differently, on purpose: the browser runs `computeReadiness` to decide whether Run is live, and the server runs `gateRunInputs` (`src/lib/runInputs.ts`), which calls readiness's own two functions over the same derived fields _and_ validates shapes _and_ builds the wire envelope. The server side is deliberately a strict superset — it is the trust boundary, because a Server Action is a public endpoint — and a test runs both sides over one table of inputs to hold them to it.
 
 The full reference — the contract artifact, the server-side gate, the file seam, and the Tailwind setup (including the silent purge trap) — is [`docs/input-form.md`](docs/input-form.md).
 
