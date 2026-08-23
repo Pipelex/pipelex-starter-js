@@ -52,18 +52,17 @@ Tracker for `wip/adopt-form/design.md` (read it first; decisions A–E and the k
 
 ---
 
-## → RESUME HERE (cold start): Phase 3
+## → RESUME HERE (cold start): Phase 4
 
-**Read first, in this order:** `wip/adopt-form/design.md` (Decision E governs Phase 3), then `wip/adopt-form/integration-log.md` — its entry discipline at the top, and its Phase 2 entries, which carry the patterns Phase 3 repeats. `CLAUDE.md` is unchanged so far; Phase 4 updates it.
+**Read first, in this order:** `wip/adopt-form/design.md`, then `wip/adopt-form/integration-log.md` end to end — Phase 4's docs are written from those entries. `CLAUDE.md` is still unchanged; Phase 4 updates it.
 
-**Branch state:** `feature/Adopt-form`, on top of `32edc66 plan` — `2239824` (Phase 0), `5474235` (Phase 1), `592f0ec` (Checkpoint 1), plus Phase 2. No PR is open yet; the PR is Checkpoint 2's last item.
+**Branch state:** `feature/Adopt-form`, on top of `32edc66 plan` — `2239824` (Phase 0), `5474235` (Phase 1), `592f0ec` (Checkpoint 1), `6b05805` (Phase 2), plus Phase 3. No PR is open yet; the PR is Checkpoint 2's last item.
 
-**What already exists that Phase 3 builds on:**
+**What Phase 4 documents (all three forms are already swapped):**
 
-- `@pipelex/mthds-form@0.2.0`, styling lane proven, `PIPE_IO_CONTRACTS` committed for all three methods. `summarize_pdf.summarize_pdf` has one required input, `document`.
-- `src/lib/runInputs.ts` — `requireContract` + `gateRunInputs`. The PDF action reshapes onto exactly the same gate; nothing new is needed there.
-- `src/hooks/useRunInputs.ts` and `src/components/RunInputsForm.tsx`. `RunInputsForm` already threads a `FieldEnv` through (`env` prop, merged so the form's `disabled` always wins) — that is the seam `onDropFile` plugs into, no component change required.
-- `src/lib/clientFile.ts`'s `fileToDataUrl` is the host upload handler; write the result back with `setValueAtPath(values, id.split("."), { url, filename })` via the hook's `setValues`.
+- `src/components/RunInputsForm.tsx` (the kernel composition), `src/hooks/useRunInputs.ts` (values + readiness + wire shape), `src/lib/runInputs.ts` (`requireContract` + `gateRunInputs`), and the per-method `contracts.ts` in the generated tree.
+- The action trios take the schema-shaped data dict; inputs travel as the runtime's `{concept, content}` envelope. The PDF action adds a host byte gate after the shape gate.
+- All four e2e specs already carry the new selectors (Phases 2 and 3 updated them as the forms changed), so Phase 4's e2e item is a full `make test-e2e` run, not a rewrite.
 
 **Gotchas already paid for, don't rediscover:**
 
@@ -86,15 +85,17 @@ Tracker for `wip/adopt-form/design.md` (read it first; decisions A–E and the k
 - [x] **Live verification of the wire-shape change** (bare value → `{concept, content}` envelope), which unit tests cannot reach: `e2e/extract.spec.ts` (1 passed) and `e2e/generate-image.spec.ts` (2 passed, durable + blocking cap) against the hosted API. Their label selectors were updated here rather than deferred to Phase 4 — a knowingly-broken spec must not straddle two phases. `summarize-pdf.spec.ts` still waits on Phase 3.
 - [x] Log entries written: 5 Decisions, 2 Traps (label churn + the strict-mode label collision; whitespace-only input), 1 Upstream (`isFilled` and blank strings, filed at `../wip/inbox/2026-08-23-mthds-form-isfilled-blank-string.md`), 1 Command (the live e2e proof).
 
-## Phase 3 — the file path (Decision E)
+## Phase 3 — the file path (Decision E) — **DONE**
 
-- [ ] Swap `PdfForm` onto `RunInputsForm`: the contract's PDF input renders as `DocumentField`; supply the host seam via `FieldEnv` — `onDropFile(id, file)` → `fileToDataUrl(file)` → write a `FileValue` (`{ url: dataUrl, filename }`) back at the field's dotted path with `setValueAtPath`. Keep the "Use sample PDF" affordance (it now writes a `FileValue` for `public/sample-invoice.pdf` through the same path).
-- [ ] **Run the Decision E probe and log it prominently:** does `client.prepareInputs()` accept the kernel's enveloped wire values, or only the bare simplified shape? If bare: apply the kernel's deflate utilities (`deflateAllInputs`) at the gate — still kernel-powered, no hand-written conversion — **and file an `Upstream` entry** (teaching `prepareInputs` to accept enveloped inputs in `pipelex-sdk-js` is the better home; Louis has offered to take it there). Record the probe's raw evidence (request shape sent, response/error received) in the log.
-- [ ] Delete the duplicated hand guards: client `checkFile`/`inferPdfMime` (the kernel's `accept` on `DocumentField` takes over the client UX) and the server-side duplicates in the action's preflight. `validateDataUrl` stays **only** for what the kernel gate cannot express (the byte-size cap and server-side MIME re-check are the trust boundary — trivially bypassed client checks are not a gate); log the Decision drawing exactly that line, since "delete the duplicates, keep the single authoritative byte gate" is the generalizable rule.
-- [ ] Reshape `runSummarizePdfPipeline.ts` onto the same Decision D gate as Phase 2.
-- [ ] Rewrite `PdfForm.test.tsx` (keep real timers — its `FileReader` encoding needs them; durable poll completes on the first tick so `findBy` works).
-- [ ] `make all` clean.
-- [ ] Log entries written (the probe result, the `FileValue`/data-URL seam as the file-input pattern, the guard-deletion line, any dropzone/happy-dom Trap).
+- [x] **Decision E probe run first, live against the hosted API**, and recorded with its raw evidence in the log: `prepareInputs` accepts the kernel's enveloped `{concept, content}` value, finds and uploads the data URL inside `content.url`, and **preserves the envelope on output** (the `concept` annotation and the sibling `filename` both ride through). No deflate step, no upstream filing — the gate's payload goes straight to `prepareInputs`.
+- [x] Swapped `PdfForm` onto `RunInputsForm`: the contract's document input renders as `DocumentField`, and the host seam is `env.onDropFile(id, file)` → `fileToDataUrl` → `setValueAtPath(values, id.split("."), {url, filename})`. "Use sample PDF" kept, routed through the same handler.
+- [x] The kernel's `uploadingIds` disables the control while a file encodes, which makes the old stale-`FileReader` race unreachable — `selectionTokenRef` deleted rather than ported. The sample shortcut, which bypasses the dropzone, is disabled on the same condition.
+- [x] Guard deletions, with the line drawn in the log: client type check **deleted** (a bypassable check is not a gate; the kernel's `accept` turns out to be a display hint, not a filter), client size check **kept as an early exit** on the same exported constant (past the cap the payload cannot fit the Server Action body limit, so without it a large file yields an opaque transport failure), and the empty-MIME normalization **kept** — it looked like a duplicated type check but is an encoding fix for a real browser case, and deleting it would have broken those uploads.
+- [x] Reshaped `runSummarizePdfPipeline.ts` onto the same Decision D gate, then a host byte gate over the **gated** inputs (`checkDocumentBytes`), which no-ops on a non-`data:` URL — the kernel's paste-a-URL affordance is a capability gained for free, pinned by a test.
+- [x] Rewrote `PdfForm.test.tsx` (real timers). The kernel's file control carries no accessible label, so the input is reached by `input[type="file"]` — the same element a real drop delivers to. New tests: the contract-derived label, the oversize early exit, the empty-MIME normalization.
+- [x] `make all` clean.
+- [x] **Live verification:** `e2e/summarize-pdf.spec.ts` green — the whole chain (dropzone seam → encode → shape gate → byte gate → enveloped `prepareInputs` upload → durable run → rendered summary). The spec needed no selector change.
+- [x] Log entries written: 4 Decisions (the probe result, the file seam, the guard-deletion line, the two-gate ordering), 2 Traps (no accessible label on the file control; a hydration warning that turned out to be Playwright's screenshot caret-hiding, with the one-minute check that settles it), 1 Command.
 
 ## Phase 4 — docs and gate
 

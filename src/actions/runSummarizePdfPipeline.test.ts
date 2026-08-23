@@ -37,11 +37,23 @@ const PREPARED = {
   uploads: [{ uri: "pipelex-storage://uploaded/doc-1" }],
 };
 
-// The bare data URL is handed to prepareInputs, classified as a file by the
-// method's declared `document = Document` signature (pipe_ref defaults to main_pipe).
+// The schema-shaped data dict the form hands the action: a `native.Document`
+// input is `{url, filename}` in schema shape (the kernel's `FileValue`).
+const DATA = { document: { url: PDF_DATA_URL, filename: "invoice.pdf" } };
+
+// What the kernel's gate puts on the wire, and hands straight to prepareInputs:
+// the explicit `{concept, content}` envelope. `prepareInputs` interprets its
+// `content` exactly as it would a bare value, classifies it as a file from the
+// method's declared `document = Document` signature (pipe_ref defaults to
+// main_pipe), and preserves the envelope on output — verified live.
 const PREPARE_CALL = {
   files: [{ content: "DUMMY_BUNDLE_TOML" }],
-  inputs: { document: PDF_DATA_URL },
+  inputs: {
+    document: {
+      concept: "native.Document",
+      content: { url: PDF_DATA_URL, filename: "invoice.pdf" },
+    },
+  },
 };
 
 beforeEach(() => {
@@ -56,10 +68,7 @@ describe("runSummarizePdfBlocking", () => {
   it("prepares inputs (uploads the PDF), then calls execute with the rewritten inputs", async () => {
     prepareInputs.mockResolvedValueOnce(PREPARED);
     execute.mockResolvedValueOnce(BLOCKING_RESPONSE);
-    const result = await runSummarizePdfBlocking({
-      dataUrl: PDF_DATA_URL,
-      filename: "invoice.pdf",
-    });
+    const result = await runSummarizePdfBlocking(DATA);
     expect(prepareInputs).toHaveBeenCalledWith(PREPARE_CALL);
     expect(execute).toHaveBeenCalledWith({
       pipe_code: "summarize_pdf",
@@ -71,17 +80,21 @@ describe("runSummarizePdfBlocking", () => {
     expect(result).toMatchObject({ ok: true, output: PARSED });
   });
 
-  it("returns a bad_request error on empty input without preparing or running", async () => {
-    const result = await runSummarizePdfBlocking({ dataUrl: "", filename: "" });
-    expect(result).toEqual({ ok: false, error: expect.objectContaining({ kind: "bad_request" }) });
+  it("returns a bad_request error on missing input without preparing or running", async () => {
+    const result = await runSummarizePdfBlocking({});
+    expect(result).toEqual({
+      ok: false,
+      error: expect.objectContaining({ kind: "bad_request", title: "Input required" }),
+    });
     expect(prepareInputs).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();
   });
 
   it("rejects a non-PDF data URL as unsupported_file_type before preparing", async () => {
+    // The contract says "a url"; it cannot say "a PDF, under 8 MB". The byte
+    // gate runs after the shape gate and is what catches this.
     const result = await runSummarizePdfBlocking({
-      dataUrl: "data:image/png;base64,AAAA",
-      filename: "photo.png",
+      document: { url: "data:image/png;base64,AAAA", filename: "photo.png" },
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -94,10 +107,7 @@ describe("runSummarizePdfBlocking", () => {
     prepareInputs.mockRejectedValueOnce(
       new UnsupportedUploadCapabilityError("no /v1/upload route"),
     );
-    const result = await runSummarizePdfBlocking({
-      dataUrl: PDF_DATA_URL,
-      filename: "invoice.pdf",
-    });
+    const result = await runSummarizePdfBlocking(DATA);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("upload_failed");
@@ -109,10 +119,7 @@ describe("runSummarizePdfBlocking", () => {
     execute.mockRejectedValueOnce(
       new ApiUnreachableError("unreachable", "https://api.unreachable.example", "ECONNREFUSED"),
     );
-    const result = await runSummarizePdfBlocking({
-      dataUrl: PDF_DATA_URL,
-      filename: "invoice.pdf",
-    });
+    const result = await runSummarizePdfBlocking(DATA);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("api_unreachable");
@@ -123,7 +130,7 @@ describe("startSummarizePdfRun", () => {
   it("prepares inputs, then calls start with the rewritten inputs; returns the run id", async () => {
     prepareInputs.mockResolvedValueOnce(PREPARED);
     start.mockResolvedValueOnce({ pipeline_run_id: "run-1" });
-    const result = await startSummarizePdfRun({ dataUrl: PDF_DATA_URL, filename: "invoice.pdf" });
+    const result = await startSummarizePdfRun(DATA);
     expect(prepareInputs).toHaveBeenCalledWith(PREPARE_CALL);
     expect(start).toHaveBeenCalledWith({
       pipe_code: "summarize_pdf",
@@ -135,8 +142,7 @@ describe("startSummarizePdfRun", () => {
 
   it("re-runs the file pre-flight: rejects a non-PDF without preparing or starting", async () => {
     const result = await startSummarizePdfRun({
-      dataUrl: "data:image/png;base64,AAAA",
-      filename: "photo.png",
+      document: { url: "data:image/png;base64,AAAA", filename: "photo.png" },
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -156,5 +162,28 @@ describe("pollSummarizePdfRun", () => {
     });
     const result = await pollSummarizePdfRun("run-1");
     expect(result).toMatchObject({ ok: true, state: "completed", output: PARSED });
+  });
+});
+
+describe("the paste-a-URL escape hatch", () => {
+  it("passes an https reference through the byte gate untouched", async () => {
+    // The kernel's file control offers "paste a URL instead", so a document
+    // input can arrive with no bytes at all. There is nothing to size-check;
+    // resolving the reference is `prepareInputs`' job.
+    prepareInputs.mockResolvedValueOnce(PREPARED);
+    start.mockResolvedValueOnce({ pipeline_run_id: "run-1" });
+    const result = await startSummarizePdfRun({
+      document: { url: "https://example.com/invoice.pdf" },
+    });
+    expect(result).toEqual({ ok: true, runId: "run-1" });
+    expect(prepareInputs).toHaveBeenCalledWith({
+      files: [{ content: "DUMMY_BUNDLE_TOML" }],
+      inputs: {
+        document: {
+          concept: "native.Document",
+          content: { url: "https://example.com/invoice.pdf" },
+        },
+      },
+    });
   });
 });

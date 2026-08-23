@@ -1,27 +1,35 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useState } from "react";
+import { setValueAtPath } from "@pipelex/mthds-form";
 import {
   pollSummarizePdfRun,
   runSummarizePdfBlocking,
   startSummarizePdfRun,
 } from "@/actions/runSummarizePdfPipeline";
 import { fileToDataUrl } from "@/lib/clientFile";
-import {
-  MAX_PDF_BYTES,
-  fileInputErrorToPipelineError,
-  type FileInputError,
-} from "@/lib/fileEncoding";
+import { MAX_PDF_BYTES, fileInputErrorToPipelineError } from "@/lib/fileEncoding";
 import { classifyTransportError, type PipelineError } from "@/lib/errors";
 import { DEFAULT_EXECUTION_MODE, type ExecutionMode } from "@/config";
+import { PIPE_IO_CONTRACTS } from "@/generated/summarize-pdf/contracts";
 import { useRun } from "@/hooks/useRun";
+import { useRunInputs } from "@/hooks/useRunInputs";
+import { requireContract } from "@/lib/runInputs";
 import { CostReport } from "./CostReport";
 import { PdfSummaryResult } from "./PdfSummaryResult";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { ModeToggle } from "./ModeToggle";
+import { RunInputsForm } from "./RunInputsForm";
 import { RunStatus } from "./RunStatus";
 
+const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "summarize_pdf", "summarize_pdf");
+
 const SAMPLE_PDF_PATH = "/sample-invoice.pdf";
+/** The input the sample PDF fills. Like a seeded sample text, a demo shortcut
+ *  names the input it is a sample *of* — the form's structure still does not. */
+const DOCUMENT_INPUT = "document";
+
+const NO_UPLOADS: ReadonlySet<string> = new Set<string>();
 
 function megabytes(bytes: number): string {
   const value = bytes / 1024 / 1024;
@@ -29,50 +37,30 @@ function megabytes(bytes: number): string {
 }
 
 /**
- * Browsers and OS integrations occasionally surface an empty `file.type`
- * for valid PDFs (e.g. some drag-drop sources, some Windows configurations).
- * Fall back to the extension so those uploads aren't blocked client-side —
- * the Server Action still re-validates authoritatively.
+ * Some drag-drop sources and Windows configurations hand a valid PDF over with
+ * an empty `file.type`, and `FileReader` then writes that emptiness into the
+ * data URL — which the server's MIME gate rejects. Re-wrap those so the encoded
+ * URL carries `application/pdf`.
+ *
+ * This is *encoding*, not validation: the extension test is what keeps it from
+ * stamping "PDF" on something that is not one, and the server still checks the
+ * MIME it receives.
  */
-function inferPdfMime(file: File): string {
-  if (file.type) return file.type;
-  return file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "";
-}
-
-/**
- * Fast client-side check so we don't base64-encode a huge or wrong-typed
- * file just to have the server reject it. The Server Action re-validates the
- * data URL authoritatively — this is UX, not a gate.
- */
-function checkFile(file: File): FileInputError | null {
-  const mime = inferPdfMime(file);
-  if (mime !== "application/pdf") {
-    return {
-      kind: "unsupported_file_type",
-      message: `Expected a PDF; received "${file.type || "unknown type"}".`,
-    };
-  }
-  if (file.size > MAX_PDF_BYTES) {
-    return {
-      kind: "file_too_large",
-      message: `File is ${megabytes(file.size)} MB; the limit is ${megabytes(MAX_PDF_BYTES)} MB.`,
-    };
-  }
-  return null;
+function withPdfMime(file: File): File {
+  if (file.type || !file.name.toLowerCase().endsWith(".pdf")) return file;
+  return new File([file], file.name, { type: "application/pdf" });
 }
 
 export function PdfForm() {
-  const [filename, setFilename] = useState<string | null>(null);
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT);
   const [mode, setMode] = useState<ExecutionMode>(DEFAULT_EXECUTION_MODE);
-  // File-selection errors (wrong type, too large, FileReader failure) live
-  // separately from the run state: they happen *before* a run, so there is no
-  // useRun error to carry them. The run's own error comes from `state`.
+  // File-selection errors (too large, FileReader failure) live separately from
+  // the run state: they happen *before* a run, so there is no useRun error to
+  // carry them. The run's own error comes from `state`.
   const [fileError, setFileError] = useState<PipelineError | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  // Bumped on every `acceptFile` call; lets us ignore a stale FileReader read
-  // when the user picks a second file before the first finishes encoding.
-  const selectionTokenRef = useRef(0);
+  // The kernel disables a file control while its id is in here, and shows a
+  // spinner — which is also what makes a second drop mid-encode impossible.
+  const [encodingIds, setEncodingIds] = useState<ReadonlySet<string>>(NO_UPLOADS);
 
   const { state, run, reset } = useRun({
     mode,
@@ -83,56 +71,64 @@ export function PdfForm() {
 
   const running = state.phase === "running";
 
-  /** Validate, then base64-encode a chosen PDF into a data URL for submission. */
-  async function acceptFile(file: File) {
-    const token = ++selectionTokenRef.current;
-    const isCurrent = () => selectionTokenRef.current === token;
-    setFileError(null);
-    reset(); // clear any prior run result/error so only the new selection shows
-    const fileCheck = checkFile(file);
-    if (fileCheck) {
-      setFilename(null);
-      setDataUrl(null);
-      setFileError(fileInputErrorToPipelineError(fileCheck, file.name));
-      return;
-    }
-    // Normalize an empty MIME (see `inferPdfMime`) so the encoded data URL
-    // carries `application/pdf`, which the server's validator requires.
-    const fileForEncoding =
-      file.type === "application/pdf"
-        ? file
-        : new File([file], file.name, { type: "application/pdf" });
-    try {
-      const url = await fileToDataUrl(fileForEncoding);
-      if (!isCurrent()) return;
-      setFilename(file.name);
-      setDataUrl(url);
-    } catch (err) {
-      if (!isCurrent()) return;
-      setFilename(null);
-      setDataUrl(null);
-      setFileError(classifyTransportError(err));
-    }
-  }
-
-  function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (file) void acceptFile(file);
-  }
+  /**
+   * The host seam for file inputs: the kernel never uploads. `DocumentField`
+   * hands us the dropped `File` and the dotted path of the field that asked,
+   * and we write a `FileValue` (`{url, filename}`) back at that path. Here the
+   * "upload" is a base64 data URL — the Server Action passes it to the SDK's
+   * `prepareInputs`, which does the real upload to Pipelex storage.
+   */
+  const handleDropFile = useCallback(
+    async (id: string, file: File) => {
+      setFileError(null);
+      reset(); // clear any prior run result/error so only the new selection shows
+      // Checked here, before encoding, purely to save the work: base64 inflates
+      // a file ~37%, and past this cap the payload would not fit the Server
+      // Action body limit anyway. The same constant is re-checked server-side,
+      // which is the actual gate — this is the early exit, not a second rule.
+      if (file.size > MAX_PDF_BYTES) {
+        setFileError(
+          fileInputErrorToPipelineError(
+            {
+              kind: "file_too_large",
+              message: `File is ${megabytes(file.size)} MB; the limit is ${megabytes(MAX_PDF_BYTES)} MB.`,
+            },
+            file.name,
+          ),
+        );
+        return;
+      }
+      setEncodingIds((prev) => new Set(prev).add(id));
+      try {
+        const url = await fileToDataUrl(withPdfMime(file));
+        setValues((current) =>
+          setValueAtPath(current, id.split("."), { url, filename: file.name }),
+        );
+      } catch (err) {
+        setFileError(classifyTransportError(err));
+      } finally {
+        setEncodingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+    },
+    [reset, setValues],
+  );
 
   async function handleUseSample() {
-    // Clear any prior run result/error up-front: `acceptFile` resets too, but
-    // only on the success path — if the fetch below fails, an earlier summary
-    // would otherwise stay rendered next to the new error.
     setFileError(null);
     reset();
     try {
       const res = await fetch(SAMPLE_PDF_PATH);
       if (!res.ok) throw new Error(`Could not load the sample PDF (HTTP ${res.status})`);
       const blob = await res.blob();
-      // Run the sample through the exact same path as a real upload.
-      await acceptFile(new File([blob], "sample-invoice.pdf", { type: "application/pdf" }));
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      // Run the sample through the exact same seam as a real drop.
+      await handleDropFile(
+        DOCUMENT_INPUT,
+        new File([blob], "sample-invoice.pdf", { type: "application/pdf" }),
+      );
     } catch (err) {
       setFileError(classifyTransportError(err));
     }
@@ -140,41 +136,35 @@ export function PdfForm() {
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!dataUrl) return;
     setFileError(null);
-    run({ dataUrl, filename: filename ?? "document.pdf" });
+    run(toData());
   }
 
   return (
     <div className="space-y-6">
       <form onSubmit={handleSubmit} className="space-y-4">
-        <label htmlFor="pdf-file" className="block text-sm font-medium text-slate-700">
-          PDF document
-        </label>
-        <input
-          id="pdf-file"
-          ref={fileInputRef}
-          type="file"
-          accept="application/pdf"
-          onChange={handleFileChange}
+        <RunInputsForm
+          fields={fields}
+          values={values}
+          onValuesChange={setValues}
           disabled={running}
-          className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-slate-700"
+          env={{ onDropFile: handleDropFile, uploadingIds: encodingIds }}
         />
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={handleUseSample}
-            disabled={running}
-            className="text-xs font-medium text-blue-700 underline disabled:opacity-50"
-          >
-            Use sample PDF
-          </button>
-          {filename && <span className="text-xs text-slate-500">Selected: {filename}</span>}
-        </div>
+        {/* Also disabled mid-encode: the kernel's dropzone disables itself
+            while a file is being read, and this shortcut goes through the same
+            handler, so it is the one remaining way to start a second read. */}
+        <button
+          type="button"
+          onClick={handleUseSample}
+          disabled={running || encodingIds.size > 0}
+          className="text-xs font-medium text-blue-700 underline disabled:opacity-50"
+        >
+          Use sample PDF
+        </button>
         <ModeToggle value={mode} onChange={setMode} disabled={running} />
         <button
           type="submit"
-          disabled={running || !dataUrl}
+          disabled={running || !ready}
           className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {running ? "Summarizing…" : "Summarize PDF"}

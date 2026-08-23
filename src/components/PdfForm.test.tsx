@@ -39,15 +39,31 @@ const USAGE = {
   assemblyError: null,
 };
 
-function pdfFile(name = "doc.pdf") {
-  return new File(["%PDF-1.4 fake pdf bytes"], name, { type: "application/pdf" });
+function pdfFile(name = "doc.pdf", type = "application/pdf") {
+  return new File(["%PDF-1.4 fake pdf bytes"], name, { type });
+}
+
+/**
+ * The kernel's `DocumentField` is a react-dropzone drop area wrapping a hidden
+ * file input. It carries no accessible label (`FieldShell` renders a `div`, not
+ * a `<label>`, when no control id is linkable), so the input is reached by type
+ * — the same element a real drop or browse would deliver the file to.
+ */
+function fileInput(): HTMLInputElement {
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+  if (!input) throw new Error("no file input rendered");
+  return input;
 }
 
 async function selectFile(file: File) {
-  const input = screen.getByLabelText(/pdf document/i);
-  fireEvent.change(input, { target: { files: [file] } });
+  fireEvent.change(fileInput(), { target: { files: [file] } });
   // fileToDataUrl is async (FileReader); the submit button enables once done.
   await waitFor(() => expect(screen.getByRole("button", { name: /summarize pdf/i })).toBeEnabled());
+}
+
+/** The document input's value, as the action received it. */
+function documentArg(call: [Record<string, unknown>]): { url?: string; filename?: string } {
+  return call[0].document as { url?: string; filename?: string };
 }
 
 /** A durable run that completes on the first poll (no setTimeout gap to bridge). */
@@ -57,7 +73,15 @@ function durableCompletes(summary: { title: string; doc_type: string; key_points
 }
 
 describe("PdfForm", () => {
-  it("encodes a selected PDF and renders the summary on success (durable)", async () => {
+  it("renders the file input the method's contract declares", () => {
+    render(<PdfForm />);
+    // `document` in the bundle → "Document" through the kernel's `app`
+    // presentation, rendered as a dropzone because the concept is a file one.
+    expect(screen.getByText("Document")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /summarize pdf/i })).toBeDisabled();
+  });
+
+  it("encodes a dropped PDF and renders the summary on success (durable)", async () => {
     durableCompletes({ title: "Invoice", doc_type: "invoice", key_points: ["Total $1,728"] });
 
     render(<PdfForm />);
@@ -65,20 +89,22 @@ describe("PdfForm", () => {
     fireEvent.click(screen.getByRole("button", { name: /summarize pdf/i }));
 
     expect(await screen.findByText("Invoice")).toBeInTheDocument();
-    // The action receives a serializable data URL + filename, never a File.
-    const arg = start.mock.calls[0][0];
-    expect(arg.dataUrl.startsWith("data:application/pdf;base64,")).toBe(true);
-    expect(arg.filename).toBe("doc.pdf");
+    // The action receives the kernel's `FileValue` in schema shape — a
+    // serializable data URL and a filename, never a `File`.
+    const value = documentArg(start.mock.calls[0]);
+    expect(value.url?.startsWith("data:application/pdf;base64,")).toBe(true);
+    expect(value.filename).toBe("doc.pdf");
   });
 
-  it("rejects a non-PDF file client-side without calling any action", async () => {
+  it("rejects an oversized file before encoding it", async () => {
     render(<PdfForm />);
-    fireEvent.change(screen.getByLabelText(/pdf document/i), {
-      target: { files: [new File(["x"], "photo.png", { type: "image/png" })] },
-    });
+    const huge = pdfFile("huge.pdf");
+    // `File.size` is read-only; stand in for a 9 MB file (the cap is 8 MB).
+    Object.defineProperty(huge, "size", { value: 9 * 1024 * 1024 });
+    fireEvent.change(fileInput(), { target: { files: [huge] } });
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
-    expect(screen.getByText("Unsupported file type")).toBeInTheDocument();
+    expect(screen.getByText("PDF too large")).toBeInTheDocument();
     expect(start).not.toHaveBeenCalled();
     expect(blocking).not.toHaveBeenCalled();
   });
@@ -139,70 +165,14 @@ describe("PdfForm", () => {
     durableCompletes({ title: "Invoice", doc_type: "invoice", key_points: [] });
 
     render(<PdfForm />);
-    const fileWithEmptyType = new File(["%PDF-1.4"], "report.pdf", { type: "" });
-    fireEvent.change(screen.getByLabelText(/pdf document/i), {
-      target: { files: [fileWithEmptyType] },
-    });
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /summarize pdf/i })).toBeEnabled(),
-    );
+    await selectFile(pdfFile("report.pdf", ""));
     fireEvent.click(screen.getByRole("button", { name: /summarize pdf/i }));
 
     expect(await screen.findByText("Invoice")).toBeInTheDocument();
-    // The empty MIME is normalized so the data URL carries application/pdf.
-    const arg = start.mock.calls[0][0];
-    expect(arg.dataUrl.startsWith("data:application/pdf;base64,")).toBe(true);
-  });
-
-  it("ignores a stale FileReader read when a newer file is selected", async () => {
-    durableCompletes({ title: "Second", doc_type: "invoice", key_points: [] });
-
-    // First-call FileReader stays pending; second-call resolves immediately.
-    // If the stale guard is missing, the late first read overwrites filename
-    // and the action receives "first.pdf" instead of "second.pdf".
-    const RealFileReader = globalThis.FileReader;
-    const pendingFirst: { fire?: () => void } = {};
-    let callCount = 0;
-    class StubFileReader {
-      result: string | ArrayBuffer | null = null;
-      error: DOMException | null = null;
-      onload: ((ev: ProgressEvent) => void) | null = null;
-      onerror: ((ev: ProgressEvent) => void) | null = null;
-      readAsDataURL(_file: File) {
-        callCount += 1;
-        const isFirst = callCount === 1;
-        const reader = this;
-        const fire = () => {
-          reader.result = `data:application/pdf;base64,${isFirst ? "Zmlyc3Q=" : "c2Vjb25k"}`;
-          reader.onload?.(new ProgressEvent("load"));
-        };
-        if (isFirst) {
-          pendingFirst.fire = fire;
-        } else {
-          queueMicrotask(fire);
-        }
-      }
-    }
-    (globalThis as unknown as { FileReader: typeof FileReader }).FileReader =
-      StubFileReader as unknown as typeof FileReader;
-
-    try {
-      render(<PdfForm />);
-      const input = screen.getByLabelText(/pdf document/i);
-      fireEvent.change(input, { target: { files: [pdfFile("first.pdf")] } });
-      fireEvent.change(input, { target: { files: [pdfFile("second.pdf")] } });
-
-      await waitFor(() => expect(screen.getByText(/Selected: second\.pdf/)).toBeInTheDocument());
-      // Now let the stale first read finish — it must not overwrite state.
-      pendingFirst.fire?.();
-      await new Promise((r) => setTimeout(r, 0));
-      expect(screen.getByText(/Selected: second\.pdf/)).toBeInTheDocument();
-
-      fireEvent.click(screen.getByRole("button", { name: /summarize pdf/i }));
-      await screen.findByText("Second");
-      expect(start.mock.calls[0][0].filename).toBe("second.pdf");
-    } finally {
-      (globalThis as unknown as { FileReader: typeof FileReader }).FileReader = RealFileReader;
-    }
+    // The empty MIME is normalized before encoding, so the data URL carries
+    // application/pdf and the server's MIME gate accepts it.
+    expect(documentArg(start.mock.calls[0]).url?.startsWith("data:application/pdf;base64,")).toBe(
+      true,
+    );
   });
 });
