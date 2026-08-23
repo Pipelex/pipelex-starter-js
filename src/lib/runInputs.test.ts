@@ -75,9 +75,9 @@ describe("gateRunInputs", () => {
   });
 
   it("rejects an empty file input, where the byte check cannot catch it", () => {
-    // The file-shaped equivalent, and the costlier one: `checkDocumentBytes`
-    // no-ops on anything that is not a `data:` URL, so an empty `url` would
-    // sail past it into `prepareInputs` and start a run.
+    // The file-shaped equivalent, and the costlier one. The gate has to catch
+    // it: an empty `url` is a well-formed shape, so nothing about the schema
+    // objects to it, and a run would start on an input the user never filled.
     const result = gateRunInputs(PDF_CONTRACT, { document: { url: "" } });
     expect(result.ok).toBe(false);
     if (result.ok) return;

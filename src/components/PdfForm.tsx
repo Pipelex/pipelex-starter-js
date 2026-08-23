@@ -103,6 +103,11 @@ export function PdfForm() {
    * Cover every await, not just the encode: a window where the field is
    * writable while an older selection is still resolving is a window where the
    * older one lands last and silently replaces the newer.
+   *
+   * This is a set, not a refcount, and `handleUseSample` nests a `handleDropFile`
+   * inside its own busy span — so the inner `finally` releases the field while
+   * the outer is still running. That is safe only because nothing awaits after
+   * the inner call returns. Add an `await` there and the window reopens.
    */
   const markBusy = useCallback((id: string, busy: boolean) => {
     setEncodingIds((prev) => {

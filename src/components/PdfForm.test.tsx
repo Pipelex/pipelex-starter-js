@@ -104,7 +104,7 @@ describe("PdfForm", () => {
     fireEvent.change(fileInput(), { target: { files: [huge] } });
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
-    expect(screen.getByText("PDF too large")).toBeInTheDocument();
+    expect(screen.getByText("File too large")).toBeInTheDocument();
     expect(start).not.toHaveBeenCalled();
     expect(blocking).not.toHaveBeenCalled();
   });
@@ -124,7 +124,7 @@ describe("PdfForm", () => {
     );
     try {
       fireEvent.click(screen.getByRole("button", { name: /use sample pdf/i }));
-      expect(await screen.findByText("PDF too large")).toBeInTheDocument();
+      expect(await screen.findByText("File too large")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /summarize pdf/i })).toBeDisabled();
     } finally {
       vi.unstubAllGlobals();

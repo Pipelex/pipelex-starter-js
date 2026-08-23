@@ -125,13 +125,30 @@ export function validateDataUrl(
  */
 const ALLOWED_FILE_SCHEMES = ["data:", "https://", "pipelex-storage://"];
 
+/** How deep `carriesUrl` will look before giving up and refusing. */
+const MAX_INPUT_DEPTH = 8;
+
 /**
- * The scheme, MIME and size gate for every file-bearing input in a gated
- * payload. The kernel gate proves the *shape*; this proves what the contract
- * cannot express — "a reference we accept, and if it carries bytes, few enough
- * of the right kind".
+ * Whether `value` is, or contains, an object carrying a `url` key — i.e. a file
+ * position. Descends arrays and plain objects only, and treats hitting the depth
+ * cap as "yes", so a deeply nested or self-referential payload refuses rather
+ * than passing (and the walk cannot run away on a cycle).
+ */
+function carriesUrl(value: unknown, depth = 0): boolean {
+  if (depth >= MAX_INPUT_DEPTH) return true;
+  if (Array.isArray(value)) return value.some((item) => carriesUrl(item, depth + 1));
+  if (typeof value !== "object" || value === null) return false;
+  if ("url" in value) return true;
+  return Object.values(value).some((child) => carriesUrl(child, depth + 1));
+}
+
+/**
+ * The scheme, MIME and size gate for the file-bearing inputs in a gated payload.
+ * The kernel gate proves the *shape*; this proves what the contract cannot
+ * express — "a reference we accept, and if it carries bytes, few enough of the
+ * right kind".
  *
- * Two properties worth keeping when adapting this:
+ * Three properties worth keeping when adapting this:
  *
  * 1. **Scheme first, and refuse by default.** Treating "not a data URL" as
  *    "nothing to check" is how the local-file read above opens — the absence of
@@ -140,6 +157,16 @@ const ALLOWED_FILE_SCHEMES = ["data:", "https://", "pipelex-storage://"];
  *    makes this whole gate return "fine" the day the bundle renames that input,
  *    while codegen carries the rename into the form, the readiness rules and the
  *    wire envelope. It fails open, silently, on a routine edit.
+ * 3. **It reads one level — `content.url` — and refuses any shape that hides a
+ *    file position deeper.** `prepareInputs` walks the method's signature, so it
+ *    resolves a file inside a list (`documents: list[Document]`) or nested in a
+ *    structured concept, both of which `content.url` misses entirely. Property 2
+ *    is worth nothing if pluralising an input reopens the hole instead — so an
+ *    unreachable `url` is a refusal here, not a pass. Widening the walk to
+ *    descend the contract's `json_schema` in lockstep (the way `wireOutput`'s
+ *    `dropWireNulls` descends a zod schema, and for the same reason: a blind
+ *    value walk cannot tell a file position from a data field named `url`) is
+ *    the real fix, and is worth doing the day a method needs one of those shapes.
  *
  * This is the authoritative check. The browser's own size check is an early exit
  * that saves an encode, not a gate — it is trivially bypassed.
@@ -150,7 +177,18 @@ export function checkFileInputs(
 ): PipelineError | null {
   for (const [name, envelope] of Object.entries(inputs)) {
     const content = (envelope as { content?: { url?: unknown; filename?: unknown } })?.content;
-    if (typeof content?.url !== "string") continue;
+
+    if (typeof content?.url !== "string") {
+      if (!carriesUrl(content)) continue;
+      return {
+        kind: "bad_request",
+        title: "Unsupported input shape",
+        message:
+          `The "${name}" input carries a file reference this app cannot verify — ` +
+          `a repeated or nested file position. Refused rather than passed through.`,
+        details: `unverifiable_file_position: ${name}`,
+      };
+    }
     const url = content.url;
 
     if (!ALLOWED_FILE_SCHEMES.some((scheme) => url.startsWith(scheme))) {
@@ -176,14 +214,18 @@ export function checkFileInputs(
   return null;
 }
 
-/** Render a `FileInputError` as a `PipelineError` for `<ErrorDisplay>`. */
+/**
+ * Render a `FileInputError` as a `PipelineError` for `<ErrorDisplay>`. The title
+ * says "File", not "PDF": `checkFileInputs` is generic over whatever a method
+ * declares, and the message underneath already names the type and the limit.
+ */
 export function fileInputErrorToPipelineError(
   fileError: FileInputError,
   filename: string,
 ): PipelineError {
   return {
     kind: fileError.kind,
-    title: fileError.kind === "file_too_large" ? "PDF too large" : "Unsupported file type",
+    title: fileError.kind === "file_too_large" ? "File too large" : "Unsupported file type",
     message: fileError.message,
     details: `${fileError.kind}: ${filename || "(no filename)"}`,
   };

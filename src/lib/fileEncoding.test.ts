@@ -155,6 +155,46 @@ describe("checkFileInputs", () => {
     expect(error?.kind).toBe("unsupported_file_type");
     expect(error?.details).toContain("logo.png");
   });
+
+  // The gate reads `content.url`, one level down. `prepareInputs` walks the
+  // method's whole signature, so it resolves a file inside a list or nested in a
+  // structured concept — positions this never sees. Both shapes below reached
+  // `readLocalPath` with the path intact when an unreachable `url` was a pass.
+  // Refusing keeps the "keyed on values, not names" property true through a
+  // routine bundle edit, instead of quietly reopening the local-file read.
+  describe("a file position it cannot reach", () => {
+    it("refuses a file inside a list", () => {
+      const plural = {
+        documents: {
+          concept: "native.Document",
+          content: [{ url: "/etc/passwd", filename: "x.pdf" }],
+        },
+      };
+      expect(checkFileInputs(plural, opts)?.details).toBe("unverifiable_file_position: documents");
+    });
+
+    it("refuses a file nested in a structured concept", () => {
+      const nested = {
+        packet: {
+          concept: "d.Packet",
+          content: { note: "hi", attachment: { url: "/etc/passwd", filename: "x.pdf" } },
+        },
+      };
+      expect(checkFileInputs(nested, opts)?.details).toBe("unverifiable_file_position: packet");
+    });
+
+    it("still lets a plural text input through — an array is not by itself a file", () => {
+      const pages = { pages: { concept: "native.Text", content: [{ text: "first" }] } };
+      expect(checkFileInputs(pages, opts)).toBeNull();
+    });
+
+    it("refuses rather than recurses forever on a self-referential payload", () => {
+      const loop: Record<string, unknown> = { note: "hi" };
+      loop.self = loop;
+      const cyclic = { packet: { concept: "d.Packet", content: loop } };
+      expect(checkFileInputs(cyclic, opts)?.details).toBe("unverifiable_file_position: packet");
+    });
+  });
 });
 
 describe("fileInputErrorToPipelineError", () => {
@@ -164,7 +204,7 @@ describe("fileInputErrorToPipelineError", () => {
       "big.pdf",
     );
     expect(result.kind).toBe("file_too_large");
-    expect(result.title).toBe("PDF too large");
+    expect(result.title).toBe("File too large");
     expect(result.details).toContain("big.pdf");
   });
 

@@ -79,9 +79,12 @@ export type GateOutcome =
  * is unbounded growth driven by the cheapest request there is — an empty body,
  * rejected in a fraction of a millisecond, costing no model spend.
  *
- * Weakly keyed so a contract that goes out of scope (a test fixture) takes its
- * schema with it; in the app the contracts are module-level constants, so this
- * holds exactly one entry per method.
+ * Weakly keyed so this map itself never pins a contract that goes out of scope;
+ * in the app the contracts are module-level constants, so it holds exactly one
+ * entry per method. Note that a schema which has been through `gateRunInputs`
+ * is pinned for the process lifetime anyway, by ajv's own strong cache — the
+ * point here is not that the schema is collectable, it is that the number of
+ * them is bounded by the number of distinct contracts rather than by traffic.
  */
 const SCHEMA_CACHE = new WeakMap<PipeIOContract, ReturnType<typeof buildRunInputsSchema>>();
 
