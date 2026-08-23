@@ -22,7 +22,13 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vite
 import { runCodegenCheck, type CodegenValidReport } from "@pipelex/sdk";
 
 import { writeTree } from "./generate.mts";
-import { SOURCES_SIDECAR, SymlinkRefusedError } from "./shared.mts";
+import {
+  CONTRACTS_FILENAME,
+  hashSource,
+  renderContracts,
+  SOURCES_SIDECAR,
+  SymlinkRefusedError,
+} from "./shared.mts";
 
 vi.mock("@pipelex/sdk", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@pipelex/sdk")>();
@@ -46,6 +52,7 @@ function noDrifts(): void {
 }
 
 const SOURCES = { "methods/demo/main.mthds": "abc123" };
+const CONTRACTS = renderContracts({ "demo.demo": { inputs: {}, output: {} } });
 
 let outDir: string;
 
@@ -132,6 +139,56 @@ describe("writeTree", () => {
     await writeTree(outDir, report([{ path: "types.ts", content: "export {};\n" }]), SOURCES);
 
     expect(await readFile(path.join(outDir, "types.extra.ts"), "utf-8")).toBe("// mine\n");
+  });
+
+  it("writes a derived artifact and records its hash in the sidecar", async () => {
+    noDrifts();
+
+    const changed = await writeTree(
+      outDir,
+      report([{ path: "types.ts", content: "export {};\n" }]),
+      SOURCES,
+      { [CONTRACTS_FILENAME]: CONTRACTS },
+    );
+
+    expect(changed).toContain(CONTRACTS_FILENAME);
+    expect(await readFile(path.join(outDir, CONTRACTS_FILENAME), "utf-8")).toBe(CONTRACTS);
+    const sidecar: unknown = JSON.parse(
+      await readFile(path.join(outDir, SOURCES_SIDECAR), "utf-8"),
+    );
+    expect(sidecar).toMatchObject({ derived: { [CONTRACTS_FILENAME]: hashSource(CONTRACTS) } });
+  });
+
+  it("is a true no-op over a tree whose derived artifact is unchanged", async () => {
+    noDrifts();
+    const artifacts = [{ path: "types.ts", content: "export {};\n" }];
+    const derived = { [CONTRACTS_FILENAME]: CONTRACTS };
+    await writeTree(outDir, report(artifacts), SOURCES, derived);
+
+    expect(await writeTree(outDir, report(artifacts), SOURCES, derived)).toEqual([]);
+  });
+
+  it("keeps the derived artifact through the orphan pass", async () => {
+    // It is written BEFORE the cleanup on purpose, so the writer and the checker
+    // see the same tree. The SDK's orphan rule requires a codegen *stamp*, which
+    // this file does not carry — but the guarantee is worth pinning here too,
+    // because the failure mode is a file that silently disappears on every
+    // regeneration and comes back only on the next one.
+    noDrifts();
+    await writeTree(outDir, report([{ path: "types.ts", content: "export {};\n" }]), SOURCES, {
+      [CONTRACTS_FILENAME]: CONTRACTS,
+    });
+    checkMock.mockResolvedValue({
+      drifts: [{ category: "orphan", path: "stale.ts", detail: "not in the lock" }],
+      isCurrent: false,
+    });
+    await writeFile(path.join(outDir, "stale.ts"), "// left over\n");
+
+    await writeTree(outDir, report([{ path: "types.ts", content: "export {};\n" }]), SOURCES, {
+      [CONTRACTS_FILENAME]: CONTRACTS,
+    });
+
+    expect(await readFile(path.join(outDir, CONTRACTS_FILENAME), "utf-8")).toBe(CONTRACTS);
   });
 
   it("refuses a symlink nested in the pre-existing tree before writing anything", async () => {

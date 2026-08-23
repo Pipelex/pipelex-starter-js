@@ -8,6 +8,13 @@
  * This module closes that gap the way the SDK documents: re-run `codegen()` live
  * and compare its `crate_fingerprint` against the committed lock's.
  *
+ * The same gap exists for `contracts.ts`, and for the same reason: it is projected
+ * from `POST /v1/validate` and nothing offline can tell whether that route would
+ * return the same payload today. So this module re-fetches it too and compares
+ * the rendered bytes against the committed file. The re-fetch is close to free —
+ * the client and the closure are already in hand — which is why it is checked
+ * here rather than exempted the way an unverifiable artifact would have to be.
+ *
  * It writes nothing. A mismatch means `npm run codegen` has real work to do; the
  * fix is a deliberate regeneration commit, not a silent rewrite from a checker.
  *
@@ -28,12 +35,15 @@ import {
 
 import {
   assertSecureBaseUrl,
+  CONTRACTS_FILENAME,
   discoverMethods,
   refuseSymlinkRoot,
   GENERATED_ROOT,
   LOCK_FILENAME,
   METHODS_DIR,
   readGeneratedTree,
+  readTextFile,
+  renderContracts,
   REPO_ROOT,
 } from "./shared.mts";
 
@@ -145,8 +155,45 @@ async function runVerifyInner(): Promise<number> {
       continue;
     }
 
+    // The contracts artifact rides `/v1/validate`, not `/v1/codegen`, so the
+    // crate fingerprint above says nothing about it. Compare the rendered bytes.
+    try {
+      const response = await client.validateFiles(
+        method.files.map((file) => ({ content: file.content, uri: file.source })),
+      );
+      if (!response.is_valid) {
+        console.error(`\n✗ ${method.name} — the bundle no longer validates:`);
+        for (const item of response.validation_errors) {
+          console.error(`    ${item.source ?? "?"}: ${item.message}`);
+        }
+        failed = true;
+        continue;
+      }
+      const live = renderContracts(response.pipe_io_contracts);
+      const committed = await readTextFile(path.join(outDir, CONTRACTS_FILENAME));
+      if (live !== committed) {
+        console.error(
+          `\n✗ ${method.name} — the committed ${CONTRACTS_FILENAME} is not what /v1/validate returns.`,
+        );
+        console.error("    Run `npm run codegen` and commit the result.");
+        failed = true;
+        continue;
+      }
+    } catch (error) {
+      const detail =
+        error instanceof ApiResponseError
+          ? `HTTP ${error.status} from POST /v1/validate — ${error.serverMessage ?? error.message}`
+          : error instanceof Error
+            ? error.message
+            : String(error);
+      console.error(`\n✗ ${method.name} — ${detail}`);
+      failed = true;
+      continue;
+    }
+
     console.log(
-      `\n✓ ${method.name} — crate ${committedFingerprint.slice(0, 12)} matches the engine`,
+      `\n✓ ${method.name} — crate ${committedFingerprint.slice(0, 12)} matches the engine, ` +
+        `${CONTRACTS_FILENAME} matches /v1/validate`,
     );
     if (liveEngine !== committedEngine) {
       // Not a failure. The stamp carries `engine_version`, so an engine bump

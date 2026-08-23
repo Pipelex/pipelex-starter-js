@@ -35,16 +35,20 @@ import {
 
 import {
   assertSecureBaseUrl,
+  CONTRACTS_FILENAME,
   discoverMethods,
+  hashSource,
   isContainedPath,
   refuseSymlinkRoot,
   GENERATED_ROOT,
   LOCK_FILENAME,
   METHODS_DIR,
   readGeneratedTree,
+  renderContracts,
   REPO_ROOT,
   SIDECAR_COMMENT,
   SOURCES_SIDECAR,
+  type MethodClosure,
   type SourcesSidecar,
   walk,
 } from "./shared.mts";
@@ -74,7 +78,8 @@ async function writeIfChanged(filePath: string, content: string): Promise<boolea
 }
 
 /**
- * Write one method's artifact set, its lock, and its sources sidecar.
+ * Write one method's artifact set, its lock, the starter-emitted artifacts, and
+ * its sources sidecar.
  *
  * Stale artifacts that dropped out of the set are removed, and the authority on
  * what may be removed is `runCodegenCheck`'s own `orphan` verdict over the tree
@@ -87,11 +92,18 @@ async function writeIfChanged(filePath: string, content: string): Promise<boolea
  * which uses the stronger rule, reports that same file as perfectly healthy.
  * Deferring to the check here is what makes the writer and the checker agree by
  * construction, the same property the `lock_filename` guard below buys.
+ *
+ * `derived` (filename → content) carries the artifacts this repo emits itself,
+ * `contracts.ts` today. They are written BEFORE the orphan pass, deliberately:
+ * the writer and the checker then see the identical tree, so if the SDK's orphan
+ * rule ever stopped exempting unstamped files, the writer would delete the file
+ * and the failure would be visible here rather than only in a later check.
  */
 export async function writeTree(
   outDir: string,
   report: CodegenValidReport,
   sourceHashes: Record<string, string>,
+  derived: Record<string, string> = {},
 ): Promise<string[]> {
   // Vet the whole pre-existing tree — root and nested entries alike — BEFORE
   // the first write. `walk` refuses any symlink or special file, so a write
@@ -109,6 +121,7 @@ export async function writeTree(
   for (const artifact of [
     ...report.artifacts,
     { path: report.lock_filename, content: report.lock },
+    ...Object.entries(derived).map(([name, content]) => ({ path: name, content })),
   ]) {
     if (await writeIfChanged(path.join(outDir, artifact.path), artifact.content)) {
       changed.push(artifact.path);
@@ -133,7 +146,17 @@ export async function writeTree(
     }
   }
 
-  const sidecar: SourcesSidecar = { comment: SIDECAR_COMMENT, sources: sourceHashes };
+  // Hashed from the content we wrote, not re-read from disk: the sidecar records
+  // what regeneration produced, and a re-read would launder any interference
+  // between the write and the hash into a "current" verdict.
+  const derivedHashes: Record<string, string> = {};
+  for (const [name, content] of Object.entries(derived)) derivedHashes[name] = hashSource(content);
+
+  const sidecar: SourcesSidecar = {
+    comment: SIDECAR_COMMENT,
+    sources: sourceHashes,
+    derived: derivedHashes,
+  };
   const sidecarPath = path.join(outDir, SOURCES_SIDECAR);
   if (await writeIfChanged(sidecarPath, `${JSON.stringify(sidecar, null, 2)}\n`)) {
     changed.push(SOURCES_SIDECAR);
@@ -143,19 +166,58 @@ export async function writeTree(
 }
 
 /** Turn a thrown value into an actionable line, naming the fix where we know it. */
-function explain(error: unknown, baseUrl: string): string {
+function explain(error: unknown, baseUrl: string, route = "POST /v1/codegen"): string {
   if (error instanceof ApiResponseError && (error.status === 403 || error.status === 404)) {
     return [
-      `this base URL does not serve POST /v1/codegen (HTTP ${error.status}).`,
+      `this base URL does not serve ${route} (HTTP ${error.status}).`,
       `  Base URL: ${baseUrl}`,
       "  The hosted Pipelex API serves this route — check PIPELEX_BASE_URL in",
       "  .env.local, or drop it to use the default.",
     ].join("\n");
   }
   if (error instanceof ApiResponseError) {
-    return `HTTP ${error.status} from POST /v1/codegen — ${error.serverMessage ?? error.message}`;
+    return `HTTP ${error.status} from ${route} — ${error.serverMessage ?? error.message}`;
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Fetch one method's pipe IO contracts from `POST /v1/validate`.
+ *
+ * `validateFiles` rather than the lower-level `validate`: the closure is already
+ * `MthdsFileItem[]` (`{content, source}`) and this adapter takes `MthdsFile[]`
+ * (`{content, uri}`), so one field rename buys per-file attribution in the
+ * diagnostics — and the adapter, not this script, is what guarantees the
+ * `mthds_contents` / `mthds_sources` arrays it builds are the same length. Doing
+ * it by hand is a 422 waiting for the first method with two bundles.
+ *
+ * Returns `null` after reporting; the caller fails the method and writes nothing.
+ * An invalid bundle is a produced verdict on a 200, not a thrown error, so it is
+ * pattern-matched rather than caught — and it must never yield a contracts file:
+ * contracts projected from a bundle that does not resolve would describe a form
+ * for a method that cannot run.
+ */
+async function fetchContracts(
+  client: PipelexApiClient,
+  method: MethodClosure,
+  baseUrl: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const response = await client.validateFiles(
+      method.files.map((file) => ({ content: file.content, uri: file.source })),
+    );
+    if (!response.is_valid) {
+      console.error(`\n✗ ${method.name} — the bundle does not validate:`);
+      for (const item of response.validation_errors) {
+        console.error(`    ${item.source ?? "?"}: ${item.message}`);
+      }
+      return null;
+    }
+    return response.pipe_io_contracts;
+  } catch (error) {
+    console.error(`\n✗ ${method.name} — ${explain(error, baseUrl, "POST /v1/validate")}`);
+    return null;
+  }
 }
 
 async function runGenerateInner(): Promise<number> {
@@ -262,7 +324,18 @@ async function runGenerateInner(): Promise<number> {
       continue;
     }
 
-    const changed = await writeTree(outDir, report, method.sourceHashes);
+    // The form's half of the tree, and the last thing that can fail this method:
+    // by here every codegen guard has passed, so a failure now leaves the whole
+    // tree untouched rather than half-updated.
+    const contracts = await fetchContracts(client, method, baseUrl);
+    if (contracts === null) {
+      failed = true;
+      continue;
+    }
+
+    const changed = await writeTree(outDir, report, method.sourceHashes, {
+      [CONTRACTS_FILENAME]: renderContracts(contracts),
+    });
     const fingerprint = report.crate_fingerprint.slice(0, 12);
     const where = path.relative(REPO_ROOT, outDir);
     console.log(

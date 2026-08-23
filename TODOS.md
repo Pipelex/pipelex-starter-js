@@ -26,23 +26,23 @@ Tracker for `wip/adopt-form/design.md` (read it first; decisions A–E and the k
 - [x] `make all` clean.
 - [x] Log entries written: Dependency ×2, Config ×2, the purge-proof Command, the scratch-render Command, the darkMode Decision, one pre-warned Trap, one Upstream (README arg order, filed to `../wip/inbox/2026-08-23-mthds-form-readme-arg-order.md`).
 
-## Phase 1 — the contracts artifact (Decision A)
+## Phase 1 — the contracts artifact (Decision A) — **DONE**
 
-- [ ] Extend `scripts/lib/generate.mts`: per method, after the codegen self-checks pass, call the SDK validate surface and write a `contracts.ts` into `src/generated/<method>/` via the existing `writeIfChanged`.
-  - [ ] **Decision to make and log:** `client.validateFiles(method.files, …)` vs `client.validate(contents, …, sources)`. `method.files` is `MthdsFileItem[]` (`{content, source}`); `validateFiles` takes `MthdsFile[]` — check shape compatibility in the installed SDK and pick the one that keeps per-file attribution in diagnostics. If the two file shapes differ gratuitously, that is an `Upstream` entry (unify in `pipelex-sdk-js`).
-  - [ ] An `is_valid: false` verdict fails the method exactly like a failed codegen (print `validation_errors`, set `failed`, continue) — never write a contracts file from an invalid bundle.
-  - [ ] Emit deterministically so regeneration over unchanged contracts is a byte-for-byte no-op: stable key order as returned, `JSON.stringify(…, null, 2)`, trailing newline, a starter-owned header comment stating the file is generated from `POST /v1/validate` and must not be hand-edited.
-  - [ ] Type the literal against the kernel's mirror: `import type { PipeIOContracts } from "@pipelex/mthds-form";` + `export const PIPE_IO_CONTRACTS: PipeIOContracts = { … };`. This makes `tsc` a real gate: if the server's contract shape drifts from the kernel's mirror, `make typecheck` fails loudly. Type-only import, so `node --experimental-strip-types` never loads the package at script runtime.
-- [ ] **Drift machinery decision (design A says decide here and record why).** Recommended: extend the starter-owned sidecar — add a `derived` map to `SourcesSidecar` in `scripts/lib/shared.mts` recording the SHA-256 of each starter-emitted artifact (`contracts.ts`), written by `generate.mts` and compared by `check.mts` beside `compareSources` (hand-edit or deletion → drift, exit 1, remedy "Run `npm run codegen`"). The lock cannot cover it (the lock hashes server-stamped artifacts only) and the existing `sources.json` staleness check already catches the edited-bundle case — the `derived` map closes the remaining hole (edited/deleted contracts with unchanged sources). Log the decision with this rationale; log as `Upstream` the nicer long-term shape (an SDK helper for stamping/checking host-emitted derived artifacts riding a generated tree — the stamp discipline already lives in `@pipelex/sdk`'s codegen-check).
-- [ ] `codegen:verify` treatment: either re-fetch `validate` per method and compare the serialized contracts against the committed file, or explicitly exempt contracts from verify with a stated reason in `docs/codegen.md` (the crate fingerprint does not sign the contracts). Decide by cost: the verify script already holds a client and the closure, so the re-fetch is cheap — prefer it. Log the decision.
-- [ ] Confirm the existing machinery tolerates the new file (each of these is a wrong-verdict class if broken — cover with tests in `scripts/lib/*.test.mts`, extending the existing suites):
-  - [ ] `writeTree`'s orphan cleanup must not delete `contracts.ts` — it deletes only on `runCodegenCheck`'s `orphan` verdict, which requires a codegen _stamp_ the starter-owned file doesn't carry (same protection as the "sibling module" case). Test it.
-  - [ ] `checkMethod` must not report `contracts.ts` as an orphan/drift against the lock (it feeds `runCodegenCheck` via `isStampableArtifactPath`, which passes `.ts` — verify the stamp rule keeps it healthy). Test it.
-  - [ ] The new sidecar `derived` comparison: current / hand-edited / missing each produce the right verdict and remedy. Test it.
-- [ ] `tsconfig.scripts.json` still typechecks (`make typecheck`) with the type-only kernel import — if module resolution balks, that's a Config entry with the fix.
-- [ ] Run `npm run codegen` (needs `PIPELEX_API_KEY`); commit the three regenerated trees including `contracts.ts` and the extended sidecars.
-- [ ] Gates: `make all` clean (which includes `codegen:check` over the new artifacts), plus one keyed `npm run codegen:verify` run.
-- [ ] Log entries written (the two Decisions above, the emit-determinism Config, any shape surprise in `pipe_io_contracts` as Trap/Upstream).
+- [x] Extend `scripts/lib/generate.mts`: per method, after the codegen self-checks pass, call the SDK validate surface and write a `contracts.ts` into `src/generated/<method>/` via the existing `writeIfChanged`.
+  - [x] **Decided: `validateFiles`.** Not ergonomics — the server 422s a length-mismatched `mthds_sources`, and hand-building the parallel arrays is a latent bug that surfaces at the first two-bundle method. One-line `{content, uri: source}` rename at the call site; filed upstream as a widening request.
+  - [x] An `is_valid: false` verdict fails the method exactly like a failed codegen. Placed **last** in the per-method sequence so any failure leaves the tree untouched rather than half-updated.
+  - [x] Deterministic emit (`renderContracts` in `shared.mts`, shared by all three scripts). Regeneration over unchanged contracts confirmed a true no-op.
+  - [x] Typed against the kernel's mirror via a type-only import.
+- [x] **Drift machinery: the sidecar's `derived` map** — `SourcesSidecar.derived`, written by `generate.mts` from the content it wrote, compared by `compareSidecar` (which replaced `compareSources`: one read, one unreadable-message, both halves in one pass). Expected set is the `DERIVED_ARTIFACTS` constant, never the sidecar's own keys. Upstream filing for the generic helper: `../wip/inbox/2026-08-23-pipelex-sdk-js-derived-artifact-stamping.md`.
+- [x] **`codegen:verify` re-fetches** `/v1/validate` per method and compares the rendered bytes. Verified live: `✓ … crate <fp> matches the engine, contracts.ts matches /v1/validate`.
+- [x] Machinery tolerance, all covered by tests:
+  - [x] `writeTree`'s orphan cleanup keeps `contracts.ts` (written before the pass, deliberately).
+  - [x] `checkMethod` over a **real** lock + real stamp: current with contracts present, drift on hand-edit / deletion / unrecorded.
+  - [x] The sidecar `derived` comparison: hand-edited · deleted · unrecorded · retired · CRLF-invariant.
+- [x] `make typecheck` clean with the type-only kernel import.
+- [x] `npm run codegen` run against **prod**; three trees regenerated with `contracts.ts` + extended sidecars.
+- [x] Gates: `make all` clean, one keyed `npm run codegen:verify` run green.
+- [x] Log entries written: 5 Decisions, 2 Traps (the unstamped-`.ts` orphan rule; the exported-shell-var override), 2 Configs, 2 Upstreams (both filed).
 
 ## ★ Checkpoint 1 — foundation + contracts landed
 
