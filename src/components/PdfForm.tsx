@@ -83,6 +83,23 @@ export function PdfForm() {
   );
 
   /**
+   * Hold the field at `id` in its busy state for the whole of an operation that
+   * will end in a new value — the kernel disables that control and shows a
+   * spinner while it is set, and this form's sample shortcut is disabled too.
+   * Cover every await, not just the encode: a window where the field is
+   * writable while an older selection is still resolving is a window where the
+   * older one lands last and silently replaces the newer.
+   */
+  const markBusy = useCallback((id: string, busy: boolean) => {
+    setEncodingIds((prev) => {
+      const next = new Set(prev);
+      if (busy) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+
+  /**
    * The host seam for file inputs: the kernel never uploads. `DocumentField`
    * hands us the dropped `File` and the dotted path of the field that asked,
    * and we write a `FileValue` (`{url, filename}`) back at that path. Here the
@@ -110,7 +127,7 @@ export function PdfForm() {
         );
         return;
       }
-      setEncodingIds((prev) => new Set(prev).add(id));
+      markBusy(id, true);
       try {
         const url = await fileToDataUrl(withPdfMime(file));
         setValues((current) =>
@@ -119,14 +136,10 @@ export function PdfForm() {
       } catch (err) {
         setFileError(classifyTransportError(err));
       } finally {
-        setEncodingIds((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
+        markBusy(id, false);
       }
     },
-    [reset, clearFile],
+    [reset, clearFile, markBusy, setValues],
   );
 
   async function handleUseSample() {
@@ -136,6 +149,10 @@ export function PdfForm() {
     // round trip first, and a slow or failing fetch would otherwise leave the
     // previous PDF selected and submittable the whole time.
     clearFile(DOCUMENT_INPUT);
+    // Busy for the fetch as well as the encode. Without this the field is
+    // writable while the sample is still downloading, so a PDF the user picks
+    // meanwhile would be overwritten when the older sample request lands.
+    markBusy(DOCUMENT_INPUT, true);
     try {
       const res = await fetch(SAMPLE_PDF_PATH);
       if (!res.ok) throw new Error(`Could not load the sample PDF (HTTP ${res.status})`);
@@ -147,6 +164,8 @@ export function PdfForm() {
       );
     } catch (err) {
       setFileError(classifyTransportError(err));
+    } finally {
+      markBusy(DOCUMENT_INPUT, false);
     }
   }
 
@@ -166,9 +185,9 @@ export function PdfForm() {
           disabled={running}
           env={{ onDropFile: handleDropFile, uploadingIds: encodingIds }}
         />
-        {/* Also disabled mid-encode: the kernel's dropzone disables itself
-            while a file is being read, and this shortcut goes through the same
-            handler, so it is the one remaining way to start a second read. */}
+        {/* Disabled while the field is busy, which now spans this shortcut's own
+            fetch as well as any encode — the kernel's dropzone reads the same
+            set, so neither door is open while a selection is resolving. */}
         <button
           type="button"
           onClick={handleUseSample}

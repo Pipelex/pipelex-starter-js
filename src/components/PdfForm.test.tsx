@@ -131,6 +131,41 @@ describe("PdfForm", () => {
     }
   });
 
+  it("locks the field while the sample PDF is still downloading", async () => {
+    let release!: (value: unknown) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockReturnValueOnce(
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+      ),
+    );
+    try {
+      render(<PdfForm />);
+      fireEvent.click(screen.getByRole("button", { name: /use sample pdf/i }));
+
+      // Still downloading: both doors into the field are shut, so a PDF picked
+      // meanwhile cannot be silently overwritten when this older request lands.
+      expect(await screen.findByText("Uploading…")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /use sample pdf/i })).toBeDisabled();
+      // react-dropzone disables by no-op'ing its handler, not by setting the
+      // `disabled` attribute — so the check is that the change does nothing.
+      fireEvent.change(fileInput(), { target: { files: [pdfFile("mine.pdf")] } });
+      expect(screen.getByRole("button", { name: /summarize pdf/i })).toBeDisabled();
+
+      release({
+        ok: true,
+        blob: async () => new Blob(["%PDF-1.4 sample"], { type: "application/pdf" }),
+      });
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: /summarize pdf/i })).toBeEnabled(),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("renders the structured error when a poll returns ok:false", async () => {
     start.mockResolvedValueOnce({ ok: true, runId: "run-1" });
     poll.mockResolvedValueOnce({
