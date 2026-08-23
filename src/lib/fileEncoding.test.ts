@@ -183,6 +183,23 @@ describe("checkFileInputs", () => {
       expect(checkFileInputs(nested, opts)?.details).toBe("unverifiable_file_position: packet");
     });
 
+    it("refuses a nested file hiding beside an outer url it can read", () => {
+      // The refusal must not be reachable only when `content.url` is missing:
+      // `url` is a key the caller supplies, so guarding on it lets an attacker
+      // switch the check off by pasting a perfectly good https:// URL beside
+      // the nested one. `prepareInputs` still walks to `attachment`.
+      const decoy = {
+        packet: {
+          concept: "d.Packet",
+          content: {
+            url: "https://example.com/metadata",
+            attachment: { url: "/etc/passwd", filename: "x.pdf" },
+          },
+        },
+      };
+      expect(checkFileInputs(decoy, opts)?.details).toBe("unverifiable_file_position: packet");
+    });
+
     it("still lets a plural text input through — an array is not by itself a file", () => {
       const pages = { pages: { concept: "native.Text", content: [{ text: "first" }] } };
       expect(checkFileInputs(pages, opts)).toBeNull();

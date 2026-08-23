@@ -143,6 +143,22 @@ function carriesUrl(value: unknown, depth = 0): boolean {
 }
 
 /**
+ * Whether `content` hides a file position *besides* its own `url` — the one
+ * position {@link checkFileInputs} reads and validates.
+ *
+ * Asked unconditionally, never only when `url` is missing. `url` is a key the
+ * caller supplies, so a check that runs only in its absence is switched off by
+ * pasting a perfectly good `https://` URL beside the nested one — and
+ * `prepareInputs` walks to the nested position regardless, because its walk
+ * follows the method's signature rather than this envelope.
+ */
+function hidesFilePosition(content: unknown): boolean {
+  if (Array.isArray(content)) return carriesUrl(content, 1);
+  if (typeof content !== "object" || content === null) return false;
+  return Object.entries(content).some(([key, child]) => key !== "url" && carriesUrl(child, 1));
+}
+
+/**
  * The scheme, MIME and size gate for the file-bearing inputs in a gated payload.
  * The kernel gate proves the *shape*; this proves what the contract cannot
  * express — "a reference we accept, and if it carries bytes, few enough of the
@@ -162,8 +178,12 @@ function carriesUrl(value: unknown, depth = 0): boolean {
  *    resolves a file inside a list (`documents: list[Document]`) or nested in a
  *    structured concept, both of which `content.url` misses entirely. Property 2
  *    is worth nothing if pluralising an input reopens the hole instead — so an
- *    unreachable `url` is a refusal here, not a pass. Widening the walk to
- *    descend the contract's `json_schema` in lockstep (the way `wireOutput`'s
+ *    unreachable `url` is a refusal here, not a pass. The refusal is asked
+ *    *unconditionally*, not merely when `content.url` is absent: guarding it
+ *    behind a missing `url` lets the caller switch it off with a benign outer
+ *    `url` beside the nested one, which is the bypass shape
+ *    {@link hidesFilePosition} exists to close. Widening the walk to descend the
+ *    contract's `json_schema` in lockstep (the way `wireOutput`'s
  *    `dropWireNulls` descends a zod schema, and for the same reason: a blind
  *    value walk cannot tell a file position from a data field named `url`) is
  *    the real fix, and is worth doing the day a method needs one of those shapes.
@@ -178,8 +198,7 @@ export function checkFileInputs(
   for (const [name, envelope] of Object.entries(inputs)) {
     const content = (envelope as { content?: { url?: unknown; filename?: unknown } })?.content;
 
-    if (typeof content?.url !== "string") {
-      if (!carriesUrl(content)) continue;
+    if (hidesFilePosition(content)) {
       return {
         kind: "bad_request",
         title: "Unsupported input shape",
@@ -189,6 +208,7 @@ export function checkFileInputs(
         details: `unverifiable_file_position: ${name}`,
       };
     }
+    if (typeof content?.url !== "string") continue;
     const url = content.url;
 
     if (!ALLOWED_FILE_SCHEMES.some((scheme) => url.startsWith(scheme))) {
