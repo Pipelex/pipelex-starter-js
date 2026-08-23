@@ -200,6 +200,20 @@ describe("checkFileInputs", () => {
       expect(checkFileInputs(decoy, opts)?.details).toBe("unverifiable_file_position: packet");
     });
 
+    it("refuses a file hiding under a `url` key that is not itself a reference", () => {
+      // The `url` key is skipped because the scheme check below reads it — but
+      // that only holds when it *is* the string being read. A non-string there
+      // is a subtree this gate never looks at, so it must not be waved through
+      // on the strength of its name.
+      const decoy = {
+        packet: {
+          concept: "d.Packet",
+          content: { url: { url: "/etc/passwd", filename: "x.pdf" } },
+        },
+      };
+      expect(checkFileInputs(decoy, opts)?.details).toBe("unverifiable_file_position: packet");
+    });
+
     it("still lets a plural text input through — an array is not by itself a file", () => {
       const pages = { pages: { concept: "native.Text", content: [{ text: "first" }] } };
       expect(checkFileInputs(pages, opts)).toBeNull();

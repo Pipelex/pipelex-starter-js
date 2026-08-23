@@ -143,19 +143,24 @@ function carriesUrl(value: unknown, depth = 0): boolean {
 }
 
 /**
- * Whether `content` hides a file position *besides* its own `url` — the one
- * position {@link checkFileInputs} reads and validates.
+ * Whether `content` hides a file position besides the one {@link checkFileInputs}
+ * goes on to read and validate — its own `url`, *when that is a string*.
  *
- * Asked unconditionally, never only when `url` is missing. `url` is a key the
- * caller supplies, so a check that runs only in its absence is switched off by
- * pasting a perfectly good `https://` URL beside the nested one — and
- * `prepareInputs` walks to the nested position regardless, because its walk
- * follows the method's signature rather than this envelope.
+ * Two things make the exclusion narrow, and both were bypasses before they were
+ * rules. It is asked unconditionally, never only when `url` is missing: `url` is
+ * a key the caller supplies, so a check that runs only in its absence is
+ * switched off by pasting a perfectly good `https://` URL beside a nested one.
+ * And the exclusion is keyed on the value's *type*, not on the key's name: a
+ * non-string under `url` is a subtree this gate never inspects, so waving it
+ * through on the strength of its name skips exactly what the walk exists to
+ * catch. Excluded is only ever what the scheme check below actually reads.
  */
 function hidesFilePosition(content: unknown): boolean {
   if (Array.isArray(content)) return carriesUrl(content, 1);
   if (typeof content !== "object" || content === null) return false;
-  return Object.entries(content).some(([key, child]) => key !== "url" && carriesUrl(child, 1));
+  return Object.entries(content).some(
+    ([key, child]) => !(key === "url" && typeof child === "string") && carriesUrl(child, 1),
+  );
 }
 
 /**
