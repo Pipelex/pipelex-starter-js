@@ -178,6 +178,9 @@ describe("PdfForm", () => {
       fireEvent.click(screen.getByRole("button", { name: /use sample pdf/i }));
       expect(await screen.findByText(/Could not reach the server/i)).toBeInTheDocument();
       expect(screen.queryByText("Invoice")).not.toBeInTheDocument();
+      // The replacement was requested before the fetch could fail, so the PDF it
+      // was replacing must not still be sitting there submittable.
+      expect(screen.getByRole("button", { name: /summarize pdf/i })).toBeDisabled();
     } finally {
       vi.unstubAllGlobals();
     }

@@ -72,6 +72,17 @@ export function PdfForm() {
   const running = state.phase === "running";
 
   /**
+   * Un-select the file at `id`. Every path that is about to replace a selection
+   * calls this *before* its first await, so the form's value is only ever a
+   * successfully encoded file: a replacement that is still in flight, or one
+   * that fails, leaves nothing behind to submit by accident.
+   */
+  const clearFile = useCallback(
+    (id: string) => setValues((current) => setValueAtPath(current, id.split("."), undefined)),
+    [setValues],
+  );
+
+  /**
    * The host seam for file inputs: the kernel never uploads. `DocumentField`
    * hands us the dropped `File` and the dotted path of the field that asked,
    * and we write a `FileValue` (`{url, filename}`) back at that path. Here the
@@ -82,12 +93,7 @@ export function PdfForm() {
     async (id: string, file: File) => {
       setFileError(null);
       reset(); // clear any prior run result/error so only the new selection shows
-      // The new selection replaces the old one *now* — before the size check and
-      // before the encode — so the form's value is only ever a successfully
-      // encoded file. Leaving the previous value in place while a replacement is
-      // read (or after one is rejected) would keep `ready` true and let a submit
-      // silently run the document the user just replaced.
-      setValues((current) => setValueAtPath(current, id.split("."), undefined));
+      clearFile(id); // before the size check and before the encode
       // Checked here, before encoding, purely to save the work: base64 inflates
       // a file ~37%, and past this cap the payload would not fit the Server
       // Action body limit anyway. The same constant is re-checked server-side,
@@ -120,12 +126,16 @@ export function PdfForm() {
         });
       }
     },
-    [reset, setValues],
+    [reset, clearFile],
   );
 
   async function handleUseSample() {
     setFileError(null);
     reset();
+    // Clear here too, not just in the handler below: this path awaits a network
+    // round trip first, and a slow or failing fetch would otherwise leave the
+    // previous PDF selected and submittable the whole time.
+    clearFile(DOCUMENT_INPUT);
     try {
       const res = await fetch(SAMPLE_PDF_PATH);
       if (!res.ok) throw new Error(`Could not load the sample PDF (HTTP ${res.status})`);
