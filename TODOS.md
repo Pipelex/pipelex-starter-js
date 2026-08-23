@@ -10,21 +10,21 @@ Tracker for `wip/adopt-form/design.md` (read it first; decisions A–E and the k
 - **Anything better fixed upstream gets an `Upstream` log entry** and, if we work around it locally, a `wip/inbox/` filing at the workspace root (`../wip/inbox/YYYY-MM-DD-<target>-<slug>.md`). Louis has offered to take upstream changes in `pipelex-sdk-js` / `mthds-form` — prefer that over local workarounds when the fix is small and unblocks this milestone; otherwise work around, file, and note the expiry.
 - **One commit per phase** (roughly), with the phase's regenerated artifacts riding the same commit as the change that caused them.
 
-## Phase 0 — foundation (styling lane, verified before any form logic exists)
+## Phase 0 — foundation (styling lane, verified before any form logic exists) — **DONE**
 
-- [ ] Install the kernel and the animate plugin: `npm install @pipelex/mthds-form` (npm has `0.2.0` = latest, verified) and `npm install -D tailwindcss-animate`.
-- [ ] `tailwind.config.ts` (Decision B):
-  - [ ] Add `"./node_modules/@pipelex/mthds-form/dist/**/*.js"` to `content` — the kernel's classes live in the package bundle, outside both current globs.
-  - [ ] Mirror the token mapping from `mthds-form/tailwind.config.cjs` (the executable copy of the token contract) into `theme.extend`: the `colors` block (`border`, `input`, `ring`, `background`, `foreground`, `primary`, `secondary`, `destructive`, `muted`, `accent`, `popover`, `card` — each `hsl(var(--…))`, the paired ones with `DEFAULT`/`foreground`) and the `borderRadius` block (`lg`/`md`/`sm` from `--radius`).
-  - [ ] Add `tailwindcss-animate` to `plugins` (the select popover's enter/exit utilities need it).
-  - [ ] Do **not** copy `darkMode: ['class']` — this app never sets a dark class; log as a Decision (a host with a dark-mode toggle would need it plus dark token values).
-- [ ] Import `@pipelex/mthds-form/theme.css` in `src/app/layout.tsx` beside `globals.css` (variables only, no preflight — that is what makes it safe in the compile lane).
-- [ ] **Prove the lane before building on it** — the purge failure mode is silent (design B: a missing glob loses only the kernel-unique classes — focus ring, placeholder color, prose textarea height, dropzone drag state — and reads as a broken design system, not a missing glob):
-  - [ ] Scratch-render one `FieldRenderer` over a hand-built `RunField` (a `text` field is enough) on the page; eyeball it styled under `make dev`.
-  - [ ] Run the deterministic check: build the stylesheet with and without the content glob and diff (e.g. `npx tailwindcss -c tailwind.config.ts -i src/app/globals.css -o /tmp/with.css` vs. the glob commented out; non-empty diff containing kernel-unique utilities = the glob is live). Log the exact commands as a Command entry — this check is the skill's core payload for Trap 1.
-  - [ ] Delete the scratch render.
-- [ ] `make all` clean (this phase touches `package.json`/lockfile, tailwind config, layout — no behavior).
-- [ ] Log entries written (expected at minimum: Dependency ×2, Config ×2, the purge-proof Command, the darkMode Decision, any Trap hit).
+- [x] Install the kernel and the animate plugin: `npm install @pipelex/mthds-form` (npm has `0.2.0` = latest, verified) and `npm install -D tailwindcss-animate`.
+- [x] `tailwind.config.ts` (Decision B):
+  - [x] Add `"./node_modules/@pipelex/mthds-form/dist/**/*.js"` to `content` — the kernel's classes live in the package bundle, outside both current globs.
+  - [x] Mirror the token mapping from `mthds-form/tailwind.config.cjs` (the executable copy of the token contract) into `theme.extend`: the `colors` block (`border`, `input`, `ring`, `background`, `foreground`, `primary`, `secondary`, `destructive`, `muted`, `accent`, `popover`, `card` — each `hsl(var(--…))`, the paired ones with `DEFAULT`/`foreground`) and the `borderRadius` block (`lg`/`md`/`sm` from `--radius`).
+  - [x] Add `tailwindcss-animate` to `plugins` (the select popover's enter/exit utilities need it).
+  - [x] Do **not** copy `darkMode: ['class']` — this app never sets a dark class; log as a Decision (a host with a dark-mode toggle would need it plus dark token values).
+- [x] Import `@pipelex/mthds-form/theme.css` in `src/app/layout.tsx` beside `globals.css` (variables only, no preflight — that is what makes it safe in the compile lane). Imported **before** `globals.css` so a host-level token override wins on ordering.
+- [x] **Prove the lane before building on it** — the purge failure mode is silent:
+  - [x] Scratch-render (`text` + `prose` + `document`) eyeballed styled under `make dev` — humanized labels, OPTIONAL badge, dashed dropzone, content-sized textarea all correct.
+  - [x] Deterministic check run: 1246 lines without the glob → 2005 with it, 759 added lines carrying the kernel-unique utilities. Commands logged.
+  - [x] Delete the scratch render.
+- [x] `make all` clean.
+- [x] Log entries written: Dependency ×2, Config ×2, the purge-proof Command, the scratch-render Command, the darkMode Decision, one pre-warned Trap, one Upstream (README arg order, filed to `../wip/inbox/2026-08-23-mthds-form-readme-arg-order.md`).
 
 ## Phase 1 — the contracts artifact (Decision A)
 
