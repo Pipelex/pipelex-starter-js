@@ -50,6 +50,43 @@ describe("gateRunInputs", () => {
     });
   });
 
+  it.each([
+    ["null", null],
+    ["undefined", undefined],
+    ["a string", "x"],
+    ["an array", []],
+  ])("classifies %s as a bad request instead of throwing", (_label, payload) => {
+    // A Server Action is a public endpoint and Next does not enforce the
+    // declared parameter type. The kernel indexes the payload by variable
+    // name without checking it is indexable, so a `null` body used to throw a
+    // TypeError that Next stripped to an opaque digest — the one outcome this
+    // module promises never happens.
+    let result: ReturnType<typeof gateRunInputs> | undefined;
+    expect(() => {
+      result = gateRunInputs(CONTRACT, payload);
+    }).not.toThrow();
+    expect(result?.ok).toBe(false);
+    if (result?.ok !== false) return;
+    expect(result.error.title).toBe("Input required");
+    expect(result.error.message).toContain("text");
+  });
+
+  it("drops an input the contract does not declare", () => {
+    // The gate is the trust boundary, and the PDF action scans exactly what it
+    // returns — so a key smuggled past it would reach `prepareInputs`
+    // unexamined by `checkFileInputs`. The property holds because the kernel
+    // builds the envelope from the *contract's* keys rather than the caller's;
+    // nothing here would notice a kernel bump that changed that.
+    const result = gateRunInputs(CONTRACT, {
+      text: { text: "Ada met Charles" },
+      smuggled: { url: "/etc/passwd" },
+    });
+    expect(result).toEqual({
+      ok: true,
+      inputs: { text: { concept: "native.Text", content: { text: "Ada met Charles" } } },
+    });
+  });
+
   it("returns a bad_request error naming the input the caller left out", () => {
     const result = gateRunInputs(CONTRACT, {});
     expect(result.ok).toBe(false);

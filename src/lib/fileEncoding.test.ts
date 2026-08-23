@@ -78,6 +78,16 @@ describe("validateDataUrl", () => {
     expect(result?.kind).toBe("unsupported_file_type");
   });
 
+  it("rejects a payload whose length is not a multiple of four", () => {
+    // The `% 4` rule is a separate half of `isBase64Payload` from the alphabet
+    // test, and this is the only fixture that tells them apart: the alphabet
+    // and the padding here are both valid, so deleting the length check leaves
+    // every other case in this file green.
+    const result = validateDataUrl("data:application/pdf;base64,AAAAA", opts);
+    expect(result?.kind).toBe("unsupported_file_type");
+    expect(result?.message).toMatch(/base64/i);
+  });
+
   it("handles a payload large enough to have overflowed the old shape regex", () => {
     // The previous group-repetition regex threw `RangeError: Maximum call stack
     // size exceeded` above ~4.47 M payload characters, so every PDF between
@@ -108,6 +118,20 @@ describe("checkFileInputs", () => {
     expect(checkFileInputs(enveloped(PDF_DATA_URL), opts)).toBeNull();
     expect(checkFileInputs(enveloped("https://example.com/a.pdf"), opts)).toBeNull();
     expect(checkFileInputs(enveloped("pipelex-storage://abc"), opts)).toBeNull();
+  });
+
+  it("reads the compact form the SDK also accepts", () => {
+    // `prepareInputs` resolves a bare source string at a file position exactly
+    // as it resolves `{url}`. Skipping it would leave the verdict resting on
+    // ajv refusing a string where `native.Document` declares an object — the
+    // schema in front of the gate, not the gate.
+    const compact = (content: string) => ({
+      document: { concept: "native.Document", content },
+    });
+    expect(checkFileInputs(compact(PDF_DATA_URL), opts)).toBeNull();
+    expect(checkFileInputs(compact("/etc/passwd"), opts)?.details).toBe(
+      "unsupported_scheme: document",
+    );
   });
 
   it.each([

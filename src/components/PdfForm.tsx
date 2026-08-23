@@ -8,7 +8,11 @@ import {
   startSummarizePdfRun,
 } from "@/actions/runSummarizePdfPipeline";
 import { fileToDataUrl } from "@/lib/clientFile";
-import { MAX_PDF_BYTES, fileInputErrorToPipelineError } from "@/lib/fileEncoding";
+import {
+  MAX_PDF_BYTES,
+  fileInputErrorToPipelineError,
+  fileTooLargeError,
+} from "@/lib/fileEncoding";
 import { classifyTransportError, type PipelineError } from "@/lib/errors";
 import { DEFAULT_EXECUTION_MODE, type ExecutionMode } from "@/config";
 import { PIPE_IO_CONTRACTS } from "@/generated/summarize-pdf/contracts";
@@ -31,9 +35,21 @@ const DOCUMENT_INPUT = "document";
 
 const NO_UPLOADS: ReadonlySet<string> = new Set<string>();
 
-function megabytes(bytes: number): string {
-  const value = bytes / 1024 / 1024;
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+/**
+ * The kernel previews a file it took through its own dropzone from an object
+ * URL it made itself. For a value it did not produce it asks the host to
+ * resolve `value.url` first — and shows a spinner until that answers, so with
+ * no resolver at all the spinner never stops. The "Use sample PDF" shortcut
+ * writes exactly such a value (the kernel never saw the drop), which is how
+ * previewing the sample used to spin forever.
+ *
+ * A `data:` URL is already displayable, so hand it straight back. A
+ * `pipelex-storage://` reference is not, and this template has nothing to
+ * resolve it with: returning it unchanged lets the kernel's own "Preview
+ * unavailable" fallback render, which beats a spinner that never resolves.
+ */
+async function resolvePreviewUrl(url: string): Promise<string> {
+  return url;
 }
 
 /**
@@ -136,13 +152,7 @@ export function PdfForm() {
       // which is the actual gate — this is the early exit, not a second rule.
       if (file.size > MAX_PDF_BYTES) {
         setFileError(
-          fileInputErrorToPipelineError(
-            {
-              kind: "file_too_large",
-              message: `File is ${megabytes(file.size)} MB; the limit is ${megabytes(MAX_PDF_BYTES)} MB.`,
-            },
-            file.name,
-          ),
+          fileInputErrorToPipelineError(fileTooLargeError(file.size, MAX_PDF_BYTES), file.name),
         );
         return;
       }
@@ -202,7 +212,11 @@ export function PdfForm() {
           values={values}
           onValuesChange={setValues}
           disabled={busy}
-          env={{ onDropFile: handleDropFile, uploadingIds: encodingIds }}
+          env={{
+            onDropFile: handleDropFile,
+            uploadingIds: encodingIds,
+            resolveUrl: resolvePreviewUrl,
+          }}
         />
         {/* Disabled while the field is busy, which spans this shortcut's own
             fetch as well as any encode. */}

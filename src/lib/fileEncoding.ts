@@ -1,14 +1,21 @@
 import type { PipelineError } from "@/lib/errors";
 
 /**
- * Authoritative pre-flight for a base64 data URL (produced client-side by
- * `fileToDataUrl`): MIME + size validation that gates the file *before* it is
- * uploaded. Building the actual run input is the SDK's job now — the Server
- * Action hands the validated data URL to `client.prepareInputs`, which uploads
- * it to Pipelex storage and rewrites the input to a `pipelex-storage://` URI.
- * This gate still matters: the data URL crosses the Server Action boundary, so
- * its size must stay under `next.config.js`'s `bodySizeLimit`. Pure: no React,
- * no `process.env`, safe to import from either side of the server boundary.
+ * The authoritative pre-flight for the file-bearing inputs of a run.
+ * `checkFileInputs` is the entry point: it validates the *reference* each file
+ * input carries against a closed set of schemes, and then — only for a `data:`
+ * URL, the one form that arrives as bytes — its MIME type and its size.
+ *
+ * The scheme half is the security-relevant one, because the SDK's
+ * `prepareInputs` resolves an unrecognised string as a **local filesystem
+ * path**; see {@link ALLOWED_FILE_SCHEMES}. The size half matters for a
+ * different reason: a `data:` URL crosses the Server Action boundary whole, so
+ * it must stay under `next.config.js`'s `bodySizeLimit`.
+ *
+ * Building the run input is the SDK's job — the Server Action hands the gated
+ * inputs to `client.prepareInputs`, which uploads any bytes to Pipelex storage
+ * and rewrites them to a `pipelex-storage://` URI. Pure: no React, no
+ * `process.env`, safe to import from either side of the server boundary.
  */
 
 /** Largest PDF the PDF example will send, measured in decoded bytes. */
@@ -68,6 +75,22 @@ function mb(bytes: number): string {
 }
 
 /**
+ * The "too large" rejection, built here so the browser's early exit and this
+ * module's own gate cannot word the same refusal two different ways.
+ *
+ * The early exit in `PdfForm` is not a second rule — it reads `MAX_PDF_BYTES`
+ * from here and only saves an encode. Letting it phrase its own message would
+ * have re-introduced by the back door exactly the duplication that sharing the
+ * constant removes.
+ */
+export function fileTooLargeError(bytes: number, maxBytes: number): FileInputError {
+  return {
+    kind: "file_too_large",
+    message: `File is ${mb(bytes)} MB; the limit is ${mb(maxBytes)} MB.`,
+  };
+}
+
+/**
  * Validate a base64 data URL against an allowed MIME list and a size cap.
  * Returns a `FileInputError` describing the problem, or null when valid.
  *
@@ -97,10 +120,7 @@ export function validateDataUrl(
   // might pre-empt.
   const bytes = dataUrlByteLength(dataUrl);
   if (bytes > opts.maxBytes) {
-    return {
-      kind: "file_too_large",
-      message: `File is ${mb(bytes)} MB; the limit is ${mb(opts.maxBytes)} MB.`,
-    };
+    return fileTooLargeError(bytes, opts.maxBytes);
   }
   const payload = dataUrl.slice(dataUrl.indexOf(",") + 1);
   if (!isBase64Payload(payload)) {
@@ -122,6 +142,19 @@ export function validateDataUrl(
  * come back rendered to the caller. `http://` is left out deliberately: nothing
  * in this template needs a cleartext fetch, and the narrower set is the safer
  * default for code adopters copy.
+ *
+ * What the two remaining schemes mean, since neither is bytes this app produced:
+ *
+ * - `https://` is the kernel's "paste a URL instead" affordance. Accepting it
+ *   means the **runner** fetches that URL server-side, which is the feature —
+ *   and it is also why a host that must not reach arbitrary origins wants an
+ *   allow-list here rather than a scheme test. Left open in the template
+ *   because a plausible allow-list for a starter does not exist.
+ * - `pipelex-storage://` is a file already in this app's own storage scope,
+ *   which `prepareInputs` passes through untouched. It is accepted so a
+ *   reference obtained from an earlier run round-trips without a re-upload.
+ *   The URIs are server-generated opaque ids, so this is not guessable — but
+ *   it is a deliberate widening, not an oversight.
  */
 const ALLOWED_FILE_SCHEMES = ["data:", "https://", "pipelex-storage://"];
 
@@ -178,8 +211,9 @@ function hidesFilePosition(content: unknown): boolean {
  *    makes this whole gate return "fine" the day the bundle renames that input,
  *    while codegen carries the rename into the form, the readiness rules and the
  *    wire envelope. It fails open, silently, on a routine edit.
- * 3. **It reads one level — `content.url` — and refuses any shape that hides a
- *    file position deeper.** `prepareInputs` walks the method's signature, so it
+ * 3. **It reads one level — `content.url`, or a bare `content` string, which
+ *    the SDK treats the same way — and refuses any shape that hides a file
+ *    position deeper.** `prepareInputs` walks the method's signature, so it
  *    resolves a file inside a list (`documents: list[Document]`) or nested in a
  *    structured concept, both of which `content.url` misses entirely. Property 2
  *    is worth nothing if pluralising an input reopens the hole instead — so an
@@ -201,7 +235,7 @@ export function checkFileInputs(
   opts: { allowedMimes: string[]; maxBytes: number },
 ): PipelineError | null {
   for (const [name, envelope] of Object.entries(inputs)) {
-    const content = (envelope as { content?: { url?: unknown; filename?: unknown } })?.content;
+    const content = (envelope as { content?: unknown })?.content;
 
     if (hidesFilePosition(content)) {
       return {
@@ -213,8 +247,17 @@ export function checkFileInputs(
         details: `unverifiable_file_position: ${name}`,
       };
     }
-    if (typeof content?.url !== "string") continue;
-    const url = content.url;
+    // `prepareInputs` accepts a *bare source string* at a file position as
+    // readily as `{url}`, and resolves the two identically — so reading only
+    // the object form would leave this gate's verdict resting on the schema in
+    // front of it (ajv refuses a string where `native.Document` declares an
+    // object) rather than on its own walk. That is the coupling property 2
+    // disclaims, and no committed method reaches the compact form today, which
+    // is exactly why it must not be the thing keeping this correct.
+    const file: { url?: unknown; filename?: unknown } =
+      typeof content === "string" ? { url: content } : ((content ?? {}) as typeof file);
+    if (typeof file.url !== "string") continue;
+    const url = file.url;
 
     if (!ALLOWED_FILE_SCHEMES.some((scheme) => url.startsWith(scheme))) {
       return {
@@ -232,7 +275,7 @@ export function checkFileInputs(
     if (fileError) {
       return fileInputErrorToPipelineError(
         fileError,
-        typeof content.filename === "string" ? content.filename : "document",
+        typeof file.filename === "string" ? file.filename : "document",
       );
     }
   }

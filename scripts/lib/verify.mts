@@ -52,6 +52,18 @@ const { loadEnvConfig } = nextEnv;
 export const EXIT_OK = 0;
 export const EXIT_FAILED = 1;
 
+/**
+ * How a failed call to `route` reads in the console. Both routes this script
+ * calls report the same way, and the status plus the server's own message is
+ * the part that tells a stale commit apart from an expired key.
+ */
+function requestDetail(error: unknown, route: string): string {
+  if (error instanceof ApiResponseError) {
+    return `HTTP ${error.status} from ${route} — ${error.serverMessage ?? error.message}`;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function runVerifyInner(): Promise<number> {
   loadEnvConfig(REPO_ROOT, false, { info: () => {}, error: console.error });
 
@@ -135,13 +147,7 @@ async function runVerifyInner(): Promise<number> {
       liveFingerprint = response.crate_fingerprint;
       liveEngine = response.engine_version;
     } catch (error) {
-      const detail =
-        error instanceof ApiResponseError
-          ? `HTTP ${error.status} from POST /v1/codegen — ${error.serverMessage ?? error.message}`
-          : error instanceof Error
-            ? error.message
-            : String(error);
-      console.error(`\n✗ ${method.name} — ${detail}`);
+      console.error(`\n✗ ${method.name} — ${requestDetail(error, "POST /v1/codegen")}`);
       failed = true;
       continue;
     }
@@ -180,13 +186,7 @@ async function runVerifyInner(): Promise<number> {
         continue;
       }
     } catch (error) {
-      const detail =
-        error instanceof ApiResponseError
-          ? `HTTP ${error.status} from POST /v1/validate — ${error.serverMessage ?? error.message}`
-          : error instanceof Error
-            ? error.message
-            : String(error);
-      console.error(`\n✗ ${method.name} — ${detail}`);
+      console.error(`\n✗ ${method.name} — ${requestDetail(error, "POST /v1/validate")}`);
       failed = true;
       continue;
     }

@@ -105,12 +105,22 @@ export function schemaFor(contract: PipeIOContract) {
  * throw across the server→client boundary, because Next.js strips the message
  * to an opaque digest in production builds.
  */
-export function gateRunInputs(
-  contract: PipeIOContract,
-  data: Record<string, unknown>,
-): GateOutcome {
+export function gateRunInputs(contract: PipeIOContract, data: unknown): GateOutcome {
+  // `data` is typed `unknown` because that is what it is. A Server Action is a
+  // public endpoint and Next does not enforce the declared parameter type, so
+  // the argument is whatever the caller put in the body.
+  //
+  // Normalising it here is not a defensive wrapper around the gate — it is the
+  // gate's first step. The kernel indexes the payload by variable name
+  // (`preparedData[varName]`) without first checking it is indexable, so a
+  // `null` body throws a TypeError *after* ajv has already reported "must be
+  // object" but before any verdict is returned. That throw escapes to Next,
+  // which strips it to an opaque digest in a production build — the precise
+  // outcome the docstring above promises never happens. An empty object walks
+  // the normal path instead and names every input the caller left out.
+  const payload = typeof data === "object" && data !== null && !Array.isArray(data) ? data : {};
   const schema = schemaFor(contract);
-  const prepared = prepareRunInputs(data, schema);
+  const prepared = prepareRunInputs(payload as Record<string, unknown>, schema);
   const verdict = validateRunInputs(prepared, contract.inputs, schema);
 
   if (!verdict.isValid) {

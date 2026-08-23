@@ -11,13 +11,7 @@ import { RunInputsForm } from "./RunInputsForm";
  * committed artifacts — and it is the case adopters inherit.
  */
 function textField(name: string, required: boolean): RunField {
-  return {
-    name,
-    kind: "text",
-    required,
-    concept: "native.Text",
-    json_schema: { type: "object", properties: { text: { type: "string" } } },
-  } as unknown as RunField;
+  return { name, kind: "text", required };
 }
 
 const FIELDS = [textField("subject", true), textField("note", false)];

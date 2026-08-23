@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { PdfForm } from "./PdfForm";
 import {
   pollSummarizePdfRun,
@@ -151,7 +151,16 @@ describe("PdfForm", () => {
       expect(screen.getByRole("button", { name: /use sample pdf/i })).toBeDisabled();
       // react-dropzone disables by no-op'ing its handler, not by setting the
       // `disabled` attribute — so the check is that the change does nothing.
+      // `handleDropFile` is async, so it has to be given the chance to run:
+      // asserting straight after the event passes whether or not the drop was
+      // refused, which is what made this case vacuous before.
       fireEvent.change(fileInput(), { target: { files: [pdfFile("mine.pdf")] } });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      // An accepted drop renders its filename in the kernel's file chip, and
+      // its `finally` would have emptied `encodingIds` and re-enabled submit.
+      expect(screen.queryByText(/mine\.pdf/)).not.toBeInTheDocument();
       // The third door, and the one that matters most: the kernel threads
       // `uploadingIds` to the dropzone alone, so this control closes only
       // because the form passes `busy` as `disabled`. Left open, a URL pasted
