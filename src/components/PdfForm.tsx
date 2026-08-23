@@ -70,6 +70,20 @@ export function PdfForm() {
   });
 
   const running = state.phase === "running";
+  // "The form is busy": a run is in flight, or an input is still resolving.
+  // Both mean the same thing to every control — don't accept edits, don't start
+  // a run — so they are one flag rather than two rules applied in two places.
+  //
+  // `encodingIds` belongs here and not only in `env.uploadingIds`, because the
+  // kernel threads `uploadingIds` to the *dropzone* alone: its "paste a URL
+  // instead" toggle and input read `disabled`. Left as `running`, a URL pasted
+  // mid-encode fills the field, `ready` flips true, and a run can start — then
+  // the earlier read lands, `handleDropFile` calls `reset()`, and `useRun`
+  // abandons a durable run that goes on executing and billing server-side.
+  // Folding busy into `disabled` is what closes the URL control; gating submit
+  // on the same flag says the rule outright rather than leaving it to follow
+  // from `ready`, which holds here only because `document` is required.
+  const busy = running || encodingIds.size > 0;
 
   /**
    * Un-select the file at `id`. Every path that is about to replace a selection
@@ -182,19 +196,15 @@ export function PdfForm() {
           fields={fields}
           values={values}
           onValuesChange={setValues}
-          disabled={running}
+          disabled={busy}
           env={{ onDropFile: handleDropFile, uploadingIds: encodingIds }}
         />
         {/* Disabled while the field is busy, which spans this shortcut's own
-            fetch as well as any encode. The kernel's *dropzone* reads the same
-            set, so drag-and-drop is closed too — but its "paste a URL instead"
-            control is not: `uploadingIds` reaches the dropzone only, so a URL
-            pasted mid-encode is overwritten when the earlier read lands. Filed
-            upstream; the host cannot close that door from here. */}
+            fetch as well as any encode. */}
         <button
           type="button"
           onClick={handleUseSample}
-          disabled={running || encodingIds.size > 0}
+          disabled={busy}
           className="text-xs font-medium text-blue-700 underline disabled:opacity-50"
         >
           Use sample PDF
@@ -202,7 +212,7 @@ export function PdfForm() {
         <ModeToggle value={mode} onChange={setMode} disabled={running} />
         <button
           type="submit"
-          disabled={running || !ready}
+          disabled={busy || !ready}
           className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {running ? "Summarizing…" : "Summarize PDF"}

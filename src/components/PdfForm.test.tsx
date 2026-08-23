@@ -145,13 +145,19 @@ describe("PdfForm", () => {
       render(<PdfForm />);
       fireEvent.click(screen.getByRole("button", { name: /use sample pdf/i }));
 
-      // Still downloading: both doors into the field are shut, so a PDF picked
+      // Still downloading: every door into the field is shut, so a PDF picked
       // meanwhile cannot be silently overwritten when this older request lands.
       expect(await screen.findByText("Uploading…")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /use sample pdf/i })).toBeDisabled();
       // react-dropzone disables by no-op'ing its handler, not by setting the
       // `disabled` attribute — so the check is that the change does nothing.
       fireEvent.change(fileInput(), { target: { files: [pdfFile("mine.pdf")] } });
+      // The third door, and the one that matters most: the kernel threads
+      // `uploadingIds` to the dropzone alone, so this control closes only
+      // because the form passes `busy` as `disabled`. Left open, a URL pasted
+      // here makes the form ready mid-fetch — and the run it starts is
+      // abandoned client-side when the fetch lands and calls `reset()`.
+      expect(screen.getByRole("button", { name: /paste a url instead/i })).toBeDisabled();
       expect(screen.getByRole("button", { name: /summarize pdf/i })).toBeDisabled();
 
       release({
