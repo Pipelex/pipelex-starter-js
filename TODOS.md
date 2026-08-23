@@ -52,7 +52,7 @@ Tracker for `wip/adopt-form/design.md` (read it first; decisions A–E and the k
 
 ---
 
-## → RESUME HERE (cold start): Phase 4
+## → RESUME HERE (cold start): Checkpoint 2
 
 **Read first, in this order:** `wip/adopt-form/design.md`, then `wip/adopt-form/integration-log.md` end to end — Phase 4's docs are written from those entries. `CLAUDE.md` is still unchanged; Phase 4 updates it.
 
@@ -97,16 +97,16 @@ Tracker for `wip/adopt-form/design.md` (read it first; decisions A–E and the k
 - [x] **Live verification:** `e2e/summarize-pdf.spec.ts` green — the whole chain (dropzone seam → encode → shape gate → byte gate → enveloped `prepareInputs` upload → durable run → rendered summary). The spec needed no selector change.
 - [x] Log entries written: 4 Decisions (the probe result, the file seam, the guard-deletion line, the two-gate ordering), 2 Traps (no accessible label on the file control; a hydration warning that turned out to be Playwright's screenshot caret-hiding, with the one-minute check that settles it), 1 Command.
 
-## Phase 4 — docs and gate
+## Phase 4 — docs and gate — **DONE**
 
-- [ ] `README.md`: Stack (add the kernel), How it works (form derived from the method's contract), File & image inputs, Swap in your own pipeline (the form now follows codegen automatically), the structure block (`RunInputsForm`, `contracts.ts` in the generated quartet→quintet).
-- [ ] New `docs/input-form.md`: the two styling lanes and why this repo compiles, the token contract + `theme.css`, the contracts artifact and its drift story, the one-gate-two-call-sites pattern, the purge trap with the deterministic diff check, and the one-sentence "two validators coexist on purpose" note (kernel ajv gates inputs, generated zod narrows outputs — each guards one direction of the wire).
-- [ ] `docs/codegen.md`: the contracts artifact (source endpoint, determinism, sidecar `derived` map, verify treatment).
-- [ ] `CLAUDE.md`: project-structure block (new component, `contracts.ts`), the generated-types section (fifth artifact), the integration-pattern section (actions take schema-shaped data; the gate), anti-patterns if any new one earned its place (e.g. "no hand-rolled input markup for method inputs — derive from the contract").
-- [ ] `CHANGELOG.md` under `[Unreleased]` (no version bump — no artifact published).
-- [ ] Update the e2e specs for the new labels/controls: `extract.spec.ts` (`getByLabel("Input text")` → the humanized contract label), `generate-image.spec.ts` (`Image prompt`), `summarize-pdf.spec.ts` (sample-PDF flow through the dropzone), and `error-display.spec.ts` (offline, also fills "Input text").
-- [ ] Gates: `make all` clean, then `make test-e2e` — **mandatory this phase** (actions and `src/lib` are on the SDK call path; unit tests mock the SDK). Needs the key in `.env.local`; runs against the hosted API per the standing memory (a local stack can't serve the durable poll path).
-- [ ] Log entries written (e2e selector churn as a pre-warned Trap; anything the live runs surfaced).
+- [x] `README.md`: Stack gains the kernel; the flow's step 1 says no form field is hand-written; a new "Input forms" section (with "File & image inputs" folded under it as the file case); the structure block gains `RunInputsForm`, `useRunInputs`, `runInputs.ts` and `contracts.ts`; "Swap in your own pipeline" and "Remove an example" updated.
+- [x] New `docs/input-form.md`: why, the contract artifact and its lookup, the three app pieces, one-gate-two-call-sites with the wire shape, the file seam and which client checks survived (and why the third one was never a guard), the two styling lanes with the deterministic purge check, adding an input, and what is deliberately not built.
+- [x] `docs/codegen.md`: a "The contracts artifact" section — the `validateFiles` choice, the last-in-sequence placement, why it carries no stamp, the sidecar's `derived` map with its two load-bearing shapes, and the verify treatment. Two open questions extended (upstreaming the `derived` half; the artifact as a placeholder for the wire descriptor).
+- [x] `CLAUDE.md`: tech stack, project structure, "What lives where", the generated-types section (fifth artifact + why it is unstamped), the integration pattern (the reshaped action snippet, the gate convention), the file-input bullets, the add-a-pipeline recipe, two new anti-patterns (no hand-rolled input markup; no per-input validation beside the gate) and two new gotchas (kernel labels are not yours to choose; the content glob).
+- [x] `CHANGELOG.md` under `[Unreleased]` — Added (the kernel adoption, the one gate, the derived-artifact drift gate) and Changed (the two breaking reshapes, the dropzone, the Tailwind token contract). No version bump: nothing published.
+- [x] e2e specs: already carried the new selectors (Phases 2 and 3 updated them with the forms that caused them, so no spec was knowingly broken across a phase boundary).
+- [x] Gates: `make all` clean, and **`make test-e2e` green** — 4 live specs passed, 1 skipped by design (the offline-error spec skips when the API is reachable).
+- [x] Log entries written: 2 Decisions (the doc split; what the docs must say that code cannot), 1 pre-warned Trap (selector churn, moved a phase early and why), 1 Command (the full live run, plus the port-already-taken symptom).
 
 ## ★ Checkpoint 2 — close
 
