@@ -44,11 +44,31 @@ Tracker for `wip/adopt-form/design.md` (read it first; decisions A–E and the k
 - [x] Gates: `make all` clean, one keyed `npm run codegen:verify` run green.
 - [x] Log entries written: 5 Decisions, 2 Traps (the unstamped-`.ts` orphan rule; the exported-shell-var override), 2 Configs, 2 Upstreams (both filed).
 
-## ★ Checkpoint 1 — foundation + contracts landed
+## ★ Checkpoint 1 — foundation + contracts landed — **DONE**
 
-- [ ] Update `wip/adopt-form/design.md`: decisions A/B confirmed or amended, the drift-machinery decision recorded, landed SHAs, deviations folded into the later phases. Verify it reads cold-start clean.
-- [ ] Mirror the durable facts (SHAs, decisions) to the workspace roadmap `../wip/devx/input-form-roadmap.md` — this repo's `wip/` is untracked, the roadmap is the record that survives.
-- [ ] Re-read the integration log's Phase 0–1 entries against its own generalization rule; fix any diary-speak now, while the context is fresh.
+- [x] Updated `wip/adopt-form/design.md` with a "Checkpoint 1" section: A and B confirmed unamended, the drift-machinery decision recorded with the two load-bearing shapes inside it, landed SHAs, "no deviations reach the later phases", and a concrete "what Phase 2 inherits".
+- [x] Mirrored the durable facts to `../wip/devx/input-form-roadmap.md` — a "K2 in `pipelex-starter-js`" section carrying the SHAs, the three decisions that generalize, and the three upstream filings.
+- [x] Re-read the Phase 0–1 log entries against the generalization rule; each Decision names its disambiguator, each Trap its observed symptom, and no entry names a repo path without saying what that file is in adoption terms.
+
+---
+
+## → RESUME HERE (cold start): Phase 2
+
+**Read first, in this order:** `wip/adopt-form/design.md` (its Checkpoint 1 section is the current state and Decisions C/D govern Phase 2), then `wip/adopt-form/integration-log.md`'s entry discipline at the top. `CLAUDE.md` is unchanged so far — Phase 4 updates it.
+
+**Branch state:** `feature/Adopt-form`, two commits on top of `32edc66 plan` — `2239824` (Phase 0) and `5474235` (Phase 1). No PR is open yet; the PR is Checkpoint 2's last item.
+
+**What already exists that Phase 2 builds on:**
+
+- `@pipelex/mthds-form@0.2.0` installed, styling lane wired and proven. Import the headless core from `@pipelex/mthds-form` and the controls from `@pipelex/mthds-form/react` — stable specifiers only, never a deep `dist/` path.
+- `PIPE_IO_CONTRACTS` exported from `src/generated/<method>/contracts.ts` for all three methods. Keys are namespaced: `extract_entities.extract_entities`, `generate_image.generate_image`, `summarize_pdf.summarize_pdf`. Each method has exactly one required input — `text`, `image_prompt`, `document` — all `optional: false`, so readiness gating is a single field per form.
+- `getPipeIOContract(PIPE_IO_CONTRACTS, domain, pipeCode)` — **domain second, pipe code third.** The kernel's README shows them transposed; it is silent (both are `string`, and a miss returns `undefined`, which renders as an empty form with a live Run button).
+- The canonical composition to copy is `pipelex-app/src/components/method-app/method-app-form.tsx` — derive → fold empty optionals behind `OptionalToggle` → `FieldRenderer` per field → `FieldPresentationProvider presentation="app"`. It also shows the `onDropFile` → `setValueAtPath` seam Phase 3 needs.
+
+**Gotchas already paid for, don't rediscover:**
+
+- The shell may export `PIPELEX_BASE_URL` / `PIPELEX_API_KEY`, which **silently beat `.env.local`** (`loadEnvConfig` never overrides an existing `process.env` value). Run keyed scripts as `env -u PIPELEX_BASE_URL -u PIPELEX_API_KEY npm run codegen` and read the endpoint the banner prints.
+- `src/generated/` is out of Prettier's and ESLint's reach on purpose. Never hand-edit anything there, `contracts.ts` included — the sidecar's `derived` map now makes that a `make check` failure.
 
 ## Phase 2 — the text path (Decisions C + D)
 
