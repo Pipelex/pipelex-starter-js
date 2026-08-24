@@ -179,8 +179,8 @@ Then run `make all`. `tsc` type-checks the co-located tests, so it names most da
 | `make test-e2e-ui`    | Same, with the Playwright UI runner                                                                      |
 | `make check`          | lint + format-check + typecheck + codegen-check                                                          |
 | `make all`            | check + test + build (does **not** run e2e or `codegen` — both need a key)                               |
-| `make use-local`      | Pack & install sibling `../pipelex-sdk-js` into `node_modules` (alias: `ul`)                             |
-| `make use-npm`        | Restore the latest npm-published `@pipelex/sdk` package (alias: `un`)                                    |
+| `make use-local`      | Pack & install siblings `../pipelex-sdk-js` + `../mthds-form` into `node_modules` (alias: `ul`)          |
+| `make use-npm`        | Restore the latest npm-published `@pipelex/sdk` + `@pipelex/mthds-form` packages (alias: `un`)           |
 
 ## End-to-end testing (optional)
 
@@ -194,16 +194,16 @@ The three happy-path specs (`extract`, `summarize-pdf`, `generate-image`) hit th
 - The fourth spec, `error-display`, tests the offline error UX — it needs **no** key, costs nothing, and runs out of the box.
 - First-time setup needs the browser binary: `npx playwright install chromium`.
 
-## Local SDK development (sibling `pipelex-sdk-js` repo)
+## Local package development (sibling `pipelex-sdk-js` and `mthds-form` repos)
 
-If you have the [`pipelex-sdk-js`](https://github.com/Pipelex/pipelex-sdk-js) repo checked out as a sibling directory (`../pipelex-sdk-js`) and want this app to use it instead of the published npm package:
+If you have the [`pipelex-sdk-js`](https://github.com/Pipelex/pipelex-sdk-js) and [`mthds-form`](https://github.com/Pipelex/mthds-form) repos checked out as sibling directories (`../pipelex-sdk-js`, `../mthds-form`) and want this app to use them instead of the published npm packages:
 
 ```bash
-make use-local   # builds ../pipelex-sdk-js, packs it with `npm pack`, installs the tarball into node_modules/@pipelex/sdk
-make use-npm     # installs the latest published @pipelex/sdk and re-pins package.json to it
+make use-local   # builds both siblings, packs each with `npm pack`, installs the tarballs into node_modules/@pipelex/{sdk,mthds-form}
+make use-npm     # installs the latest published @pipelex/sdk + @pipelex/mthds-form and re-pins package.json to them
 ```
 
-Aliases: `make ul` / `make un`. **Re-run `make use-local` after every SDK edit** — the tarball is a snapshot, not a live link. We use a tarball install rather than a symlink because Next.js 16's Turbopack does not follow symlinked workspace packages (`Module not found: Can't resolve '@pipelex/sdk'`).
+Aliases: `make ul` / `make un`. **Re-run `make use-local` after every edit to either sibling** — the tarball is a snapshot, not a live link. We use a tarball install rather than a symlink because Next.js 16's Turbopack does not follow symlinked workspace packages (`Module not found: Can't resolve '@pipelex/sdk'`).
 
 ## Environment variables
 
