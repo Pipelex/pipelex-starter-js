@@ -302,15 +302,6 @@ describe("the gate agrees with the Run button", () => {
       pipe: "p",
       values: { person: { first_name: "Ada", last_name: "Lovelace" } },
     },
-    // Nothing required inside, so the button is live on an untouched form; the
-    // gate must not then demand it be filled.
-    {
-      label: "all-optional struct untouched",
-      contracts: allOptional,
-      domain: "d",
-      pipe: "p",
-      values: {},
-    },
     { label: "plural input untouched", contracts: plural, domain: "d", pipe: "p", values: {} },
     {
       // A bare string array, which is what a `kind: "list"` over a text item
@@ -370,6 +361,27 @@ describe("the gate agrees with the Run button", () => {
     const gate = gateRunInputs(contract, rjsfDataFromRunValues(values, fields));
 
     expect(gate.ok).toBe(runButtonLive);
+  });
+
+  // A known kernel disagreement, pinned so its repair is noticed: a *required*
+  // struct input with no required children. Kernel 0.3.0 made an untouched
+  // structure stay absent from the wire, and its gate-side prune rescues only
+  // *optional* properties — so the combined schema's `required` rejects the
+  // absent input while readiness, whose `fieldFilled` is vacuously satisfied
+  // when a struct demands nothing, reports the Run button live. No method in
+  // `methods/` has this shape (`focus` is optional); a new one must not until
+  // the kernel agrees with itself. Reported upstream to `mthds-form`. When the
+  // kernel fixes either half, this test fails: fold the case back into the
+  // agreement table above and drop this pin.
+  it("still disagrees on a required struct input with no required children (upstream bug)", () => {
+    const contract = requireContract(allOptional, "d", "p");
+    const fields = fieldsForContract(contract);
+
+    expect(computeReadiness(fields, {}).missing).toEqual([]);
+
+    const gate = gateRunInputs(contract, rjsfDataFromRunValues({}, fields));
+    expect(gate.ok).toBe(false);
+    if (!gate.ok) expect(gate.error.details).toContain("'opts'");
   });
 
   it("carries a filled list's items into the wire envelope", () => {

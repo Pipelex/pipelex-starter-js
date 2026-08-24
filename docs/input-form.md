@@ -169,14 +169,16 @@ Nothing in `src/` changes. Edit `methods/<name>/main.mthds`, run `npm run codege
 
 `methods/complex-form/` is the worked demonstration: it is the one method here whose inputs go past a single text box, and `src/components/ComplexForm.tsx` is the payoff — no longer than `EntityForm.tsx`, and naming no input. Diff the two.
 
-### Two input shapes that render but cannot run
+### Two input shapes that used to render but not run
 
-Both are kernel bugs, both filed upstream, and both fail the same way — the control appears, readiness is satisfied, the Run button is live, and the gate rejects the run. Neither is a shape a host can repair, so until they are fixed they are shapes to avoid when writing a method for this template:
+Both were kernel bugs — the control appeared, readiness was satisfied, the Run button was live, and the gate rejected the run — and `@pipelex/mthds-form` 0.3.0 fixed both. Recorded here because the template's method still shows the shape the second one forced:
 
-- **A `native.Number` input.** It renders as a number control, but its value is never wrapped into the `NumberContent {number}` envelope the contract declares, so the gate always rejects it with `must be object`. Only `Text`, `Date` and `HTML` are wrapped. This is why the complex-form example has no numeric input, which is otherwise the obvious thing to demonstrate next.
-- **A required field inside an _optional_ structured input.** The kernel materializes a shell for an input nobody touched (`{notes: ""}`), and ajv then rejects it for the missing required child — on a form the user never opened. This is why every field of `ExtractionFocus` is optional, and the bundle carries a comment saying so. The consequence is an expressiveness loss: the method wants to say "if you narrow the extraction, you must pick an audience", and cannot.
+- **A `native.Number` input** rendered as a number control, but its value was never wrapped into the `NumberContent {number}` envelope the contract declares, so the gate always rejected it with `must be object`. Fixed: the wrapper name is now derived from the concept's own content model (`RunField.contentKey`), so it covers every scalar concept rather than a hand-kept list. The complex-form example predates the fix and has no numeric input; adding one is now safe.
+- **A required field inside an _optional_ structured input.** The kernel materialized a shell for an input nobody touched (`{notes: ""}`), and ajv then rejected it for the missing required child — on a form the user never opened. Fixed: an untouched optional structure stays absent, and its required children fall due only once something in it is filled. Every field of `ExtractionFocus` remains optional, but as the honest shape for that concept rather than a workaround — a method that wants "if you narrow the extraction, you must pick an audience" can now say so.
 
-The check that catches both is the readiness-versus-gate table in `src/lib/runInputs.test.ts`. A new method with a structured or plural input should add its states there before anything else.
+One edge of the same family survives the fix, and it is the one shape still to avoid: a **required** structured input whose concept has **no required children**. Kernel 0.3.0 makes an untouched structure stay absent from the wire, but its gate-side prune rescues only _optional_ properties — so the combined schema's `required` rejects the absent input while readiness, vacuously satisfied by a struct that demands nothing, reports the Run button live. Reported upstream; pinned by a dedicated test in `src/lib/runInputs.test.ts` that will fail the day the kernel agrees with itself. No method in this template has the shape (`focus` is optional).
+
+The check that would catch a regression on the fixed shapes is the readiness-versus-gate table in `src/lib/runInputs.test.ts`. A new method with a structured or plural input should add its states there before anything else.
 
 ## What is deliberately not built
 

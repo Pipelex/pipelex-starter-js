@@ -5,14 +5,12 @@ main_pipe   = "extract_brief"
 [concept.ExtractionFocus]
 description = "How to narrow the extraction."
 
-# No field here is `required = true`, and that is load-bearing rather than lax.
-# A required field inside an *optional* input is currently unrunnable: the form
-# kernel materializes an empty shell for an input nobody touched, the gate then
-# rejects it for the missing field, and the Run button was enabled the whole
-# time because readiness correctly ignores optional inputs. Filed upstream as
-# `mthds-form` — until it is fixed, keep every field of an optional concept
-# optional. Both fields being optional is also honest here: narrowing the
-# extraction means picking an audience, leaving a note, or both.
+# No field here is `required = true`, and that is a design choice rather than
+# a constraint: narrowing the extraction means picking an audience, leaving a
+# note, or both. A required field inside an *optional* input is expressible
+# since `@pipelex/mthds-form` 0.3.0 — an untouched optional structure now stays
+# absent instead of being judged as an empty shell — so a method that wants
+# "if you narrow it, you must pick an audience" can say so.
 [concept.ExtractionFocus.structure]
 audience = { description = "Who the extraction is for", choices = [
   "general",

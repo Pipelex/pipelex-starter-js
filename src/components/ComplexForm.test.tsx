@@ -74,8 +74,8 @@ describe("ComplexForm", () => {
 
     // The card is on screen, and folds its children behind a toggle of its own
     // — the kernel applies the same rule at every level. Both of this concept's
-    // fields are optional (see the bundle: a required child inside an optional
-    // input is currently unrunnable), so both start folded.
+    // fields are optional (a design choice — see the bundle comment), so both
+    // start folded.
     expect(screen.getByText(/how to narrow the extraction/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /optional field/i }));
 
