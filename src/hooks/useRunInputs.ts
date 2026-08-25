@@ -37,8 +37,9 @@ export function useRunInputs(
   const fields = useMemo(() => fieldsForContract(contract), [contract]);
   const [values, setValues] = useState<Record<string, unknown>>(() => initialValues ?? {});
 
-  // Optional and plural inputs never gate — the kernel's readiness scan knows
-  // that, so this is one line rather than a per-form `!text.trim()`.
+  // Optional and variable-plural inputs never gate, and a whitespace-only
+  // string counts as unfilled — the kernel's readiness scan knows all of that,
+  // so this is one line rather than a per-form `!text.trim()`.
   const ready = computeReadiness(fields, values).missing.length === 0;
 
   // Built on submit, not per keystroke: the wire shape only matters at Run.

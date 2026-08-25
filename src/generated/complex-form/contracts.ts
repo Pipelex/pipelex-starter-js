@@ -17,8 +17,11 @@ export const PIPE_IO_CONTRACTS: PipeIOContracts = {
     "inputs": {
       "text": {
         "concept_ref": "native.Text",
-        "optional": false,
+        "presence": "plain",
+        "multiplicity": "single",
+        "item_count": null,
         "json_schema": {
+          "description": "A text",
           "properties": {
             "text": {
               "description": "The text",
@@ -29,13 +32,15 @@ export const PIPE_IO_CONTRACTS: PipeIOContracts = {
           "required": [
             "text"
           ],
-          "title": "TextContent",
+          "title": "native.Text",
           "type": "object"
         }
       },
       "focus": {
         "concept_ref": "complex_form.ExtractionFocus",
-        "optional": true,
+        "presence": "optional",
+        "multiplicity": "single",
+        "item_count": null,
         "json_schema": {
           "description": "How to narrow the extraction.",
           "properties": {
@@ -71,16 +76,19 @@ export const PIPE_IO_CONTRACTS: PipeIOContracts = {
               "title": "Notes"
             }
           },
-          "title": "complex_form__ExtractionFocus",
+          "title": "complex_form.ExtractionFocus",
           "type": "object"
         }
       },
       "must_include": {
         "concept_ref": "native.Text",
-        "optional": false,
+        "presence": "plain",
+        "multiplicity": "variable",
+        "item_count": null,
         "json_schema": {
           "type": "array",
           "items": {
+            "description": "A text",
             "properties": {
               "text": {
                 "description": "The text",
@@ -91,7 +99,7 @@ export const PIPE_IO_CONTRACTS: PipeIOContracts = {
             "required": [
               "text"
             ],
-            "title": "TextContent",
+            "title": "native.Text",
             "type": "object"
           }
         }
@@ -100,6 +108,7 @@ export const PIPE_IO_CONTRACTS: PipeIOContracts = {
     "output": {
       "concept_ref": "complex_form.ExtractionBrief",
       "multiplicity": "single",
+      "item_count": null,
       "optional": false
     }
   }

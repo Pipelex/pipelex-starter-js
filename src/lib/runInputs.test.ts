@@ -5,7 +5,7 @@ import {
   rjsfDataFromRunValues,
   type PipeIOContracts,
 } from "@pipelex/mthds-form";
-import { gateRunInputs, requireContract, schemaFor } from "./runInputs";
+import { gateRunInputs, requireContract } from "./runInputs";
 import { PIPE_IO_CONTRACTS } from "@/generated/extract-entities/contracts";
 import { PIPE_IO_CONTRACTS as PDF_CONTRACTS } from "@/generated/summarize-pdf/contracts";
 import { PIPE_IO_CONTRACTS as COMPLEX_CONTRACTS } from "@/generated/complex-form/contracts";
@@ -31,17 +31,6 @@ describe("requireContract", () => {
   });
 });
 
-describe("schemaFor", () => {
-  it("returns the same schema object for a contract, every time", () => {
-    // Object *identity*, not deep equality, and that is the whole point: the
-    // kernel's ajv singleton caches compiled validators keyed on the schema
-    // object and never evicts them, so a fresh-but-equal object per call
-    // retains another validator on every request to a public Server Action.
-    expect(schemaFor(CONTRACT)).toBe(schemaFor(CONTRACT));
-    expect(schemaFor(PDF_CONTRACT)).not.toBe(schemaFor(CONTRACT));
-  });
-});
-
 describe("gateRunInputs", () => {
   it("turns schema-shaped data into the runtime's {concept, content} envelope", () => {
     const result = gateRunInputs(CONTRACT, { text: { text: "Ada met Charles" } });
@@ -58,10 +47,10 @@ describe("gateRunInputs", () => {
     ["an array", []],
   ])("classifies %s as a bad request instead of throwing", (_label, payload) => {
     // A Server Action is a public endpoint and Next does not enforce the
-    // declared parameter type. The kernel indexes the payload by variable
-    // name without checking it is indexable, so a `null` body used to throw a
-    // TypeError that Next stripped to an opaque digest — the one outcome this
-    // module promises never happens.
+    // declared parameter type. The kernel takes `data` as `unknown` and
+    // normalizing it is its gate's own first step, so a hostile body gets a
+    // verdict naming what is missing — never a TypeError that Next would strip
+    // to an opaque digest, the one outcome this module promises never happens.
     let result: ReturnType<typeof gateRunInputs> | undefined;
     expect(() => {
       result = gateRunInputs(CONTRACT, payload);
@@ -151,9 +140,20 @@ describe("gateRunInputs", () => {
     const withOptional: PipeIOContracts = {
       "d.p": {
         inputs: {
-          note: { concept_ref: "native.Text", optional: true, ...textSchema() },
+          note: {
+            concept_ref: "native.Text",
+            presence: "optional",
+            multiplicity: "single",
+            item_count: null,
+            ...textSchema(),
+          },
         },
-        output: { concept_ref: "native.Text", multiplicity: "single" },
+        output: {
+          concept_ref: "native.Text",
+          multiplicity: "single",
+          item_count: null,
+          optional: false,
+        },
       },
     };
     const contract = requireContract(withOptional, "d", "p");
@@ -185,7 +185,9 @@ describe("the gate agrees with the Run button", () => {
       inputs: {
         person: {
           concept_ref: "d.Person",
-          optional: false,
+          presence: "plain",
+          multiplicity: "single",
+          item_count: null,
           json_schema: {
             type: "object",
             title: "Person",
@@ -197,7 +199,12 @@ describe("the gate agrees with the Run button", () => {
           },
         },
       },
-      output: { concept_ref: "native.Text", multiplicity: "single" },
+      output: {
+        concept_ref: "native.Text",
+        multiplicity: "single",
+        item_count: null,
+        optional: false,
+      },
     },
   };
 
@@ -206,7 +213,9 @@ describe("the gate agrees with the Run button", () => {
       inputs: {
         opts: {
           concept_ref: "d.Options",
-          optional: false,
+          presence: "plain",
+          multiplicity: "single",
+          item_count: null,
           json_schema: {
             type: "object",
             title: "Options",
@@ -217,22 +226,30 @@ describe("the gate agrees with the Run button", () => {
           },
         },
       },
-      output: { concept_ref: "native.Text", multiplicity: "single" },
+      output: {
+        concept_ref: "native.Text",
+        multiplicity: "single",
+        item_count: null,
+        optional: false,
+      },
     },
   };
 
   /**
-   * A plural input — an `array` json_schema, which is exactly what the kernel's
-   * `isPluralInput` keys off. `mustBeFilled` singles those out with an explicit
-   * `kind !== "list"` branch: a list never gates, even declared non-optional.
-   * `methods/complex-form/` declares one too; this isolates the branch.
+   * A variable-plural input — an `array` json_schema, which is exactly what the
+   * kernel's `isPluralInput` keys off. A variable list never gates, even
+   * declared non-optional: its empty form IS the empty list. (A fixed-count
+   * `Concept[N]` list is the exception — the method declared the count, so it
+   * gates.) `methods/complex-form/` declares one too; this isolates the branch.
    */
   const plural: PipeIOContracts = {
     "d.p": {
       inputs: {
         pages: {
           concept_ref: "native.Text",
-          optional: false,
+          presence: "plain",
+          multiplicity: "variable",
+          item_count: null,
           json_schema: {
             type: "array",
             title: "Pages",
@@ -245,7 +262,12 @@ describe("the gate agrees with the Run button", () => {
           },
         },
       },
-      output: { concept_ref: "native.Text", multiplicity: "single" },
+      output: {
+        concept_ref: "native.Text",
+        multiplicity: "single",
+        item_count: null,
+        optional: false,
+      },
     },
   };
 
@@ -286,6 +308,23 @@ describe("the gate agrees with the Run button", () => {
       values: { document: { url: "https://example.com/a.pdf" } },
     },
     { label: "struct untouched", contracts: person, domain: "d", pipe: "p", values: {} },
+    // A required struct whose children are all optional gates until *touched* —
+    // and reads filled the moment anything inside it is. Both directions used
+    // to disagree between the two sides; see the named-missing test below.
+    {
+      label: "all-optional struct untouched",
+      contracts: allOptional,
+      domain: "d",
+      pipe: "p",
+      values: {},
+    },
+    {
+      label: "all-optional struct touched",
+      contracts: allOptional,
+      domain: "d",
+      pipe: "p",
+      values: { opts: { tone: "formal" } },
+    },
     // Half-filled: `isFilled` says yes (some child), `fieldFilled` says no (a
     // required child is empty). The gate must side with the button.
     {
@@ -363,25 +402,21 @@ describe("the gate agrees with the Run button", () => {
     expect(gate.ok).toBe(runButtonLive);
   });
 
-  // A known kernel disagreement, pinned so its repair is noticed: a *required*
-  // struct input with no required children. Kernel 0.3.0 made an untouched
-  // structure stay absent from the wire, and its gate-side prune rescues only
-  // *optional* properties — so the combined schema's `required` rejects the
-  // absent input while readiness, whose `fieldFilled` is vacuously satisfied
-  // when a struct demands nothing, reports the Run button live. No method in
-  // `methods/` has this shape (`focus` is optional); a new one must not until
-  // the kernel agrees with itself. Reported upstream to `mthds-form`. When the
-  // kernel fixes either half, this test fails: fold the case back into the
-  // agreement table above and drop this pin.
-  it("still disagrees on a required struct input with no required children (upstream bug)", () => {
+  // The disagreement kernel 0.3.0 had on this shape is fixed, and this pins the
+  // *names* on both sides — the agreement rows above only compare verdicts. A
+  // required struct input with no required children now has to be touched:
+  // readiness reports it missing by variable name, and the gate refuses the
+  // absent input naming the same variable (it used to quote only ajv's
+  // `must have required property 'opts'`).
+  it("names a required struct input with no required children, on both sides", () => {
     const contract = requireContract(allOptional, "d", "p");
     const fields = fieldsForContract(contract);
 
-    expect(computeReadiness(fields, {}).missing).toEqual([]);
+    expect(computeReadiness(fields, {}).missing).toEqual(["opts"]);
 
     const gate = gateRunInputs(contract, rjsfDataFromRunValues({}, fields));
     expect(gate.ok).toBe(false);
-    if (!gate.ok) expect(gate.error.details).toContain("'opts'");
+    if (!gate.ok) expect(gate.error.details).toContain("Missing required input: opts");
   });
 
   it("carries a filled list's items into the wire envelope", () => {

@@ -44,15 +44,13 @@ function pdfFile(name = "doc.pdf", type = "application/pdf") {
 }
 
 /**
- * The kernel's `DocumentField` is a react-dropzone drop area wrapping a hidden
- * file input. It carries no accessible label (`FieldShell` renders a `div`, not
- * a `<label>`, when no control id is linkable), so the input is reached by type
- * — the same element a real drop or browse would deliver the file to.
+ * The kernel's `DocumentField` links its field label to the `<input
+ * type="file">` itself — the tab stop lives on the input, with the focus ring
+ * drawn on the dropzone through `focus-within` — so the accessible query
+ * reaches the same element a real drop or browse would deliver the file to.
  */
 function fileInput(): HTMLInputElement {
-  const input = document.querySelector<HTMLInputElement>('input[type="file"]');
-  if (!input) throw new Error("no file input rendered");
-  return input;
+  return screen.getByLabelText("Document");
 }
 
 async function selectFile(file: File) {
@@ -180,11 +178,11 @@ describe("PdfForm", () => {
       // An accepted drop renders its filename in the kernel's file chip, and
       // its `finally` would have emptied `encodingIds` and re-enabled submit.
       expect(screen.queryByText(/mine\.pdf/)).not.toBeInTheDocument();
-      // The third door, and the one that matters most: the kernel threads
-      // `uploadingIds` to the dropzone alone, so this control closes only
-      // because the form passes `busy` as `disabled`. Left open, a URL pasted
-      // here makes the form ready mid-fetch — and the run it starts is
-      // abandoned client-side when the fetch lands and calls `reset()`.
+      // The third door: the kernel's `uploadingIds` shuts the "paste a URL
+      // instead" toggle and its input too, not only the dropzone — the form
+      // passes plain run state as `disabled` and relies on that. Left open, a
+      // URL pasted here makes the form ready mid-fetch — and the run it starts
+      // is abandoned client-side when the fetch lands and calls `reset()`.
       expect(screen.getByRole("button", { name: /paste a url instead/i })).toBeDisabled();
       expect(screen.getByRole("button", { name: /summarize pdf/i })).toBeDisabled();
 
@@ -201,13 +199,11 @@ describe("PdfForm", () => {
   });
 
   it("resolves a pasted storage URL for preview instead of spinning forever", async () => {
-    // The kernel previews a *dropped* file from private state it made itself.
-    // Any other value it treats as needing resolution, and with no `resolveUrl`
-    // in the field env its effect returns early — leaving a spinner that never
-    // stops. `pipelex-storage://…` pasted through "paste a URL instead" is the
-    // path that reaches it here (a data: URL from the sample shortcut does not:
-    // the kernel's `.pdf(\?|$)` test runs against `"<filename> <url>"`, so the
-    // extension is followed by a space and no preview is offered at all).
+    // The kernel paints `http(s):`, `data:` and `blob:` URLs directly; a
+    // non-web scheme is what it hands to the host's `resolveUrl`, and
+    // `pipelex-storage://…` pasted through "paste a URL instead" is the path
+    // that reaches it here. The identity resolver is this template's answer —
+    // it has nothing to sign the URI with — and this pins what that buys.
     render(<PdfForm />);
     fireEvent.click(screen.getByRole("button", { name: /paste a url instead/i }));
     fireEvent.change(screen.getByPlaceholderText(/pipelex-storage/i), {

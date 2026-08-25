@@ -17,8 +17,11 @@ export const PIPE_IO_CONTRACTS: PipeIOContracts = {
     "inputs": {
       "document": {
         "concept_ref": "native.Document",
-        "optional": false,
+        "presence": "plain",
+        "multiplicity": "single",
+        "item_count": null,
         "json_schema": {
+          "description": "A document",
           "properties": {
             "url": {
               "description": "The document URL: a storage URI, an HTTP(S) URL, or a base64 data URL",
@@ -94,7 +97,7 @@ export const PIPE_IO_CONTRACTS: PipeIOContracts = {
           "required": [
             "url"
           ],
-          "title": "DocumentContent",
+          "title": "native.Document",
           "type": "object"
         }
       }
@@ -102,6 +105,7 @@ export const PIPE_IO_CONTRACTS: PipeIOContracts = {
     "output": {
       "concept_ref": "summarize_pdf.DocumentSummary",
       "multiplicity": "single",
+      "item_count": null,
       "optional": false
     }
   }

@@ -36,23 +36,15 @@ const DOCUMENT_INPUT = "document";
 const NO_UPLOADS: ReadonlySet<string> = new Set<string>();
 
 /**
- * The kernel previews a file it took through its own dropzone from an object
- * URL it made itself. For a value it did not produce it asks the host to
- * resolve `value.url` first — and shows a spinner until that answers, so with
- * no resolver at all the spinner never stops.
- *
- * The path that reaches it here is a `pipelex-storage://…/x.pdf` pasted through
- * the control's own "paste a URL instead". This template has nothing to resolve
- * such a reference with, so hand it straight back: the kernel then renders its
- * `<object>`, whose "Preview unavailable" child is what a browser shows for a
- * scheme it cannot fetch — which beats a spinner that never resolves.
- *
- * Not, as an earlier version of this comment claimed, the "Use sample PDF"
- * shortcut. That writes a `data:` URL, and the kernel decides what is
- * previewable by testing `/\.pdf(\?|$)/i` against `` `${filename} ${url}` `` —
- * so a filename's extension is always followed by a space and never matches,
- * and a `data:` URL has none of its own. No Preview control is offered there at
- * all, and the spinner is never reached. Both halves are filed upstream.
+ * The kernel previews `http(s):`, `data:` and `blob:` URLs directly — the
+ * sample shortcut's `data:` URL included. Anything else it asks the host to
+ * resolve first, and the path that reaches it here is a
+ * `pipelex-storage://…/x.pdf` pasted through the control's own "paste a URL
+ * instead". This template has nothing to resolve such a reference with, so
+ * hand it straight back: the kernel then renders its `<object>`, whose
+ * "Preview unavailable" child is what a browser shows for a scheme it cannot
+ * fetch — which beats no preview at all. A real host would exchange the
+ * storage URI for a signed web URL here.
  */
 async function resolvePreviewUrl(url: string): Promise<string> {
   return url;
@@ -80,8 +72,10 @@ export function PdfForm() {
   // the run state: they happen *before* a run, so there is no useRun error to
   // carry them. The run's own error comes from `state`.
   const [fileError, setFileError] = useState<PipelineError | null>(null);
-  // The kernel disables a file control while its id is in here, and shows a
-  // spinner — which is also what makes a second drop mid-encode impossible.
+  // While an id is in here the kernel shuts every door into that value — the
+  // dropzone, the "paste a URL instead" toggle and the URL input behind it —
+  // and shows a spinner. That is what makes a second write mid-encode
+  // impossible without this form folding encode state into `disabled`.
   const [encodingIds, setEncodingIds] = useState<ReadonlySet<string>>(NO_UPLOADS);
 
   const { state, run, reset } = useRun({
@@ -92,20 +86,6 @@ export function PdfForm() {
   });
 
   const running = state.phase === "running";
-  // "The form is busy": a run is in flight, or an input is still resolving.
-  // Both mean the same thing to every control — don't accept edits, don't start
-  // a run — so they are one flag rather than two rules applied in two places.
-  //
-  // `encodingIds` belongs here and not only in `env.uploadingIds`, because the
-  // kernel threads `uploadingIds` to the *dropzone* alone: its "paste a URL
-  // instead" toggle and input read `disabled`. Left as `running`, a URL pasted
-  // mid-encode fills the field, `ready` flips true, and a run can start — then
-  // the earlier read lands, `handleDropFile` calls `reset()`, and `useRun`
-  // abandons a durable run that goes on executing and billing server-side.
-  // Folding busy into `disabled` is what closes the URL control; gating submit
-  // on the same flag says the rule outright rather than leaving it to follow
-  // from `ready`, which holds here only because `document` is required.
-  const busy = running || encodingIds.size > 0;
 
   /**
    * Un-select the file at `id`. Every path that is about to replace a selection
@@ -224,19 +204,21 @@ export function PdfForm() {
             setFileError(null);
             setValues(next);
           }}
-          disabled={busy}
+          disabled={running}
           env={{
             onDropFile: handleDropFile,
             uploadingIds: encodingIds,
             resolveUrl: resolvePreviewUrl,
           }}
         />
-        {/* Disabled while the field is busy, which spans this shortcut's own
-            fetch as well as any encode. */}
+        {/* App chrome that writes into the field holds itself to the rule the
+            kernel applies to its own controls through `uploadingIds`: no
+            writes while the value is still resolving. The span covers this
+            shortcut's own fetch as well as any encode. */}
         <button
           type="button"
           onClick={handleUseSample}
-          disabled={busy}
+          disabled={running || encodingIds.size > 0}
           className="text-xs font-medium text-blue-700 underline disabled:opacity-50"
         >
           Use sample PDF
@@ -244,7 +226,7 @@ export function PdfForm() {
         <ModeToggle value={mode} onChange={setMode} disabled={running} />
         <button
           type="submit"
-          disabled={busy || !ready}
+          disabled={running || !ready}
           className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {running ? "Summarizing…" : "Summarize PDF"}
