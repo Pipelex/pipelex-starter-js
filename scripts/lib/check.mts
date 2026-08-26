@@ -9,10 +9,12 @@
  *     `@pipelex/sdk` owns that verdict (categories `missing` · `modified` ·
  *     `hand-edited` · `orphan`). Its `detail` strings are printed verbatim so
  *     this report reads identically to `pipelex codegen check`.
- *  2. **Do the trees still match the `.mthds` files they were generated from?**
- *     The lock cannot know — it hashes artifacts, not sources — so the writer
+ *  2. **Do the trees still match the `.mthds` files they were generated from,
+ *     and are the starter's own artifacts intact?** The lock cannot know either
+ *     one — it hashes the artifacts the codegen route returned, not the sources
+ *     behind them and not the files this repo emits itself — so the writer
  *     (`generate.mts`) puts a starter-owned `sources.json` beside each lock and
- *     this module compares it against the bundles on disk.
+ *     `compareSidecar` checks both halves of it against what is on disk.
  *
  * Neither question is "is the tree what the engine would produce today". That one
  * needs the engine, and it is `npm run codegen:verify`.
@@ -32,7 +34,7 @@ import path from "node:path";
 import { CodegenLockError, runCodegenCheck } from "@pipelex/sdk";
 
 import {
-  compareSources,
+  compareSidecar,
   discoverMethods,
   findOrphanTrees,
   GENERATED_ROOT,
@@ -139,7 +141,7 @@ export async function checkMethod(
     throw error;
   }
 
-  const stale = await compareSources(outDir, method.sourceHashes);
+  const stale = await compareSidecar(outDir, method.sourceHashes);
 
   if (drifts.length === 0 && stale.length === 0) {
     console.log(

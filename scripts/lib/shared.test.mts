@@ -14,7 +14,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   assertSecureBaseUrl,
-  compareSources,
+  compareSidecar,
+  CONTRACTS_FILENAME,
   discoverMethods,
   findOrphanTrees,
   hashSource,
@@ -22,6 +23,7 @@ import {
   NonUtf8FileError,
   readGeneratedTree,
   readTextFile,
+  renderContracts,
   SOURCES_SIDECAR,
   SymlinkRefusedError,
   walk,
@@ -171,54 +173,138 @@ describe("findOrphanTrees", () => {
   });
 });
 
-describe("compareSources", () => {
+describe("compareSidecar", () => {
   const HASH_A = hashSource("a = 1\n");
   const HASH_B = hashSource("b = 2\n");
+  const CONTRACTS = renderContracts({ "d.p": { inputs: {}, output: {} } });
 
-  async function writeSidecar(sources: Record<string, string>): Promise<void> {
+  /**
+   * Write a sidecar plus a matching `contracts.ts`, so a test that is about the
+   * `sources` half is not tripped by the `derived` half it does not care about.
+   */
+  async function writeSidecar(
+    sources: Record<string, string>,
+    derived: Record<string, string> = { [CONTRACTS_FILENAME]: hashSource(CONTRACTS) },
+  ): Promise<void> {
+    await writeFile(path.join(fixtureDir, CONTRACTS_FILENAME), CONTRACTS);
     await writeFile(
       path.join(fixtureDir, SOURCES_SIDECAR),
-      JSON.stringify({ comment: "test", sources }, null, 2),
+      JSON.stringify({ comment: "test", sources, derived }, null, 2),
     );
   }
 
   it("passes when the recorded hashes match the current ones", async () => {
     await writeSidecar({ "methods/m/main.mthds": HASH_A });
-    expect(await compareSources(fixtureDir, { "methods/m/main.mthds": HASH_A })).toEqual([]);
+    expect(await compareSidecar(fixtureDir, { "methods/m/main.mthds": HASH_A })).toEqual([]);
   });
 
   it("reports an edited source", async () => {
     await writeSidecar({ "methods/m/main.mthds": HASH_A });
-    const stale = await compareSources(fixtureDir, { "methods/m/main.mthds": HASH_B });
+    const stale = await compareSidecar(fixtureDir, { "methods/m/main.mthds": HASH_B });
     expect(stale).toHaveLength(1);
     expect(stale[0]).toContain("edited since the types were generated");
   });
 
   it("reports a new source the sidecar does not cover", async () => {
     await writeSidecar({});
-    const stale = await compareSources(fixtureDir, { "methods/m/new.mthds": HASH_A });
+    const stale = await compareSidecar(fixtureDir, { "methods/m/new.mthds": HASH_A });
     expect(stale).toHaveLength(1);
     expect(stale[0]).toContain("a new bundle the generated types do not cover");
   });
 
   it("reports a recorded source no longer on disk", async () => {
     await writeSidecar({ "methods/m/gone.mthds": HASH_A });
-    const stale = await compareSources(fixtureDir, {});
+    const stale = await compareSidecar(fixtureDir, {});
     expect(stale).toHaveLength(1);
     expect(stale[0]).toContain("no longer on disk");
   });
 
   it("treats a missing sidecar as stale, not as a crash", async () => {
-    const stale = await compareSources(fixtureDir, { "methods/m/main.mthds": HASH_A });
+    const stale = await compareSidecar(fixtureDir, { "methods/m/main.mthds": HASH_A });
     expect(stale).toHaveLength(1);
     expect(stale[0]).toContain("missing or unreadable");
   });
 
   it("reports a sidecar with no sources map", async () => {
     await writeFile(path.join(fixtureDir, SOURCES_SIDECAR), JSON.stringify({ comment: "x" }));
-    const stale = await compareSources(fixtureDir, {});
+    const stale = await compareSidecar(fixtureDir, {});
     expect(stale).toHaveLength(1);
     expect(stale[0]).toContain('no "sources" map');
+  });
+
+  it("reports a sidecar with no derived map", async () => {
+    await writeFile(
+      path.join(fixtureDir, SOURCES_SIDECAR),
+      JSON.stringify({ comment: "x", sources: {} }),
+    );
+    const stale = await compareSidecar(fixtureDir, {});
+    expect(stale).toHaveLength(1);
+    expect(stale[0]).toContain('no "derived" map');
+  });
+
+  // The derived half exists for exactly these three: without it a hand-edited or
+  // deleted contracts.ts passes `make check` while the form it feeds renders from
+  // something nobody generated.
+  it("reports a hand-edited derived artifact", async () => {
+    await writeSidecar({});
+    await writeFile(path.join(fixtureDir, CONTRACTS_FILENAME), `${CONTRACTS}// tampered\n`);
+    const stale = await compareSidecar(fixtureDir, {});
+    expect(stale).toEqual([`derived: ${CONTRACTS_FILENAME} — hand-edited since it was generated`]);
+  });
+
+  it("reports a deleted derived artifact", async () => {
+    await writeSidecar({});
+    await rm(path.join(fixtureDir, CONTRACTS_FILENAME));
+    const stale = await compareSidecar(fixtureDir, {});
+    expect(stale).toEqual([
+      `derived: ${CONTRACTS_FILENAME} — recorded in ${SOURCES_SIDECAR} but missing from the tree`,
+    ]);
+  });
+
+  it("reports a derived artifact the sidecar never recorded", async () => {
+    // The expectation is the constant, never the sidecar's own keys: reading it
+    // off the file under test would let an empty `derived` map certify itself.
+    await writeSidecar({}, {});
+    const stale = await compareSidecar(fixtureDir, {});
+    expect(stale).toEqual([`derived: ${CONTRACTS_FILENAME} — not recorded in ${SOURCES_SIDECAR}`]);
+  });
+
+  it("reports a recorded derived artifact that is no longer generated", async () => {
+    await writeSidecar(
+      {},
+      { [CONTRACTS_FILENAME]: hashSource(CONTRACTS), "retired.ts": hashSource("x") },
+    );
+    const stale = await compareSidecar(fixtureDir, {});
+    expect(stale).toEqual([
+      `derived: retired.ts — recorded in ${SOURCES_SIDECAR} but no longer generated`,
+    ]);
+  });
+
+  it("hashes derived artifacts line-ending-invariantly, like sources", async () => {
+    await writeSidecar({});
+    await writeFile(path.join(fixtureDir, CONTRACTS_FILENAME), CONTRACTS.replace(/\n/g, "\r\n"));
+    expect(await compareSidecar(fixtureDir, {})).toEqual([]);
+  });
+});
+
+describe("renderContracts", () => {
+  it("does not open with a codegen stamp, so the tree cleanup leaves it alone", () => {
+    // `runCodegenCheck` calls a *stamped* file the lock does not track an orphan,
+    // and `writeTree` deletes orphans. An unstamped `.ts` is the supported shape
+    // for a consumer-owned file beside the lock — this is what keeps it alive.
+    expect(renderContracts({})).not.toContain("pipelex-codegen-stamp");
+  });
+
+  it("is deterministic and ends with exactly one newline", () => {
+    const payload = { "d.p": { inputs: { a: 1 }, output: { b: 2 } } };
+    expect(renderContracts(payload)).toBe(renderContracts(payload));
+    expect(renderContracts(payload).endsWith(";\n")).toBe(true);
+  });
+
+  it("types the literal against the kernel's mirror, so tsc gates contract drift", () => {
+    const rendered = renderContracts({});
+    expect(rendered).toContain('import type { PipeIOContracts } from "@pipelex/mthds-form";');
+    expect(rendered).toContain("export const PIPE_IO_CONTRACTS: PipeIOContracts =");
   });
 });
 

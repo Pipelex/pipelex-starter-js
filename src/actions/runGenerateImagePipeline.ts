@@ -1,5 +1,6 @@
 "use server";
 
+import { PIPE_IO_CONTRACTS } from "@/generated/generate-image/contracts";
 import { loadGenerateImageBundle } from "@/lib/loadBundle";
 import { parseGeneratedImage, type GeneratedImage } from "@/types/generateImagePipeline";
 import { executeBlockingRun, type BlockingOutcome } from "@/lib/blockingRun";
@@ -9,25 +10,18 @@ import {
   type PollOutcome,
   type StartOutcome,
 } from "@/lib/durableRun";
-import type { PipelineError } from "@/lib/errors";
+import { gateRunInputs, requireContract } from "@/lib/runInputs";
 import type { StartOptions } from "@pipelex/sdk";
 
 const PIPE_CODE = "generate_image";
 
-function emptyInputError(): PipelineError {
-  return {
-    kind: "bad_request",
-    title: "Prompt required",
-    message: "Describe the image you want to generate.",
-    details: "Empty input",
-  };
-}
+const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "generate_image", PIPE_CODE);
 
-async function buildOptions(prompt: string): Promise<StartOptions> {
+async function buildOptions(inputs: Record<string, unknown>): Promise<StartOptions> {
   return {
     pipe_code: PIPE_CODE,
     mthds_contents: [await loadGenerateImageBundle()],
-    inputs: { image_prompt: prompt },
+    inputs,
   };
 }
 
@@ -38,18 +32,18 @@ async function buildOptions(prompt: string): Promise<StartOptions> {
  * actually get an image.
  */
 export async function runGenerateImageBlocking(
-  prompt: string,
+  data: Record<string, unknown>,
 ): Promise<BlockingOutcome<GeneratedImage>> {
-  const trimmed = prompt.trim();
-  if (!trimmed) return { ok: false, error: emptyInputError() };
-  return executeBlockingRun(() => buildOptions(trimmed), parseGeneratedImage);
+  const gated = gateRunInputs(CONTRACT, data);
+  if (!gated.ok) return gated;
+  return executeBlockingRun(() => buildOptions(gated.inputs), parseGeneratedImage);
 }
 
 /** DURABLE path — start the image run and return its id to poll. */
-export async function startGenerateImageRun(prompt: string): Promise<StartOutcome> {
-  const trimmed = prompt.trim();
-  if (!trimmed) return { ok: false, error: emptyInputError() };
-  return startDurableRun(() => buildOptions(trimmed));
+export async function startGenerateImageRun(data: Record<string, unknown>): Promise<StartOutcome> {
+  const gated = gateRunInputs(CONTRACT, data);
+  if (!gated.ok) return gated;
+  return startDurableRun(() => buildOptions(gated.inputs));
 }
 
 /** DURABLE path — poll one tick of a started image run by id. */

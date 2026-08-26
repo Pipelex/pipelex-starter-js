@@ -2,11 +2,12 @@
 
 A minimal Next.js 16 starter that calls the [Pipelex](https://pipelex.com) API via the [`@pipelex/sdk`](https://www.npmjs.com/package/@pipelex/sdk) SDK to run AI methods (`.mthds` bundles) from a TypeScript app.
 
-It ships three demo pipelines, presented as tabs:
+It ships demo pipelines, presented as tabs:
 
 - **Text entities** (`methods/extract-entities`) — extracts `{ people, orgs, dates }` from pasted text.
 - **PDF summary** (`methods/summarize-pdf`) — uploads a PDF in the browser and returns a structured `{ title, doc_type, key_points }` summary from a cheap OpenAI model.
-- **Image generation** (`methods/generate-image`) — turns a text prompt into an image with `gpt-image-1-mini`.
+- **Image generation** (`methods/generate-image`) — turns a text prompt into an image with `gpt-image-2`.
+- **Complex inputs** (`methods/complex-form`) — the same extraction with an optional structured input and a plural one, so the form has something to derive beyond a single text box. Its point is what the code does _not_ contain: `src/components/ComplexForm.tsx` is no longer than `EntityForm.tsx` and names no input.
 
 Starting from zero? Use this template (next section). Adding Pipelex to an app you already have? This repo doubles as the worked example of the pattern — [`docs/adopt-in-an-existing-project.md`](docs/adopt-in-an-existing-project.md) is the transplant checklist.
 
@@ -30,6 +31,7 @@ Prefer to do it by hand? The manual equivalent:
 - **Vitest 4** + Testing Library (happy-dom)
 - **ESLint 9** + **Prettier 3**, **Husky** + **lint-staged**
 - **`@pipelex/sdk`** SDK for Pipelex API calls
+- **`@pipelex/mthds-form`** form kernel — the input forms are rendered from each method's own contract
 
 ## Prerequisites
 
@@ -47,7 +49,7 @@ make install
 make dev
 ```
 
-Open [http://localhost:4100](http://localhost:4100) and try the three example tabs.
+Open [http://localhost:4300](http://localhost:4300) and try the three example tabs.
 
 ## Project structure
 
@@ -63,19 +65,22 @@ src/
   app/                        # Next.js App Router (layout, page, globals.css)
   actions/                    # 'use server' Server Actions — blocking + start + poll trio per pipeline
   generated/                  # generated from methods/ — committed, never hand-edited
-    summarize-pdf/            # types.ts (zod schemas) + binder.ts + codegen.lock + sources.json
+    summarize-pdf/            # types.ts (zod) + binder.ts + contracts.ts + codegen.lock + sources.json
   lib/
     pipelexClient.ts          # PipelexApiClient singleton
     loadBundle.ts             # reads the .mthds bundles from disk
     blockingRun.ts            # the blocking execute path
     durableRun.ts             # the durable start + poll path
     wireOutput.ts             # reads main_stuff and readies it for a generated binder
+    runInputs.ts              # requireContract + gateRunInputs — the server-side input gate
     errors.ts                 # classifyPipelineError + PipelineError model
     fileEncoding.ts           # data-URL MIME + size validation
     usageReport.ts            # token usage → the render-ready cost report
     clientFile.ts             # browser File → base64 data URL
-  hooks/useRun.ts             # unified blocking|durable client state machine
-  components/                 # ExampleTabs + per-example form/result + ModeToggle + RunStatus
+  hooks/
+    useRun.ts                 # unified blocking|durable client state machine — the run
+    useRunInputs.ts           # form values + readiness + the wire shape — the inputs
+  components/                 # ExampleTabs + RunInputsForm + per-example form/result + chrome
   types/                      # thin adapters over src/generated/ — parseXxx(RunResults)
 ```
 
@@ -88,19 +93,29 @@ Each example runs in one of **two execution modes**, switchable per-example at r
 
 The flow, end to end:
 
-1. A form calls the `useRun({ mode, blocking, start, poll })` hook, which dispatches to the right **Server Actions** by mode.
-2. The Server Action reads the `.mthds` bundle from disk and calls the SDK (`execute` for blocking, `start` + `getRunStatus`/`getRunResult` for durable) with the bundle TOML + inputs.
+1. A form renders its inputs with `useRunInputs(contract)` + `<RunInputsForm>` — **no form field is written by hand**; every label, control and required-ness comes from the method's own contract, committed by `npm run codegen` (see [Input forms](#input-forms)). It then calls the `useRun({ mode, blocking, start, poll })` hook, which dispatches to the right **Server Actions** by mode.
+2. The Server Action gates the same contract, applying the kernel's rules in full (a Server Action is a public endpoint; the browser's check is only UX), then reads the `.mthds` bundle from disk and calls the SDK (`execute` for blocking, `start` + `getRunStatus`/`getRunResult` for durable) with the bundle TOML + inputs.
 3. The Pipelex API runs the pipe and returns the main output as `main_stuff` — the same resolved field on both paths.
 4. A `parseXxx(results)` narrower in `src/types/` validates it into a typed shape, using a zod schema generated from the method's own `.mthds` bundle (see [Generated types](#generated-types)).
 5. The hook drives the result: a live-status card while running, then the result component, or a classified `PipelineError` shown by `<ErrorDisplay>`.
 
-## File & image inputs
+## Input forms
+
+**No form field in this app is written by hand.** Each form is rendered from its method's input contract by the [`@pipelex/mthds-form`](https://www.npmjs.com/package/@pipelex/mthds-form) kernel: `npm run codegen` commits a `contracts.ts` beside the generated types, the form derives its fields from it, and the Run button gates on whatever that method actually requires. Add an input to a `.mthds` bundle, re-run codegen, and it shows up with the right control and the right label — no component edit.
+
+The same kernel supplies the input rules on **both** sides of the Server Action boundary, so there are no hand-written per-input guards left anywhere. The two sides call it differently, on purpose: the browser runs `computeReadiness` to decide whether Run is live, and the server runs `gateRunInputs` (`src/lib/runInputs.ts`), which calls readiness's own two functions over the same derived fields _and_ validates shapes _and_ builds the wire envelope. The server side is deliberately a strict superset — it is the trust boundary, because a Server Action is a public endpoint — and a test runs both sides over one table of inputs to hold them to it.
+
+The full reference — the contract artifact, the server-side gate, the file seam, and the Tailwind setup (including the silent purge trap) — is [`docs/input-form.md`](docs/input-form.md).
+
+### File & image inputs
 
 Text inputs are plain strings. File inputs (the PDF example) go through one extra step:
 
-1. The browser reads the chosen `File` into a base64 data URL with `fileToDataUrl` (`src/lib/clientFile.ts`). `File` objects are **not** serializable across the server boundary — the Server Action only ever receives the resulting `string`.
-2. The Server Action validates the data URL (`validateDataUrl` in `src/lib/fileEncoding.ts` — the authoritative MIME + size gate; any client-side pre-check is UX only).
-3. The Server Action hands the bare data URL to `client.prepareInputs()`, which reads the method's declared signature, recognizes the input as a file, uploads the bytes to Pipelex storage, and rewrites the input to a small `pipelex-storage://` URI. The run request carries that lightweight reference rather than fat inline base64 — the app never hosts the file itself.
+1. The kernel's dropzone hands the app the dropped `File`; the app reads it into a base64 data URL with `fileToDataUrl` (`src/lib/clientFile.ts`) and writes it back into the form value. `File` objects are **not** serializable across the server boundary — the Server Action only ever receives the resulting `string`.
+2. The Server Action validates the shape against the contract, then the file reference itself (`checkFileInputs` in `src/lib/fileEncoding.ts` — the authoritative scheme, MIME and size gate; the browser's own size check is an early exit that saves an encode, not a gate).
+3. The Server Action hands the input to `client.prepareInputs()`, which reads the method's declared signature, recognizes the input as a file, uploads the bytes to Pipelex storage, and rewrites the input to a small `pipelex-storage://` URI. The run request carries that lightweight reference rather than fat inline base64 — the app never hosts the file itself.
+
+The kernel's file control also offers "paste a URL instead", so an `https://` or `pipelex-storage://` reference works without any upload at all. Those two schemes and `data:` are the whole accepted set, checked before anything else: the SDK reads an unrecognised string as a path on the server's own disk, so a public Server Action has to refuse by default rather than assume "no bytes" means "nothing to check".
 
 Image **outputs** (the image example) come back as a URL — a storage URL or a base64 data URL — which renders directly in an `<img>`.
 
@@ -114,7 +129,7 @@ npm run codegen:check   # prove the committed trees are current — offline, no 
 npm run codegen:verify  # ask the API whether the committed types are still semantically current — needs a key
 ```
 
-`npm run codegen` sends each method to the API's `/v1/codegen` route, which returns a `types.ts` (zod schemas plus their inferred TypeScript types), a `binder.ts` (`parseXxx` / `serializeXxx` over those schemas), and a `codegen.lock`. Every artifact carries a stamp and the lock records their hashes, so `npm run codegen:check` re-derives the whole verdict **offline** — no key, no network — and fails if a generated file was edited, deleted, or left behind. Beside each lock, a `sources.json` records a hash of every source `.mthds`, which catches the other kind of staleness: editing a bundle and forgetting to regenerate. `make check` runs that check, so `make all` does too.
+`npm run codegen` sends each method to the API's `/v1/codegen` route, which returns a `types.ts` (zod schemas plus their inferred TypeScript types), a `binder.ts` (`parseXxx` / `serializeXxx` over those schemas), and a `codegen.lock`. It also asks `/v1/validate` for the method's input/output contracts and writes a `contracts.ts`, which is what the input forms render from. Every artifact carries a stamp and the lock records their hashes, so `npm run codegen:check` re-derives the whole verdict **offline** — no key, no network — and fails if a generated file was edited, deleted, or left behind. Beside each lock, a `sources.json` records a hash of every source `.mthds`, which catches the other kind of staleness: editing a bundle and forgetting to regenerate. `make check` runs that check, so `make all` does too.
 
 A few things worth knowing:
 
@@ -129,19 +144,19 @@ A few things worth knowing:
 
 1. Add `methods/<name>/main.mthds` (the `/mthds-build` skill from the [mthds-plugins](https://github.com/Pipelex/mthds-plugins) marketplace can generate one).
 2. Run `npm run codegen` — it writes `src/generated/<name>/` with the zod schemas and binders for the concepts that method declares.
-3. Add a loader in `src/lib/loadBundle.ts`, a `parseXxx(results)` adapter over the generated binder in `src/types/`, and the action trio (`run<Name>Blocking`, `start<Name>Run`, `poll<Name>Run`) in `src/actions/`.
-4. Wire it from a component with `useRun({ mode, blocking, start, poll })`. The three existing examples are the canonical patterns to copy.
+3. Add a loader in `src/lib/loadBundle.ts`, a `parseXxx(results)` adapter over the generated binder in `src/types/`, and the action trio (`run<Name>Blocking`, `start<Name>Run`, `poll<Name>Run`) in `src/actions/`. Each action takes the schema-shaped data dict and starts with `gateRunInputs(CONTRACT, data)`.
+4. Wire it from a component with `useRunInputs(CONTRACT)` + `<RunInputsForm>` for the inputs and `useRun({ mode, blocking, start, poll })` for the run. **You write no form fields** — they come from the contract. The three existing examples are the canonical patterns to copy.
 
 ## Remove an example
 
 Stripping the demos is usually the first act of making this template yours. Each example is one vertical slice; removing one (say `extract-entities`) means deleting, in one commit:
 
 1. The bundle: `methods/extract-entities/`.
-2. Its generated tree: `src/generated/extract-entities/` — `make check` fails on a generated tree with no method behind it (and vice versa), so always remove both together.
+2. Its generated tree: `src/generated/extract-entities/` — `make check` fails on a generated tree with no method behind it (and vice versa), so always remove both together. Its `contracts.ts` goes with it, and with it the form that read it.
 3. Its loader in `src/lib/loadBundle.ts`, its adapter in `src/types/extractEntitiesPipeline.ts`, and its action trio `src/actions/runExtractEntitiesPipeline.ts` — each with its co-located `.test.ts`, plus that loader's `describe` block in `src/lib/loadBundle.test.ts`.
 4. Its components — `EntityForm.tsx`, `EntityResult.tsx` and their tests — and its tab entry in `src/components/ExampleTabs.tsx`, whose own test (`ExampleTabs.test.tsx`) mocks that form and asserts its tab.
 5. Its e2e spec: `e2e/extract.spec.ts`.
-6. The references the shared code keeps to it. The text example is the form `e2e/error-display.spec.ts` drives — repoint it at a surviving example. The blurb in `src/app/page.tsx` names all three examples, and the bundle-read hint in `src/lib/errors.ts` names this one by path.
+6. The references the shared code keeps to it. The text example is the form `e2e/error-display.spec.ts` drives — repoint it at a surviving example. The blurb in `src/app/page.tsx` names the examples, and the bundle-read hint in `src/lib/errors.ts` names this one by path. The complex-inputs example is additionally named by the shared gate test (`src/lib/runInputs.test.ts` imports its contract for the structured and plural rows).
 
 Then run `make all`. `tsc` type-checks the co-located tests, so it names most dangling references itself; the two it cannot see — the `vi.mock` module string in `ExampleTabs.test.tsx` and the Playwright selectors — surface as test failures instead. The PDF example additionally owns `public/sample-invoice.pdf`, and the image example is the one exercising the blocking-cap e2e case.
 
@@ -164,8 +179,8 @@ Then run `make all`. `tsc` type-checks the co-located tests, so it names most da
 | `make test-e2e-ui`    | Same, with the Playwright UI runner                                                                      |
 | `make check`          | lint + format-check + typecheck + codegen-check                                                          |
 | `make all`            | check + test + build (does **not** run e2e or `codegen` — both need a key)                               |
-| `make use-local`      | Pack & install sibling `../pipelex-sdk-js` into `node_modules` (alias: `ul`)                             |
-| `make use-npm`        | Restore the latest npm-published `@pipelex/sdk` package (alias: `un`)                                    |
+| `make use-local`      | Pack & install siblings `../pipelex-sdk-js` + `../mthds-form` into `node_modules` (alias: `ul`)          |
+| `make use-npm`        | Restore the latest npm-published `@pipelex/sdk` + `@pipelex/mthds-form` packages (alias: `un`)           |
 
 ## End-to-end testing (optional)
 
@@ -179,16 +194,16 @@ The three happy-path specs (`extract`, `summarize-pdf`, `generate-image`) hit th
 - The fourth spec, `error-display`, tests the offline error UX — it needs **no** key, costs nothing, and runs out of the box.
 - First-time setup needs the browser binary: `npx playwright install chromium`.
 
-## Local SDK development (sibling `pipelex-sdk-js` repo)
+## Local package development (sibling `pipelex-sdk-js` and `mthds-form` repos)
 
-If you have the [`pipelex-sdk-js`](https://github.com/Pipelex/pipelex-sdk-js) repo checked out as a sibling directory (`../pipelex-sdk-js`) and want this app to use it instead of the published npm package:
+If you have the [`pipelex-sdk-js`](https://github.com/Pipelex/pipelex-sdk-js) and [`mthds-form`](https://github.com/Pipelex/mthds-form) repos checked out as sibling directories (`../pipelex-sdk-js`, `../mthds-form`) and want this app to use them instead of the published npm packages:
 
 ```bash
-make use-local   # builds ../pipelex-sdk-js, packs it with `npm pack`, installs the tarball into node_modules/@pipelex/sdk
-make use-npm     # installs the latest published @pipelex/sdk and re-pins package.json to it
+make use-local   # builds both siblings, packs each with `npm pack`, installs the tarballs into node_modules/@pipelex/{sdk,mthds-form}
+make use-npm     # installs the latest published @pipelex/sdk + @pipelex/mthds-form and re-pins package.json to them
 ```
 
-Aliases: `make ul` / `make un`. **Re-run `make use-local` after every SDK edit** — the tarball is a snapshot, not a live link. We use a tarball install rather than a symlink because Next.js 16's Turbopack does not follow symlinked workspace packages (`Module not found: Can't resolve '@pipelex/sdk'`).
+Aliases: `make ul` / `make un`. **Re-run `make use-local` after every edit to either sibling** — the tarball is a snapshot, not a live link. We use a tarball install rather than a symlink because Next.js 16's Turbopack does not follow symlinked workspace packages (`Module not found: Can't resolve '@pipelex/sdk'`).
 
 ## Environment variables
 

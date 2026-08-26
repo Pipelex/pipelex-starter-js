@@ -9,6 +9,7 @@
 // method's verdict masking another's, and `checkMethod` must map each way a
 // tree can be unreadable onto the right one of those three.
 
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -22,7 +23,15 @@ import {
   EXIT_NO_VERDICT,
   summarizeVerdicts,
 } from "./check.mts";
-import { LOCK_FILENAME, type MethodClosure } from "./shared.mts";
+import {
+  CONTRACTS_FILENAME,
+  hashSource,
+  LOCK_FILENAME,
+  renderContracts,
+  SIDECAR_COMMENT,
+  SOURCES_SIDECAR,
+  type MethodClosure,
+} from "./shared.mts";
 
 // Invalid UTF-8: a lone continuation byte, the same fixture the shared layer uses.
 const INVALID_UTF8 = Buffer.from([0x68, 0x69, 0x80, 0x0a]);
@@ -120,5 +129,93 @@ describe("checkMethod", () => {
     await tree({ [LOCK_FILENAME]: "this is not a lock\n" });
 
     expect(await checkMethod(METHOD, generatedRoot)).toBe(EXIT_NO_VERDICT);
+  });
+});
+
+// The contracts artifact is the one file in a generated tree the codegen lock
+// does not sign, so every verdict about it comes from the sidecar's `derived`
+// map instead. These run against the REAL `runCodegenCheck` over a REAL lock and
+// a genuinely stamped artifact — a mocked check would only pin the mock, and the
+// load-bearing claim here is about the SDK's own orphan rule.
+describe("checkMethod over a tree carrying contracts.ts", () => {
+  const FINGERPRINT = "f".repeat(64);
+  const CONTRACTS = renderContracts({
+    "demo.demo": {
+      inputs: { text: { concept_ref: "native.Text", json_schema: {}, optional: false } },
+      output: { concept_ref: "native.Text", multiplicity: "single", optional: false },
+    },
+  });
+
+  /** A body plus the stamp the SDK expects over it — the hash is of the body alone. */
+  function stamped(body: string): string {
+    const contentHash = createHash("sha256").update(body, "utf8").digest("hex");
+    return [
+      "// >>> pipelex-codegen-stamp >>>",
+      `// crate_fingerprint: ${FINGERPRINT}`,
+      "// engine_version: 0.50.0",
+      "// projection: types / ts-zod",
+      "// options: {}",
+      `// content_hash: ${contentHash}`,
+      "// <<< pipelex-codegen-stamp <<<",
+      body,
+    ].join("\n");
+  }
+
+  const TYPES_BODY = "export type Demo = string;\n";
+
+  function lock(): string {
+    const contentHash = createHash("sha256").update(TYPES_BODY, "utf8").digest("hex");
+    return [
+      "lock_version = 1",
+      `crate_fingerprint = "${FINGERPRINT}"`,
+      'engine_version = "0.50.0"',
+      "",
+      "[[artifacts]]",
+      'path = "types.ts"',
+      `content_hash = "${contentHash}"`,
+      "",
+    ].join("\n");
+  }
+
+  /** A complete, genuinely current tree: locked artifact, contracts, sidecar. */
+  async function currentTree(
+    contracts: string | null = CONTRACTS,
+    derived: Record<string, string> = { [CONTRACTS_FILENAME]: hashSource(CONTRACTS) },
+  ): Promise<string> {
+    const files: Record<string, string> = {
+      [LOCK_FILENAME]: lock(),
+      "types.ts": stamped(TYPES_BODY),
+      [SOURCES_SIDECAR]: `${JSON.stringify(
+        { comment: SIDECAR_COMMENT, sources: METHOD.sourceHashes, derived },
+        null,
+        2,
+      )}\n`,
+    };
+    if (contracts !== null) files[CONTRACTS_FILENAME] = contracts;
+    return tree(files);
+  }
+
+  it("is current — an unstamped .ts beside the lock is not an orphan", async () => {
+    await currentTree();
+
+    expect(await checkMethod(METHOD, generatedRoot)).toBe(EXIT_CURRENT);
+  });
+
+  it("reports drift when contracts.ts is hand-edited", async () => {
+    await currentTree(`${CONTRACTS}// tampered\n`);
+
+    expect(await checkMethod(METHOD, generatedRoot)).toBe(EXIT_DRIFT);
+  });
+
+  it("reports drift when contracts.ts is deleted", async () => {
+    await currentTree(null);
+
+    expect(await checkMethod(METHOD, generatedRoot)).toBe(EXIT_DRIFT);
+  });
+
+  it("reports drift when the sidecar never recorded contracts.ts", async () => {
+    await currentTree(CONTRACTS, {});
+
+    expect(await checkMethod(METHOD, generatedRoot)).toBe(EXIT_DRIFT);
   });
 });

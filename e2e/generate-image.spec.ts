@@ -15,7 +15,9 @@ test("durable mode: streams live status, then generates an image", async ({ page
 
   // Durable is the default mode. Image generation outlives the ~30s hosted cap,
   // so this is the mode that actually returns an image.
-  await page.getByLabel("Image prompt").fill("A simple red circle on a plain white background.");
+  await page
+    .getByRole("textbox", { name: "Image prompt" })
+    .fill("A simple red circle on a plain white background.");
   await page.getByRole("button", { name: /generate image/i }).click();
 
   // The durable path streams a live-status card while it polls. Image gen is
@@ -49,7 +51,9 @@ test("blocking mode: demonstrates the ~30s hosted cap with a timeout error", asy
   // gateway's ~30s synchronous limit, which surfaces as a classified
   // `execute_timeout` error pointing the user back at Durable mode.
   await page.getByRole("radio", { name: "Blocking" }).click();
-  await page.getByLabel("Image prompt").fill("A simple red circle on a plain white background.");
+  await page
+    .getByRole("textbox", { name: "Image prompt" })
+    .fill("A simple red circle on a plain white background.");
   await page.getByRole("button", { name: /generate image/i }).click();
 
   const alert = page.getByRole("alert").filter({ hasText: /30s/ });

@@ -6,7 +6,7 @@ This is the reference for the code-generation workflow behind `src/generated/` �
 
 This template's role is to show developers how to build on Pipelex, and everything our tools can build deterministically should be built by them. Before codegen, the template hand-wrote in `src/types/` the very thing each method already declares in its `.mthds` bundle: the output concept's shape plus a hand-rolled runtime narrower per shape. That is a duplicated type surface with no drift guard — edit a bundle's structure and nothing tells you the TypeScript is now lying.
 
-`@pipelex/sdk` exposes the crate routes: `client.codegen({ kind: "types", target: "ts-zod" })` projects a method's normalized library crate into stamped typed artifacts — a `types.ts` (zod schemas + inferred types), a `binder.ts` (typed `parse<Name>` / `serialize<Name>` pairs), and a `codegen.lock` — byte-identical to a local `pipelex codegen types` run. The SDK also ships `runCodegenCheck`, the pure offline drift check: a port of pipelex's `codegen check` that reaches the same verdict over the same bytes, down to the drift `detail` sentences.
+`@pipelex/sdk` exposes the crate routes: `client.codegen({ kind: "types", target: "ts-zod" })` projects a method's normalized library crate into stamped typed artifacts — a `types.ts` (zod schemas + inferred types), a `binder.ts` (typed `parse<Name>` / `serialize<Name>` pairs), and a `codegen.lock` — byte-identical to a local `pipelex codegen types` run. The same run additionally asks `/v1/validate` for the method's pipe IO contracts and writes a `contracts.ts` (see [The contracts artifact](#the-contracts-artifact)), so the same command that keeps the _output_ types honest also keeps the _input_ forms honest. The SDK also ships `runCodegenCheck`, the pure offline drift check: a port of pipelex's `codegen check` that reaches the same verdict over the same bytes, down to the drift `detail` sentences.
 
 The design goal in one sentence: **`npm run codegen` regenerates committed, typed, zod-validated artifacts for every method in `methods/`, `npm run codegen:check` proves offline that they are current, and the app's narrowers are thin adapters over the generated binders.**
 
@@ -31,9 +31,10 @@ src/generated/                        # committed, generated, never hand-edited
   extract-entities/
     types.ts                          # zod schemas + z.infer types — imports only `zod`
     binder.ts                         # parse<Name> / serialize<Name> over the schemas
+    contracts.ts                      # PIPE_IO_CONTRACTS — what the input forms render from
     codegen.lock                      # pipelex trust-chain lock, written verbatim
     sources.json                      # starter-owned staleness sidecar (see below)
-  summarize-pdf/ …                    # same trio + sidecar per method
+  summarize-pdf/ …                    # same set per method
 scripts/
   codegen.mts                         # CLI entry — npm run codegen
   codegen-check.mts                   # CLI entry — npm run codegen:check
@@ -49,6 +50,18 @@ tsconfig.scripts.json                 # type-checks scripts/, the tsconfig.e2e.j
 One generated tree per method, mirroring `methods/` one-to-one: each method is its own closure, so each gets its own crate, artifact set, and lock. The trees live under `src/` so the `@/` alias reaches them and `tsc` type-checks them as part of the app.
 
 **Committed, deliberately.** A template consumer must see the generated code without holding an API key, `git clone && make all` must pass keyless, and the diff of a regeneration is itself documentation of what a bundle edit changed. The offline check keeps the committed tree honest.
+
+## The contracts artifact
+
+`src/generated/<method>/contracts.ts` is the one artifact in the tree the codegen route does not produce. It carries `PIPE_IO_CONTRACTS` — the `pipe_io_contracts` payload from `POST /v1/validate`, keyed by namespaced pipe ref — typed against the form kernel's `PipeIOContracts` mirror through a type-only import. It is what [the input forms](input-form.md) derive their fields from and what the run gate validates against, so it belongs beside the types for exactly the same reason they are committed: a consumer must see it without a key, and the diff of a regeneration shows what a bundle edit changed.
+
+It is fetched with the SDK's `validateFiles`, not `validate`. Not for ergonomics: `validate` takes parallel `mthds_contents` / `mthds_sources` arrays and the server `422`s a length mismatch, so hand-building them is a latent bug that surfaces at the first two-bundle method. The call is placed **last** in the per-method sequence, after the codegen artifacts have passed their own self-check, so a failed validate leaves the tree untouched rather than half-updated. An `is_valid: false` verdict fails the method exactly like a failed codegen.
+
+**It carries no codegen stamp, deliberately.** The SDK's orphan rule is "a _stamped_ file the lock does not track", and the writer deletes orphans — an emitter that imitated the stamped files beside it would produce a file that silently vanished on every regeneration.
+
+That leaves it outside the lock's protection, which is not acceptable when the two artifacts beside it are protected against precisely this. Re-signing the lock locally was rejected — the lock signs what `POST /v1/codegen` returned, and forging that destroys the one property that makes a committed tree traceable to a server response. So the `sources.json` sidecar grew a second half: a `derived` map of artifact filename → SHA-256, written by the generator from the content it wrote, compared by the offline check. Two shapes inside it are load-bearing: the hash is taken from the **written content**, not a re-read, and the expected set is a **constant** (`DERIVED_ARTIFACTS`), never the sidecar's own keys — otherwise an empty `derived` map certifies itself. The check reports the usual four states: hand-edited, missing, unrecorded, and recorded-but-no-longer-generated.
+
+`codegen:verify` covers it too, by re-fetching `/v1/validate` and comparing the **rendered bytes** (which is why the renderer is shared by all three scripts). The crate fingerprint says nothing about a different route's response, and an artifact no keyed gate covers is one nobody will notice has gone stale. One asymmetry with the fingerprint check: an engine bump is a _note_ there, because `engine_version` rides in every stamp; contracts carry no engine version, so any difference in them is a real content difference and is reported as a failure.
 
 ## The trust chain
 
@@ -104,5 +117,6 @@ It normalizes **values, never names** — it re-declares no field, so it is not 
 ## Open questions
 
 - **The `.optional()`-versus-wire-`null` mismatch** is the one thing here that is a workaround rather than a design. `dropWireNulls` should be deleted, not maintained — the fix belongs in the emitter (or the transport dump), and it is reported upstream.
-- **`sources.json` upstreaming**: if the staleness sidecar proves its worth, it may belong in the engine's own lock story rather than a starter convention.
+- **`sources.json` upstreaming**: if the staleness sidecar proves its worth, it may belong in the engine's own lock story rather than a starter convention. The `derived` half is the stronger candidate — any host that commits a codegen tree and emits its own artifact into it faces the same hole, and the machinery is small but easy to get subtly wrong; its natural home is beside `runCodegenCheck` in `@pipelex/sdk`.
+- **The contracts artifact is a placeholder for a wire descriptor.** `pipe_io_contracts` is what the form kernel derives from _today_; the roadmap has the API serving a purpose-built input-form descriptor at this same seam. When it lands, this stays a one-artifact change at one call site — which is why the fetch was put in the generator rather than in the app.
 - **`lock_version` upgrade ordering**: an SDK that tolerates a new lock version must ship _before_ the pipelex release that starts writing it. If `make check` ever fails with a version message naming a version this SDK does not know, the fix is bumping `@pipelex/sdk`, not touching the generated tree.

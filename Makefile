@@ -29,7 +29,7 @@ typecheck: ## Run TypeScript type checking (app + e2e specs + scripts)
 	npm run typecheck:scripts
 
 # Regenerates src/generated/<method>/ from methods/<method>/. Needs PIPELEX_API_KEY
-# and a base URL that serves POST /v1/codegen (api-dev today, not yet api.pipelex.com).
+# and nothing else: POST /v1/codegen is served on the default hosted URL.
 # Deliberately OUT of `make all`, for the same reason test-e2e is: key + network.
 codegen: ## Regenerate the typed artifacts in src/generated/ from methods/ (needs PIPELEX_API_KEY)
 	npm run codegen
@@ -85,41 +85,59 @@ lock: ## Regenerate package-lock.json without installing
 clean: ## Remove build artifacts and caches
 	rm -rf .next node_modules/.cache
 
-# ── Local Pipelex SDK development ──────────────────────────────────────────
-# By default, `make install` fetches the published `@pipelex/sdk` package from
-# npm. `make use-local` packs and installs the sibling ../pipelex-sdk-js so you
-# can develop the SDK and the starter side-by-side. `make use-npm` restores the
-# latest published version and re-pins package.json to it.
+# ── Local Pipelex package development ──────────────────────────────────────
+# By default, `make install` fetches the published `@pipelex/sdk` and
+# `@pipelex/mthds-form` packages from npm. `make use-local` packs and installs
+# the siblings ../pipelex-sdk-js and ../mthds-form so you can develop them and
+# the starter side-by-side. `make use-npm` restores the latest published
+# versions and re-pins package.json to them.
 #
 # We use `npm pack` + tarball install rather than a symlink because Next.js
 # 16's Turbopack does not follow symlinked workspace packages — `npm run dev`
 # and `npm run build` both fail with "Module not found" against a symlinked
 # node_modules entry. The tarball install gives us a real directory that
-# Turbopack resolves correctly. Re-run `make use-local` after every SDK edit
+# Turbopack resolves correctly. Re-run `make use-local` after every edit
 # to pick up changes.
+#
+# Both tarballs go through ONE `npm install` call on purpose: a second
+# `--no-save` install re-reconciles node_modules against the lockfile and can
+# silently revert the first tarball to the registry version.
+#
+# The pack steps pass `--ignore-scripts` on purpose: each sibling's `prepare`
+# script re-runs its build during `npm pack`, and mthds-form's build (tsup)
+# prints to stdout — which would corrupt the captured tarball filename. We
+# build explicitly just before packing, so skipping `prepare` loses nothing.
 
-use-local: ## Pack and install ../pipelex-sdk-js into node_modules for local SDK development
+use-local: ## Pack and install ../pipelex-sdk-js and ../mthds-form into node_modules for local development
 	@if [ ! -d ../pipelex-sdk-js ]; then \
 		echo "ERROR: ../pipelex-sdk-js not found — expected as a sibling directory."; exit 1; \
+	fi
+	@if [ ! -d ../mthds-form ]; then \
+		echo "ERROR: ../mthds-form not found — expected as a sibling directory."; exit 1; \
 	fi
 	@echo "Building ../pipelex-sdk-js so dist/ is up-to-date..."
 	cd ../pipelex-sdk-js && npm run build
 	@echo "Packing ../pipelex-sdk-js into a tarball..."
-	@cd ../pipelex-sdk-js && rm -f pipelex-sdk-*.tgz && TARBALL=$$(npm pack --silent) && mv $$TARBALL /tmp/pipelex-sdk-local.tgz
-	rm -rf node_modules/@pipelex/sdk
-	npm install /tmp/pipelex-sdk-local.tgz --no-save --silent
-	@rm -f /tmp/pipelex-sdk-local.tgz
-	@echo "Now using local ../pipelex-sdk-js (tarball install). Re-run after every SDK edit. 'make use-npm' to switch back."
+	@cd ../pipelex-sdk-js && rm -f pipelex-sdk-*.tgz && TARBALL=$$(npm pack --silent --ignore-scripts) && mv $$TARBALL /tmp/pipelex-sdk-local.tgz
+	@echo "Building ../mthds-form so dist/ is up-to-date..."
+	cd ../mthds-form && npm run build
+	@echo "Packing ../mthds-form into a tarball..."
+	@cd ../mthds-form && rm -f pipelex-mthds-form-*.tgz && TARBALL=$$(npm pack --silent --ignore-scripts) && mv $$TARBALL /tmp/pipelex-mthds-form-local.tgz
+	rm -rf node_modules/@pipelex/sdk node_modules/@pipelex/mthds-form
+	npm install /tmp/pipelex-sdk-local.tgz /tmp/pipelex-mthds-form-local.tgz --no-save --silent
+	@rm -f /tmp/pipelex-sdk-local.tgz /tmp/pipelex-mthds-form-local.tgz
+	@echo "Now using local ../pipelex-sdk-js and ../mthds-form (tarball installs). Re-run after every edit. 'make use-npm' to switch back."
 
 # The `@latest` tag is load-bearing. A bare `npm install @pipelex/sdk` re-resolves
 # the range already in package.json, so coming off `make use-local` with a stale
 # caret range restores that range's newest match rather than the current release —
-# silently DOWNGRADING, since the SDK is pre-1.0 and `^0.a.b` will not cross a minor.
-# `@latest` fetches the published release and rewrites the range to match it.
-use-npm: ## Restore the latest npm-published @pipelex/sdk package
-	rm -rf node_modules/@pipelex/sdk
-	npm install @pipelex/sdk@latest
-	@echo "Restored npm-published @pipelex/sdk $$(node -p "require('./node_modules/@pipelex/sdk/package.json').version"). Run 'make use-local' to switch back."
+# silently DOWNGRADING, since both packages are pre-1.0 and `^0.a.b` will not
+# cross a minor. `@latest` fetches the published release and rewrites the range
+# to match it.
+use-npm: ## Restore the latest npm-published @pipelex/sdk and @pipelex/mthds-form packages
+	rm -rf node_modules/@pipelex/sdk node_modules/@pipelex/mthds-form
+	npm install @pipelex/sdk@latest @pipelex/mthds-form@latest
+	@echo "Restored npm-published @pipelex/sdk $$(node -p "require('./node_modules/@pipelex/sdk/package.json').version") and @pipelex/mthds-form $$(node -p "require('./node_modules/@pipelex/mthds-form/package.json').version"). Run 'make use-local' to switch back."
 
 ul: use-local ## Alias for use-local
 un: use-npm ## Alias for use-npm
