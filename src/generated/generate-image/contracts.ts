@@ -17,8 +17,11 @@ export const PIPE_IO_CONTRACTS: PipeIOContracts = {
     "inputs": {
       "image_prompt": {
         "concept_ref": "native.Text",
-        "optional": false,
+        "presence": "plain",
+        "multiplicity": "single",
+        "item_count": null,
         "json_schema": {
+          "description": "A text",
           "properties": {
             "text": {
               "description": "The text",
@@ -29,7 +32,7 @@ export const PIPE_IO_CONTRACTS: PipeIOContracts = {
           "required": [
             "text"
           ],
-          "title": "TextContent",
+          "title": "native.Text",
           "type": "object"
         }
       }
@@ -37,6 +40,7 @@ export const PIPE_IO_CONTRACTS: PipeIOContracts = {
     "output": {
       "concept_ref": "native.Image",
       "multiplicity": "single",
+      "item_count": null,
       "optional": false
     }
   }

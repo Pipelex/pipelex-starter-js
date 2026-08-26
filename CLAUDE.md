@@ -23,6 +23,7 @@ methods/                      # the source of truth — everything in src/genera
   extract-entities/main.mthds # text → entities pipeline (TOML)
   summarize-pdf/main.mthds    # PDF Document → structured summary
   generate-image/main.mthds   # text prompt → image (gpt-image-2)
+  complex-form/main.mthds     # text + optional struct + plural text → brief
 public/
   sample-invoice.pdf          # sample PDF the PDF example loads out of the box
 scripts/                      # native-Node TypeScript (node --experimental-strip-types)
@@ -42,6 +43,7 @@ src/
     runExtractEntitiesPipeline.ts         # runExtractEntitiesBlocking + startExtractEntitiesRun + pollExtractEntitiesRun
     runSummarizePdfPipeline.ts  # …Blocking + start… + poll…
     runGenerateImagePipeline.ts # …Blocking + start… + poll…
+    runComplexFormPipeline.ts   # …Blocking + start… + poll…
   generated/                  # COMMITTED and GENERATED — never hand-edit (see "Generated types")
     extract-entities/
       types.ts                # zod schemas + z.infer types, stamped
@@ -51,6 +53,7 @@ src/
       sources.json            # starter-owned sidecar — SHA-256 of each source .mthds + derived
     summarize-pdf/ …          # same set per method
     generate-image/ …
+    complex-form/ …
   lib/
     pipelexClient.ts          # PipelexApiClient singleton factory
     loadBundle.ts             # fs.readFile of the .mthds bundles
@@ -67,12 +70,12 @@ src/
     useRun.ts                 # unified blocking|durable state machine (client)
     useRunInputs.ts           # form values + derived fields + readiness + wire shape (client)
   components/
-    ExampleTabs.tsx           # client component — tab switcher for the 3 examples
+    ExampleTabs.tsx           # client component — tab switcher across the examples
     RunInputsForm.tsx         # client component — the one kernel composition (FieldRenderer per field)
-    EntityForm/PdfForm/ImageForm.tsx        # client components (per-example chrome, mode-agnostic)
+    EntityForm/PdfForm/ImageForm/ComplexForm.tsx  # client components (per-example chrome, mode-agnostic)
     ModeToggle.tsx            # client component — Blocking|Durable segmented control
     RunStatus.tsx             # live-status card (spinner + status label + elapsed)
-    EntityResult/PdfSummaryResult/ImageResult.tsx  # server components (render output)
+    EntityResult/PdfSummaryResult/ImageResult/ComplexFormResult.tsx  # server components (render output)
     CostReport.tsx            # per-run token usage + cost breakdown
     ErrorDisplay.tsx          # server component (renders classified PipelineError)
   types/                      # the adapter layer over src/generated/ — no shapes re-declared
@@ -80,6 +83,7 @@ src/
     extractEntitiesPipeline.ts          # re-exports ExtractedEntities + parseEntities(RunResults)
     summarizePipeline.ts      # re-exports DocumentSummary + parseDocumentSummary(RunResults)
     generateImagePipeline.ts  # aliases Image as GeneratedImage + parseGeneratedImage(RunResults)
+    complexFormPipeline.ts    # re-exports ExtractionBrief + parseExtractionBriefResult(RunResults)
 e2e/
   extract.spec.ts             # Playwright e2e (hits live API)
   summarize-pdf.spec.ts
@@ -125,7 +129,7 @@ The rules below are each load-bearing — breaking one produces a wrong verdict 
 
 The forms are **mode-agnostic** — they call `useRun({ mode, blocking, start, poll })` and render by `state.phase`. Only the unified hook knows which Server Actions to call.
 
-**No method input is written by hand.** Each form renders its inputs from the method's committed contract through the `@pipelex/mthds-form` kernel — `useRunInputs(CONTRACT)` for values/readiness/wire shape, `<RunInputsForm>` for the controls — and the Server Action gates the same contract with `gateRunInputs` (`src/lib/runInputs.ts`), which is the trust boundary. Both sides take their rules from the one kernel, so the per-input guards that used to sit on either side are deleted rather than kept as belt-and-braces; the two calls differ deliberately, and **the server's must stay a strict superset of the browser's** (it calls `computeReadiness`'s own `mustBeFilled` + `fieldFilled` over the same derived fields, then also checks shapes and builds the wire envelope). Call readiness's actual functions there — a pair that merely looks equivalent is not enough, and `inputMustBeFilled` + `isFilled` is the trap: it agrees on every field kind this repo's methods produce and diverges on a structured concept. The invariant is pinned by a test that runs both sides over one table (`src/lib/runInputs.test.ts`), not by a comment. Full reference: [`docs/input-form.md`](docs/input-form.md).
+**No method input is written by hand.** Each form renders its inputs from the method's committed contract through the `@pipelex/mthds-form` kernel — `useRunInputs(CONTRACT)` for values/readiness/wire shape, `<RunInputsForm>` for the controls — and the Server Action gates the same contract with `gateRunInputs` (`src/lib/runInputs.ts`), which is the trust boundary. Both sides take their rules from the one kernel, so the per-input guards that used to sit on either side are deleted rather than kept as belt-and-braces; the two calls differ deliberately, and **the server's must stay a strict superset of the browser's**. That superset is the kernel's own `gateRunInputs` — it validates shapes, re-applies readiness's own functions over the same derived fields, and builds the wire envelope — and `src/lib/runInputs.ts` is a thin shim that renders its refusal as a `bad_request` `PipelineError`. Do not re-assemble the gate from the kernel's lower-level steps: the emptiness step is where assemblies go wrong (`inputMustBeFilled` + `isFilled` is the trap — it agrees on every field kind this repo's methods produce and diverges on a structured concept). The invariant is pinned by a test that runs both sides over one table (`src/lib/runInputs.test.ts`), not by a comment. Full reference: [`docs/input-form.md`](docs/input-form.md).
 
 ```ts
 // src/actions/runExtractEntitiesPipeline.ts — a thin trio per pipeline
@@ -206,7 +210,7 @@ Conventions:
 
 Text inputs are plain strings. File inputs (PDFs, images) take one extra step, demonstrated by the PDF example:
 
-- **The kernel never uploads — the host does.** `DocumentField` fires `env.onDropFile(id, file)` and waits; the host encodes and writes a `FileValue` (`{url, filename}`) back at the field's **dotted path** with `setValueAtPath`. While the id sits in `env.uploadingIds` the kernel disables the **dropzone**, which is why no staleness token is needed for a second selection mid-encode. It does not disable the control's "paste a URL instead" toggle and input — those read the ambient `disabled` — so a form passes as its `disabled` a single `busy` flag (`running || encodingIds.size > 0`), never bare `running`, and gates submit on that same flag. Otherwise a URL pasted mid-encode makes the form ready, and the run it starts is abandoned client-side when the earlier read lands and calls `reset()`.
+- **The kernel never uploads — the host does.** `DocumentField` fires `env.onDropFile(id, file)` and waits; the host encodes and writes a `FileValue` (`{url, filename}`) back at the field's **dotted path** with `setValueAtPath`. While the id sits in `env.uploadingIds` the kernel shuts **every door into that value** — the dropzone, the "paste a URL instead" toggle and the URL input behind it — which is why no staleness token is needed for a second selection mid-encode and why the form's `disabled` is plain run state. The one write path that guarantee cannot cover is the host's own chrome: a shortcut that writes into the field (the sample-PDF button) disables itself while the field is resolving (`running || encodingIds.size > 0`).
 - **Encode client-side, never cross the boundary with a `File`.** The browser reads the `File` into a base64 data URL via `fileToDataUrl` (`src/lib/clientFile.ts`). Server Actions accept only serializable arguments — the value that crosses is the `string` data URL inside the form value, never a `File`, `Blob`, or `FormData`.
 - **Validate server-side, then let the SDK upload.** The action runs the shape gate, then `checkFileInputs` over the **gated** inputs (`src/lib/fileEncoding.ts` — the authoritative scheme + MIME + size gate), then hands the inputs to `client.prepareInputs()`, which reads the method's declared signature, recognizes the input as a file, uploads the bytes to Pipelex storage, and rewrites the input to a small `pipelex-storage://` URI. **`prepareInputs` takes the kernel's `{concept, content}` envelope as readily as a bare value** (verified live) and preserves it on output, so no conversion sits at that seam. It throws a typed `InputPreparationError` _before any run starts_, and because the options closure runs inside `executeBlockingRun` / `startDurableRun`'s `try/catch`, that error is classified like any other SDK error.
 - **The scheme is checked before the bytes, and refused by default.** The kernel's file control offers "paste a URL instead", so a document input can arrive carrying no bytes — but "nothing to size-check" is not "nothing to verify". `prepareInputs` resolves any string it does not recognise as `data:`, `http(s)://` or `pipelex-storage://` as a **local filesystem path**, reads it and uploads it, so a Server Action that waves through every non-`data:` URL is an arbitrary server-side file read. `checkFileInputs` validates against a closed set first (`data:`, `https://`, `pipelex-storage://` — no cleartext `http://`), then MIME and size for `data:` only. It is keyed on the input **values**, never on the literal name `document`: a name-keyed gate fails open the day the bundle renames that input, while codegen carries the rename everywhere else.
@@ -282,16 +286,16 @@ Enforced via Husky + lint-staged on commit.
 | `make test-e2e`       | Optional Playwright e2e (live API, costs an LLM call; prompts first, auto-skips without a key) |
 | `make check`          | lint + format-check + typecheck + codegen-check                                                |
 | `make all`            | check + test + build (does **not** include e2e, `codegen`, or `codegen-verify`)                |
-| `make use-local`      | Pack and install sibling `../pipelex-sdk-js` (alias: `ul`)                                     |
-| `make use-npm`        | Restore the latest npm-published `@pipelex/sdk` package (alias: `un`)                          |
+| `make use-local`      | Pack and install siblings `../pipelex-sdk-js` + `../mthds-form` (alias: `ul`)                  |
+| `make use-npm`        | Restore the latest npm-published `@pipelex/sdk` + `@pipelex/mthds-form` (alias: `un`)          |
 
-## Local SDK development (`use-local`)
+## Local package development (`use-local`)
 
-When working on this starter alongside the SDK, use `make use-local` to install `../pipelex-sdk-js` (sibling) into `node_modules/@pipelex/sdk` instead of the npm package. The target builds `../pipelex-sdk-js`, packs it with `npm pack`, then installs the resulting tarball.
+When working on this starter alongside the SDK or the form kernel, use `make use-local` to install the siblings `../pipelex-sdk-js` and `../mthds-form` into `node_modules/@pipelex/sdk` and `node_modules/@pipelex/mthds-form` instead of the npm packages. The target builds each sibling, packs it with `npm pack`, then installs both resulting tarballs — in **one** `npm install` call, deliberately: a second `--no-save` install re-reconciles `node_modules` against the lockfile and can silently revert the first tarball to the registry version.
 
-We use a tarball install rather than a symlink (`ln -s`) because Next.js 16's Turbopack does not follow symlinked workspace packages — both `npm run dev` and `npm run build` fail with `Module not found: Can't resolve '@pipelex/sdk'` against a symlinked entry. **Re-run `make use-local` after every SDK edit** to pick up changes.
+We use a tarball install rather than a symlink (`ln -s`) because Next.js 16's Turbopack does not follow symlinked workspace packages — both `npm run dev` and `npm run build` fail with `Module not found: Can't resolve '@pipelex/sdk'` against a symlinked entry. **Re-run `make use-local` after every edit to either sibling** to pick up changes.
 
-`make use-npm` switches back, and it installs `@pipelex/sdk@latest` rather than plain `@pipelex/sdk` on purpose: the bare form re-resolves whatever range `package.json` already declares, so returning from a `use-local` session with a stale caret range would restore that range's newest match instead of the current release — a silent **downgrade**, since the SDK is pre-1.0 and `^0.a.b` never crosses a minor. The `@latest` tag fetches the published release and re-pins the range to it.
+`make use-npm` switches back, and it installs `@pipelex/sdk@latest` and `@pipelex/mthds-form@latest` rather than the plain names on purpose: the bare form re-resolves whatever range `package.json` already declares, so returning from a `use-local` session with a stale caret range would restore that range's newest match instead of the current release — a silent **downgrade**, since both packages are pre-1.0 and `^0.a.b` never crosses a minor. The `@latest` tag fetches the published release and re-pins the range to it.
 
 ## Workflow Rules
 
@@ -305,7 +309,7 @@ Other targets that matter:
 
 - **`make agent-test`** instead of `make test` when an AI agent runs the suite. It's silent on success; only failures hit the context.
 - **`make test-e2e`** before shipping changes that touch the SDK call path (`src/actions/`, `src/lib/pipelexClient.ts`, `src/lib/loadBundle.ts`, `src/lib/blockingRun.ts`, `src/lib/durableRun.ts`, `src/lib/wireOutput.ts`, `src/lib/errors.ts`, `src/lib/fileEncoding.ts`, `src/hooks/useRun.ts`, `src/generated/`, `methods/`). Unit tests mock the SDK; only e2e exercises the real API, the durable poll loop, and the rendered error UX. Not part of `make all` (costs an LLM call per run).
-- **`make use-local`** after editing the sibling `../pipelex-sdk-js` SDK, before re-running tests or the dev server. The tarball install only refreshes when the target re-runs.
+- **`make use-local`** after editing the sibling `../pipelex-sdk-js` SDK or `../mthds-form` form kernel, before re-running tests or the dev server. The tarball install only refreshes when the target re-runs.
 
 ## Git Workflow
 
@@ -331,6 +335,7 @@ Other targets that matter:
 
 ## Gotchas
 
+- **The dev server runs on port 4300, and it must not go back to 4100.** The port is declared in `package.json` (`dev` and `start`) and once more in `playwright.config.ts`, which derives both `baseURL` and `webServer.url` from it — change both places together. It was moved off 4100 because the `pipelex-server` local stack (`make local-up`) publishes its sandbox container, the MTHDS build chatbot, on `127.0.0.1:4100`, and `pipelex-app` hardcodes that port in `src/lib/agent-server.ts`, so the stack is the side that cannot move. The collision is silent rather than loud: Docker holds IPv4 loopback, so `next dev` still binds 4100 on IPv6 and prints `Ready`, while Playwright's health check resolves to IPv4, reaches the container's 404 forever, and fails with `Timed out waiting 120000ms from config.webServer` — a message that names neither the port nor the real owner. When e2e times out with the app apparently up, run `lsof -nP -iTCP:4300 -sTCP:LISTEN` before believing anything else.
 - **Husky `prepare` warning**: `npm install` prints `.git can't be found` if you install before `git init`. Harmless — just re-run `npm install` after `git init` to wire `.husky/_/`.
 - **Renaming App Router directories**: delete `.next/` before running `make check` — stale type references in `.next/types/` will fail typecheck.
 - **`next-env.d.ts` is generated** (gitignored). Next regenerates it on dev/build. Don't edit by hand.

@@ -19,6 +19,7 @@ const GENERATE_IMAGE_BUNDLE_PATH = path.join(
   "generate-image",
   "main.mthds",
 );
+const COMPLEX_FORM_BUNDLE_PATH = path.join(process.cwd(), "methods", "complex-form", "main.mthds");
 
 /**
  * Read a .mthds bundle as a TOML string. The Pipelex API accepts the bundle
@@ -34,6 +35,10 @@ export async function loadSummarizePdfBundle(): Promise<string> {
 
 export async function loadGenerateImageBundle(): Promise<string> {
   return readFile(GENERATE_IMAGE_BUNDLE_PATH, "utf-8");
+}
+
+export async function loadComplexFormBundle(): Promise<string> {
+  return readFile(COMPLEX_FORM_BUNDLE_PATH, "utf-8");
 }
 
 export const EXTRACT_ENTITIES_BUNDLE_PATH_FOR_TESTS = EXTRACT_ENTITIES_BUNDLE_PATH;

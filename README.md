@@ -2,11 +2,12 @@
 
 A minimal Next.js 16 starter that calls the [Pipelex](https://pipelex.com) API via the [`@pipelex/sdk`](https://www.npmjs.com/package/@pipelex/sdk) SDK to run AI methods (`.mthds` bundles) from a TypeScript app.
 
-It ships three demo pipelines, presented as tabs:
+It ships demo pipelines, presented as tabs:
 
 - **Text entities** (`methods/extract-entities`) — extracts `{ people, orgs, dates }` from pasted text.
 - **PDF summary** (`methods/summarize-pdf`) — uploads a PDF in the browser and returns a structured `{ title, doc_type, key_points }` summary from a cheap OpenAI model.
 - **Image generation** (`methods/generate-image`) — turns a text prompt into an image with `gpt-image-2`.
+- **Complex inputs** (`methods/complex-form`) — the same extraction with an optional structured input and a plural one, so the form has something to derive beyond a single text box. Its point is what the code does _not_ contain: `src/components/ComplexForm.tsx` is no longer than `EntityForm.tsx` and names no input.
 
 Starting from zero? Use this template (next section). Adding Pipelex to an app you already have? This repo doubles as the worked example of the pattern — [`docs/adopt-in-an-existing-project.md`](docs/adopt-in-an-existing-project.md) is the transplant checklist.
 
@@ -48,7 +49,7 @@ make install
 make dev
 ```
 
-Open [http://localhost:4100](http://localhost:4100) and try the three example tabs.
+Open [http://localhost:4300](http://localhost:4300) and try the three example tabs.
 
 ## Project structure
 
@@ -155,7 +156,7 @@ Stripping the demos is usually the first act of making this template yours. Each
 3. Its loader in `src/lib/loadBundle.ts`, its adapter in `src/types/extractEntitiesPipeline.ts`, and its action trio `src/actions/runExtractEntitiesPipeline.ts` — each with its co-located `.test.ts`, plus that loader's `describe` block in `src/lib/loadBundle.test.ts`.
 4. Its components — `EntityForm.tsx`, `EntityResult.tsx` and their tests — and its tab entry in `src/components/ExampleTabs.tsx`, whose own test (`ExampleTabs.test.tsx`) mocks that form and asserts its tab.
 5. Its e2e spec: `e2e/extract.spec.ts`.
-6. The references the shared code keeps to it. The text example is the form `e2e/error-display.spec.ts` drives — repoint it at a surviving example. The blurb in `src/app/page.tsx` names all three examples, and the bundle-read hint in `src/lib/errors.ts` names this one by path.
+6. The references the shared code keeps to it. The text example is the form `e2e/error-display.spec.ts` drives — repoint it at a surviving example. The blurb in `src/app/page.tsx` names the examples, and the bundle-read hint in `src/lib/errors.ts` names this one by path. The complex-inputs example is additionally named by the shared gate test (`src/lib/runInputs.test.ts` imports its contract for the structured and plural rows).
 
 Then run `make all`. `tsc` type-checks the co-located tests, so it names most dangling references itself; the two it cannot see — the `vi.mock` module string in `ExampleTabs.test.tsx` and the Playwright selectors — surface as test failures instead. The PDF example additionally owns `public/sample-invoice.pdf`, and the image example is the one exercising the blocking-cap e2e case.
 
@@ -178,8 +179,8 @@ Then run `make all`. `tsc` type-checks the co-located tests, so it names most da
 | `make test-e2e-ui`    | Same, with the Playwright UI runner                                                                      |
 | `make check`          | lint + format-check + typecheck + codegen-check                                                          |
 | `make all`            | check + test + build (does **not** run e2e or `codegen` — both need a key)                               |
-| `make use-local`      | Pack & install sibling `../pipelex-sdk-js` into `node_modules` (alias: `ul`)                             |
-| `make use-npm`        | Restore the latest npm-published `@pipelex/sdk` package (alias: `un`)                                    |
+| `make use-local`      | Pack & install siblings `../pipelex-sdk-js` + `../mthds-form` into `node_modules` (alias: `ul`)          |
+| `make use-npm`        | Restore the latest npm-published `@pipelex/sdk` + `@pipelex/mthds-form` packages (alias: `un`)           |
 
 ## End-to-end testing (optional)
 
@@ -193,16 +194,16 @@ The three happy-path specs (`extract`, `summarize-pdf`, `generate-image`) hit th
 - The fourth spec, `error-display`, tests the offline error UX — it needs **no** key, costs nothing, and runs out of the box.
 - First-time setup needs the browser binary: `npx playwright install chromium`.
 
-## Local SDK development (sibling `pipelex-sdk-js` repo)
+## Local package development (sibling `pipelex-sdk-js` and `mthds-form` repos)
 
-If you have the [`pipelex-sdk-js`](https://github.com/Pipelex/pipelex-sdk-js) repo checked out as a sibling directory (`../pipelex-sdk-js`) and want this app to use it instead of the published npm package:
+If you have the [`pipelex-sdk-js`](https://github.com/Pipelex/pipelex-sdk-js) and [`mthds-form`](https://github.com/Pipelex/mthds-form) repos checked out as sibling directories (`../pipelex-sdk-js`, `../mthds-form`) and want this app to use them instead of the published npm packages:
 
 ```bash
-make use-local   # builds ../pipelex-sdk-js, packs it with `npm pack`, installs the tarball into node_modules/@pipelex/sdk
-make use-npm     # installs the latest published @pipelex/sdk and re-pins package.json to it
+make use-local   # builds both siblings, packs each with `npm pack`, installs the tarballs into node_modules/@pipelex/{sdk,mthds-form}
+make use-npm     # installs the latest published @pipelex/sdk + @pipelex/mthds-form and re-pins package.json to them
 ```
 
-Aliases: `make ul` / `make un`. **Re-run `make use-local` after every SDK edit** — the tarball is a snapshot, not a live link. We use a tarball install rather than a symlink because Next.js 16's Turbopack does not follow symlinked workspace packages (`Module not found: Can't resolve '@pipelex/sdk'`).
+Aliases: `make ul` / `make un`. **Re-run `make use-local` after every edit to either sibling** — the tarball is a snapshot, not a live link. We use a tarball install rather than a symlink because Next.js 16's Turbopack does not follow symlinked workspace packages (`Module not found: Can't resolve '@pipelex/sdk'`).
 
 ## Environment variables
 

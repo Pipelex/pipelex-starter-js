@@ -8,6 +8,20 @@ loadEnvConfig(process.cwd(), false, { info: () => {}, error: console.error });
 
 const isCI = !!process.env.CI;
 
+// The dev-server port, declared once. It must match the `-p` flag in
+// package.json's `dev` and `start` scripts, which is what actually starts the
+// server below.
+//
+// Deliberately NOT 4100: the pipelex-server local stack publishes its sandbox
+// container (the MTHDS build chatbot) on 127.0.0.1:4100, and that collision is
+// silent rather than loud. Docker holds IPv4 loopback, so Next still binds the
+// port on IPv6 and prints "Ready", while every webServer health check resolves
+// to IPv4 and reaches the container's 404 instead — until `timeout` below
+// expires with "Timed out waiting 120000ms from config.webServer". If that ever
+// happens again, the first thing to run is `lsof -nP -iTCP:4300 -sTCP:LISTEN`.
+const PORT = 4300;
+const BASE_URL = `http://localhost:${PORT}`;
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
@@ -18,13 +32,13 @@ export default defineConfig({
   // Pipeline runs hit a real LLM and can take a while; bump the per-test timeout.
   timeout: 120_000,
   use: {
-    baseURL: "http://localhost:4100",
+    baseURL: BASE_URL,
     trace: "on-first-retry",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
     command: isCI ? "npm run build && npm start" : "npm run dev",
-    url: "http://localhost:4100",
+    url: BASE_URL,
     reuseExistingServer: !isCI,
     timeout: 120_000,
   },

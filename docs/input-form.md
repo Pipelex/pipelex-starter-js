@@ -1,6 +1,6 @@
 # Input forms: rendered from the method, not written by hand
 
-This is the reference for how the three demo forms are built — why none of them names its own inputs, how the browser and the server share one set of validation rules, and what the styling setup is doing. The day-to-day rules live in [`CLAUDE.md`](../CLAUDE.md); this document is the "why" behind them, and its companion is [`docs/codegen.md`](codegen.md), which owns the artifact these forms read.
+This is the reference for how the demo forms are built — why none of them names its own inputs, how the browser and the server share one set of validation rules, and what the styling setup is doing. The day-to-day rules live in [`CLAUDE.md`](../CLAUDE.md); this document is the "why" behind them, and its companion is [`docs/codegen.md`](codegen.md), which owns the artifact these forms read.
 
 ## Why
 
@@ -22,8 +22,16 @@ Import from those two specifiers only. Never reach into `dist/`.
 ```ts
 export const PIPE_IO_CONTRACTS: PipeIOContracts = {
   "extract_entities.extract_entities": {
-    inputs: { text: { concept_ref: "native.Text", optional: false, json_schema: { … } } },
-    output: { concept_ref: "extract_entities.ExtractedEntities", multiplicity: "single" },
+    inputs: {
+      text: {
+        concept_ref: "native.Text",
+        presence: "plain", // the authored marker, verbatim: plain | optional (?) | force (!)
+        multiplicity: "single", // single | variable ([]) | fixed ([N])
+        item_count: null, // non-null exactly when multiplicity is "fixed"
+        json_schema: { … },
+      },
+    },
+    output: { concept_ref: "extract_entities.ExtractedEntities", multiplicity: "single", item_count: null, optional: false },
   },
 };
 ```
@@ -62,23 +70,13 @@ const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, { te
 The kernel's headless core is server-safe on purpose, and that is the whole design:
 
 - **In the browser, for UX.** `computeReadiness(fields, values)` decides whether the Run button is live. Nothing more — the browser's checks are trivially bypassed and are not a gate.
-- **On the server, for trust.** A Server Action is a public endpoint. It runs the full gate itself against the same committed contract the browser rendered from:
+- **On the server, for trust.** A Server Action is a public endpoint. It runs the kernel's **`gateRunInputs(contract, data)`** against the same committed contract the browser rendered from: one call that combines the per-input schemas, repairs the data, validates it with ajv, re-applies the readiness rules with `computeReadiness`'s own functions over the same derived fields, and builds the `{concept, content}` payload the run expects. `src/lib/runInputs.ts` is a thin shim over it — all that remains here is rendering the kernel's refusal (`missingInputs`, raw ajv `errors`) as the `bad_request` `PipelineError` this template's `<ErrorDisplay>` shows.
 
-  ```
-  buildRunInputsSchema(contract.inputs)   # combine the per-input schemas; `required` is the gating set
-  prepareRunInputs(data, schema)          # heal legacy wrappers, prune empty optionals
-  validateRunInputs(prepared, …)          # ajv, plus the scan that names the VARIABLE at fault
-  mustBeFilled + fieldFilled              # readiness's OWN two functions, over the same derived fields
-  apiInputsFromSchemaData(prepared, …)    # the {concept, content} payload the run expects
-  ```
+Because both sides get their rules from the same kernel, the hand-written guards on both sides are **deleted**, not kept as belt-and-braces. Two rules that can disagree is the failure mode this removes. An earlier version of this repo assembled the gate from the kernel's four exported steps itself; the kernel now owns that assembly precisely because the emptiness step is where assemblies go wrong — there are four look-alike predicates and only two of them are the ones the Run button reads (the near-miss pair, `inputMustBeFilled` + `isFilled`, agrees on every native concept and diverges on a structured one in both directions). The kernel's `docs/run-gate.md` tells that story in full.
 
-Because both sides get their rules from the same kernel, the hand-written guards on both sides are **deleted**, not kept as belt-and-braces. Two rules that can disagree is the failure mode this removes.
+The invariant to preserve is not "the two sides are identical" — they are not, and should not be — but "**the server side is a strict superset of the client side**". Readiness is UX; this is the gate. The kernel asserts the invariant in its own suite by running both sides over one table of structured fixtures, and `src/lib/runInputs.test.ts` re-asserts it over this repo's **committed contracts**: it drives a table of inputs through `computeReadiness` and through `gateRunInputs` and demands the same verdict, which is what would catch a method redesign reaching a shape the kernel's fixtures do not. A comment claiming the two agree is worth very little — two successive versions of this repo's gate shipped one that was wrong.
 
-**The fourth step is not redundant with the third, and the reason is worth keeping in mind if you ever trim it.** ajv's `required` asserts only that a key is _present_, and no generated contract carries a `minLength` — so `{text: {text: ""}}` and `{document: {url: ""}}` satisfy the schema. That is not a contrived payload: `rjsfDataFromRunValues({}, fields)` emits exactly `{document: {url: ""}}` for an untouched form. Readiness already refuses it in the browser, so without that step the trust boundary would be _weaker_ than the button in front of it, and an empty input could start a paid run.
-
-**Which functions that step calls is load-bearing, and the near-miss is instructive.** The obvious pair is `inputMustBeFilled` + `isFilled`, and it is wrong. `computeReadiness` is built from `mustBeFilled` + `fieldFilled`, and `fieldFilled` differs from `isFilled` on exactly one field kind: for a `kind: "object"` field it requires _every required child_ to be filled, where `isFilled` on an object is satisfied by _any one_ child. So the near-miss pair diverges on a structured concept in both directions — it accepts a half-filled struct the browser refuses (a paid run past a disabled button) and rejects an all-optional struct the browser accepts (an error on a live button). Every input the methods in `methods/` declare derives to a `prose` or `document` field, and for those `fieldFilled` collapses to `isFilled` — so the wrong pair passes this repo's whole suite, and breaks for the first adopter with an object-shaped concept. Calling readiness's own functions removes the question rather than answering it.
-
-The invariant to preserve is therefore not "the two sides are identical" — they are not, and should not be — but "**the server side is a strict superset of the client side**". Readiness is UX; this is the gate. And that invariant is asserted by _running_ both sides: `src/lib/runInputs.test.ts` drives a table of inputs (the structured cases included, which no committed method can produce) through `computeReadiness` and through `gateRunInputs`, and demands the same verdict. A comment claiming the two agree is worth very little — two successive versions of this file shipped one that was wrong.
+That table mixes synthetic contracts with the real `complex-form` one, deliberately. The synthetic rows isolate shapes no committed method has (a struct with required children, a half-filled struct); the real rows cover every state that method's form can actually reach, because a redesign of the method is the likeliest way to reintroduce a disagreement. Adding a method with a structured or plural input means adding its states there — that is the check that catches "the Run button was enabled and the run was rejected anyway".
 
 The action's argument is therefore the schema-shaped data dict rather than a hand-typed `text: string`:
 
@@ -115,7 +113,7 @@ const url = await fileToDataUrl(file);
 setValues((current) => setValueAtPath(current, id.split("."), { url, filename: file.name }));
 ```
 
-The `id` is a **dotted path**, not a name, which is what makes the same handler work for a file nested inside a structured concept. While the field's id sits in `env.uploadingIds`, the kernel disables the **dropzone** and shows a spinner, which is why this app needs no staleness token for a second drop. One gap to know about, and the way around it: `uploadingIds` reaches the dropzone only, not the control's "paste a URL instead" toggle and text input. Those two read the ambient `disabled` instead, so a form that passes `disabled={running}` leaves a third door open — a URL pasted mid-encode makes the form ready, and the run it starts is abandoned client-side when the earlier read lands and calls `reset()`. `PdfForm` therefore passes one `busy` flag (`running || encodingIds.size > 0`) as `disabled`, which closes the whole control. The narrow fix belongs upstream — `uploadingIds` should reach every part of the control, so a host need not coarsen to form-wide disabling — and is filed there; the flag is what a host can do today.
+The `id` is a **dotted path**, not a name, which is what makes the same handler work for a file nested inside a structured concept. While the field's id sits in `env.uploadingIds`, the kernel shuts **every door into that value** — the dropzone, the "paste a URL instead" toggle and the URL input behind it — and shows a spinner. That guarantee is why this app needs no staleness token for a second selection mid-encode, and why `PdfForm` passes plain run state as the form's `disabled` rather than folding encode state in. The one write path `uploadingIds` cannot cover is the host's own chrome: the "Use sample PDF" shortcut writes into the same field, so it disables itself while the field is resolving (`running || encodingIds.size > 0`) — the same rule, applied by the one who owns the button.
 
 Here the "upload" is the same base64 data URL the template always used, and the Server Action still hands it to the SDK's `prepareInputs`, which uploads the bytes to Pipelex storage and rewrites the input to a `pipelex-storage://` URI. **`prepareInputs` accepts the gate's `{concept, content}` envelope as readily as a bare value** — verified live: it finds the data URL inside `content.url`, uploads it, and preserves the envelope (and the sibling `filename`) on output. So no conversion layer sits at that seam.
 
@@ -165,12 +163,16 @@ wc -l /tmp/without.css /tmp/with.css && rm tailwind.noglob.config.ts
 
 Nothing in `src/` changes. Edit `methods/<name>/main.mthds`, run `npm run codegen`, commit the regenerated tree. The new input appears in the form with the right control, the right label, and the right gating; the server's gate starts requiring it; the tests that name it are the only place you touch.
 
+`methods/complex-form/` is the worked demonstration: it is the one method here whose inputs go past a single text box, and `src/components/ComplexForm.tsx` is the payoff — no longer than `EntityForm.tsx`, and naming no input. Diff the two.
+
+Two behaviour details of the current kernel worth knowing rather than debugging, both deliberate: a **required structured input must be touched** before Run lights up — a concept whose properties are all optional no longer reads ready while untouched, exactly as an untouched required number would not — and a **touched optional input enters the readiness count** (3 of 3 untouched, 3 of 4 once something is filled in it, 4 of 4 once complete), so the count a host displays moves when an optional structure is started.
+
+The check that would catch a readiness-versus-gate regression is the agreement table in `src/lib/runInputs.test.ts`. A new method with a structured or plural input should add its states there before anything else.
+
 ## What is deliberately not built
 
-- **No client-side pre-validation with inline field errors.** The kernel supports it (`validateRunInputs` plus `describeValidationError` render per-field messages), and every demo method here has exactly one required input, so readiness is the whole story. A form with several structured inputs would want it.
-- **No custom URL resolution.** `PdfForm` passes a `resolveUrl` that hands its argument straight back, which is not the affordance the name suggests — it is what keeps the kernel's Preview from spinning forever. The control previews a file it took through its own dropzone from an object URL it made; for any _other_ value it asks the host to resolve `value.url` and shows a spinner until that answers. The path that reaches this in the template is a `pipelex-storage://…/x.pdf` pasted through the control's own "paste a URL instead": returning it unchanged lets the kernel render its `<object>`, whose "Preview unavailable" child is what a browser shows for a scheme it cannot fetch. Genuine resolution — turning that reference into something fetchable — is not built, and a form seeded from a previous run would need it. Pinned by a regression test that fails when the resolver is removed.
-
-  Worth knowing because it is counter-intuitive: the **sample PDF** does _not_ reach that spinner, and cannot be previewed at all. The kernel decides what is previewable by testing `/\.pdf(\?|$)/i` against `` `${filename} ${url}` ``, so a filename's extension is always followed by a space and never matches, and the sample's `data:` URL carries no extension of its own — no Preview control is offered. Both halves are filed upstream; until the first lands, the second is unobservable for any value whose URL has no extension.
+- **No client-side pre-validation with inline field errors.** The kernel supports it (`validateRunInputs` plus `describeValidationError` render per-field messages), and every demo method here has exactly one _required_ input, so readiness is the whole story. A form with several structured inputs would want it.
+- **No custom URL resolution.** The kernel previews `http(s):`, `data:` and `blob:` URLs directly — the sample PDF's `data:` URL included — and asks the host's `resolveUrl` only for a value it cannot paint, which in this template is a `pipelex-storage://…/x.pdf` pasted through the control's own "paste a URL instead". `PdfForm` passes a resolver that hands the URI straight back: the kernel then renders its `<object>`, whose "Preview unavailable" child is what a browser shows for a scheme it cannot fetch, which beats no preview at all. Genuine resolution — exchanging that reference for a signed web URL — is not built, and a form seeded from a previous run would want it. Pinned by a regression test.
 
 - **No custom `FieldStrings`.** The kernel's English defaults are used verbatim. A localized host injects its own through `FieldStringsProvider`.
 - **No eject.** Generating per-method form wiring the way `binder.ts` is generated is a real option later; the kernel adoption is what would make it cheap.

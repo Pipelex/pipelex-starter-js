@@ -3,35 +3,35 @@
  *
  * The two sides are not the same call, and it is worth being exact about that.
  * The browser runs `computeReadiness` to decide whether Run is live
- * (`useRunInputs`); this module runs the kernel's schema gate, then re-applies
- * the emptiness rule by calling `computeReadiness`'s own two functions —
- * `mustBeFilled` and `fieldFilled` — over the same derived fields. So the rules
- * are shared by construction, not by resemblance, while this side stays a
- * strict superset: it also validates shapes and builds the wire envelope.
+ * (`useRunInputs`); this module runs the kernel's `gateRunInputs`, which
+ * validates shapes, re-applies the readiness rules over the same derived
+ * fields, and builds the wire envelope. So the rules are shared by
+ * construction, not by resemblance, while this side stays a strict superset of
+ * the browser's.
  *
  * That superset property is the invariant to preserve, because a Server Action
  * is a public endpoint and the browser's checks are trivially bypassed. This is
- * the trust boundary; readiness is UX. `runInputs.test.ts` asserts it by
- * running both sides over one table rather than by describing them, which is
- * the only form of that claim worth trusting — the near-miss pair
- * `inputMustBeFilled` + `isFilled` matches on every field kind this repo's
- * methods produce and diverges on a structured concept.
+ * the trust boundary; readiness is UX. The kernel asserts the invariant in its
+ * own suite by running both sides over one table of structured fixtures;
+ * `runInputs.test.ts` re-asserts it over this repo's committed contracts, which
+ * is what would catch a method redesign that reaches a shape the kernel's
+ * fixtures do not.
+ *
+ * What remains here is presentation: the kernel returns a verdict
+ * (`missingInputs`, raw ajv `errors`), and this module renders it as the
+ * `bad_request` `PipelineError` the template's `<ErrorDisplay>` knows how to
+ * show.
  *
  * Pure module — no `process.env`, no Node built-ins — so it is safe to import
  * from either side (same rule as `fileEncoding.ts`).
  */
 import {
-  apiInputsFromSchemaData,
-  buildRunInputsSchema,
   describeValidationError,
-  fieldFilled,
-  fieldsForContract,
+  gateRunInputs as kernelGateRunInputs,
   getPipeIOContract,
-  mustBeFilled,
-  prepareRunInputs,
-  validateRunInputs,
   type PipeIOContract,
   type PipeIOContracts,
+  type RunInputsGateResult,
   type Translate,
   type ValidationMessageKey,
 } from "@pipelex/mthds-form";
@@ -68,108 +68,21 @@ export type GateOutcome =
   | { ok: false; error: PipelineError };
 
 /**
- * One schema object per contract, for the lifetime of the process.
- *
- * `buildRunInputsSchema` is a pure function of the contract, so rebuilding it is
- * *semantically* free — but the kernel validates through a module-level ajv
- * singleton whose compiled-schema cache is keyed on **schema object identity**
- * and is never evicted (`ajv`'s `Map`-based `_cache`; the kernel never calls
- * `removeSchema`). A fresh object per call therefore misses every time and
- * retains another compiled validator. On a publicly callable Server Action that
- * is unbounded growth driven by the cheapest request there is — an empty body,
- * rejected in a fraction of a millisecond, costing no model spend.
- *
- * Weakly keyed so this map itself never pins a contract that goes out of scope;
- * in the app the contracts are module-level constants, so it holds exactly one
- * entry per method. Note that a schema which has been through `gateRunInputs`
- * is pinned for the process lifetime anyway, by ajv's own strong cache — the
- * point here is not that the schema is collectable, it is that the number of
- * them is bounded by the number of distinct contracts rather than by traffic.
- */
-const SCHEMA_CACHE = new WeakMap<PipeIOContract, ReturnType<typeof buildRunInputsSchema>>();
-
-export function schemaFor(contract: PipeIOContract) {
-  const cached = SCHEMA_CACHE.get(contract);
-  if (cached) return cached;
-  const schema = buildRunInputsSchema(contract.inputs);
-  SCHEMA_CACHE.set(contract, schema);
-  return schema;
-}
-
-/**
- * The kernel's gate: combine the per-input schemas, repair the data, validate
- * it, reject required inputs that arrived empty, and build the
- * `{ concept, content }` map the run expects.
+ * The kernel's gate, rendered for this template: validate the caller's data
+ * against the contract, refuse anything the Run button would have refused, and
+ * build the `{ concept, content }` map the run expects.
  *
  * Returns a classified error rather than throwing — a Server Action must never
  * throw across the server→client boundary, because Next.js strips the message
- * to an opaque digest in production builds.
- *
- * One payload still defeats that, and it is recorded rather than patched here:
- * a value nested a few thousand levels deep under an *undeclared* key survives
- * ajv (the schema sets no `additionalProperties: false`, so the key is never
- * walked) and overflows the stack inside the kernel's own `isFilled`, which
- * recurses without a depth cap. The caller only breaks their own request — no
- * bypass, no run started, nothing exposed — and the recursion belongs to
- * `@pipelex/mthds-form`, so the cap belongs there too; it is filed upstream. A
- * cap bolted on here would guard one caller's route into a kernel function that
- * every other caller reaches by another.
+ * to an opaque digest in production builds. The kernel honours the same
+ * contract (`data` is `unknown`, a hostile payload gets a verdict, never a
+ * throw), so all that happens here is translating its refusal into the
+ * `bad_request` shape `<ErrorDisplay>` renders.
  */
 export function gateRunInputs(contract: PipeIOContract, data: unknown): GateOutcome {
-  // `data` is typed `unknown` because that is what it is. A Server Action is a
-  // public endpoint and Next does not enforce the declared parameter type, so
-  // the argument is whatever the caller put in the body.
-  //
-  // Normalising it here is not a defensive wrapper around the gate — it is the
-  // gate's first step. The kernel indexes the payload by variable name
-  // (`preparedData[varName]`) without first checking it is indexable, so a
-  // `null` body throws a TypeError *after* ajv has already reported "must be
-  // object" but before any verdict is returned. That throw escapes to Next,
-  // which strips it to an opaque digest in a production build — the precise
-  // outcome the docstring above promises never happens. An empty object walks
-  // the normal path instead and names every input the caller left out.
-  const payload = typeof data === "object" && data !== null && !Array.isArray(data) ? data : {};
-  const schema = schemaFor(contract);
-  const prepared = prepareRunInputs(payload as Record<string, unknown>, schema);
-  const verdict = validateRunInputs(prepared, contract.inputs, schema);
-
-  if (!verdict.isValid) {
-    return {
-      ok: false,
-      error: invalidInputsError(verdict.missingInputs, verdict.errors, prepared),
-    };
-  }
-
-  // The schema alone is not enough: ajv's `required` asserts only that the key
-  // is *present*, and no generated contract carries a `minLength`. So a required
-  // input that arrived empty — `{document: {url: ""}}`, `{text: {text: ""}}` —
-  // satisfies the schema. That is not a contrived payload but the natural one:
-  // `rjsfDataFromRunValues({}, fields)` emits exactly `{document: {url: ""}}`
-  // when nothing is selected. The browser already refuses it (`computeReadiness`
-  // keeps Run disabled), so without this the trust boundary would be *weaker*
-  // than the button in front of it — a direct call to this public endpoint could
-  // start a paid run on an empty input.
-  //
-  // This runs `computeReadiness`'s *own* two functions over the same derived
-  // fields, which is the only way to be sure the two sides cannot disagree.
-  // Picking a pair that merely looks equivalent is not enough, and that is not
-  // hypothetical: the obvious choice, `inputMustBeFilled` + `isFilled`, agrees
-  // for every leaf kind and diverges on a structured concept in *both*
-  // directions — `isFilled` on an object is `some(child filled)` where
-  // `fieldFilled` is `every(required child filled)`. That accepts a
-  // half-filled struct the browser refuses (a paid run past a disabled button)
-  // and rejects an all-optional struct the browser accepts. No contract in
-  // `methods/` derives to a structured input today, so nothing here would have
-  // caught it — but this file is one adopters copy verbatim.
-  const empty = fieldsForContract(contract)
-    .filter(mustBeFilled)
-    .filter((field) => !fieldFilled(field, prepared[field.name]))
-    .map((field) => field.name);
-  if (empty.length) {
-    return { ok: false, error: invalidInputsError(empty, [], prepared) };
-  }
-
-  return { ok: true, inputs: apiInputsFromSchemaData(prepared, contract.inputs) };
+  const verdict = kernelGateRunInputs(contract, data);
+  if (verdict.ok) return verdict;
+  return { ok: false, error: invalidInputsError(verdict) };
 }
 
 /**
@@ -180,14 +93,11 @@ export function gateRunInputs(contract: PipeIOContract, data: unknown): GateOutc
  * (a wrong shape, a nested mismatch), so `errors` is the fallback — never leave
  * a rejection undiagnosable.
  */
-function invalidInputsError(
-  missingInputs: string[],
-  errors: ReturnType<typeof validateRunInputs>["errors"],
-  prepared: Record<string, unknown>,
-): PipelineError {
+function invalidInputsError(verdict: Extract<RunInputsGateResult, { ok: false }>): PipelineError {
+  const { missingInputs, errors, preparedData } = verdict;
   const lines = missingInputs.length
     ? missingInputs.map((name) => `Missing required input: ${name}`)
-    : errors.map((error) => describeValidationError(error, translate, prepared));
+    : errors.map((error) => describeValidationError(error, translate, preparedData));
 
   return {
     kind: "bad_request",
