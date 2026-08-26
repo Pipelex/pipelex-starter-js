@@ -335,6 +335,7 @@ Other targets that matter:
 
 ## Gotchas
 
+- **The dev server runs on port 4300, and it must not go back to 4100.** The port is declared in `package.json` (`dev` and `start`) and once more in `playwright.config.ts`, which derives both `baseURL` and `webServer.url` from it — change both places together. It was moved off 4100 because the `pipelex-server` local stack (`make local-up`) publishes its sandbox container, the MTHDS build chatbot, on `127.0.0.1:4100`, and `pipelex-app` hardcodes that port in `src/lib/agent-server.ts`, so the stack is the side that cannot move. The collision is silent rather than loud: Docker holds IPv4 loopback, so `next dev` still binds 4100 on IPv6 and prints `Ready`, while Playwright's health check resolves to IPv4, reaches the container's 404 forever, and fails with `Timed out waiting 120000ms from config.webServer` — a message that names neither the port nor the real owner. When e2e times out with the app apparently up, run `lsof -nP -iTCP:4300 -sTCP:LISTEN` before believing anything else.
 - **Husky `prepare` warning**: `npm install` prints `.git can't be found` if you install before `git init`. Harmless — just re-run `npm install` after `git init` to wire `.husky/_/`.
 - **Renaming App Router directories**: delete `.next/` before running `make check` — stale type references in `.next/types/` will fail typecheck.
 - **`next-env.d.ts` is generated** (gitignored). Next regenerates it on dev/build. Don't edit by hand.

@@ -4,9 +4,9 @@
   "private": true,
   "description": "Minimal Next.js starter that calls Pipelex via the @pipelex/sdk SDK to run AI methods.",
   "scripts": {
-    "dev": "next dev -p 4100",
+    "dev": "next dev -p 4300",
     "build": "next build",
-    "start": "next start -p 4100",
+    "start": "next start -p 4300",
     "lint": "eslint .",
     "format": "prettier --write --no-error-on-unmatched-pattern \"**/*.{ts,tsx,mts,mjs,js,css,json,md}\" \".claude/skills/bootstrap/scripts/*.mjs\"",
     "format:check": "prettier --check --no-error-on-unmatched-pattern \"**/*.{ts,tsx,mts,mjs,js,css,json,md}\" \".claude/skills/bootstrap/scripts/*.mjs\"",
