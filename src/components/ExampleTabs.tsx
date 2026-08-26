@@ -28,7 +28,7 @@ export function ExampleTabs() {
       <div
         role="tablist"
         aria-label="Pipelex examples"
-        className="flex gap-1 border-b border-slate-200"
+        className="flex flex-wrap gap-1 border-b border-slate-200"
       >
         {TABS.map((tab) => {
           const selected = tab.id === active;
