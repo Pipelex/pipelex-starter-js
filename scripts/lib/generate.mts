@@ -31,6 +31,8 @@ import {
   runCodegenCheck,
   type CodegenValidReport,
   type GeneratedArtifact,
+  type InputForm,
+  type PipeIOContracts,
 } from "@pipelex/sdk";
 
 import {
@@ -193,8 +195,17 @@ function explain(error: unknown, baseUrl: string, route = "POST /v1/codegen"): s
   return error instanceof Error ? error.message : String(error);
 }
 
+/** The two `/v1/validate` payloads `contracts.ts` is rendered from. */
+export interface ValidateArtifacts {
+  pipeIoContracts: PipeIOContracts;
+  inputForm: InputForm;
+}
+
 /**
- * Fetch one method's pipe IO contracts from `POST /v1/validate`.
+ * Fetch one method's pipe IO contracts and wire input-form descriptor from
+ * `POST /v1/validate`, opting into the structured view with
+ * `views: ["input_form"]` — the descriptor is absent from any verdict that did
+ * not ask for it.
  *
  * `validateFiles` rather than the lower-level `validate`: the closure is already
  * `MthdsFileItem[]` (`{content, source}`) and this adapter takes `MthdsFile[]`
@@ -207,16 +218,20 @@ function explain(error: unknown, baseUrl: string, route = "POST /v1/codegen"): s
  * An invalid bundle is a produced verdict on a 200, not a thrown error, so it is
  * pattern-matched rather than caught — and it must never yield a contracts file:
  * contracts projected from a bundle that does not resolve would describe a form
- * for a method that cannot run.
+ * for a method that cannot run. A valid verdict with no `input_form` is refused
+ * the same way: the token is lenient-ignored by an API too old to serve the
+ * view, and writing a contracts file without the descriptor would leave every
+ * form rendering empty — the kernel derives its fields from the descriptor.
  */
-async function fetchContracts(
+async function fetchValidateArtifacts(
   client: PipelexApiClient,
   method: MethodClosure,
   baseUrl: string,
-): Promise<Record<string, unknown> | null> {
+): Promise<ValidateArtifacts | null> {
   try {
     const response = await client.validateFiles(
       method.files.map((file) => ({ content: file.content, uri: file.source })),
+      { views: ["input_form"] },
     );
     if (!response.is_valid) {
       console.error(`\n✗ ${method.name} — the bundle does not validate:`);
@@ -225,7 +240,15 @@ async function fetchContracts(
       }
       return null;
     }
-    return response.pipe_io_contracts;
+    if (!response.input_form) {
+      console.error(
+        `\n✗ ${method.name} — /v1/validate returned no input_form view despite the ` +
+          `views: ["input_form"] opt-in. This base URL serves an API too old for the ` +
+          `wire descriptor — check PIPELEX_BASE_URL (the hosted API serves it), or report upstream.`,
+      );
+      return null;
+    }
+    return { pipeIoContracts: response.pipe_io_contracts, inputForm: response.input_form };
   } catch (error) {
     console.error(`\n✗ ${method.name} — ${explain(error, baseUrl, "POST /v1/validate")}`);
     return null;
@@ -357,8 +380,8 @@ async function runGenerateInner(): Promise<number> {
     // The form's half of the tree, and the last thing that can fail this method:
     // by here every codegen guard has passed, so a failure now leaves the whole
     // tree untouched rather than half-updated.
-    const contracts = await fetchContracts(client, method, baseUrl);
-    if (contracts === null) {
+    const validateArtifacts = await fetchValidateArtifacts(client, method, baseUrl);
+    if (validateArtifacts === null) {
       failed = true;
       continue;
     }
@@ -371,7 +394,10 @@ async function runGenerateInner(): Promise<number> {
     let changed: string[];
     try {
       changed = await writeTree(outDir, report, method.sourceHashes, {
-        [CONTRACTS_FILENAME]: renderContracts(contracts),
+        [CONTRACTS_FILENAME]: renderContracts(
+          validateArtifacts.pipeIoContracts,
+          validateArtifacts.inputForm,
+        ),
       });
     } catch (error) {
       console.error(

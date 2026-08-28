@@ -28,7 +28,10 @@
 import {
   describeValidationError,
   gateRunInputs as kernelGateRunInputs,
+  getPipeInputForm,
   getPipeIOContract,
+  type InputForm,
+  type PipeInputFormDescriptor,
   type PipeIOContract,
   type PipeIOContracts,
   type RunInputsGateResult,
@@ -61,6 +64,31 @@ export function requireContract(
     );
   }
   return contract;
+}
+
+/**
+ * Look one pipe's input-form descriptor up in a generated `INPUT_FORM`, or throw.
+ *
+ * `requireContract`'s twin, for the same reason at the same volume: the kernel's
+ * `getPipeInputForm` returns `undefined` on a miss, and `fieldsForContract`
+ * returns `[]` unless both artifacts are present — so a missed lookup renders as
+ * an empty form with a live Run button. Same argument order too: **the artifact,
+ * then domain, then pipe code**.
+ */
+export function requireInputForm(
+  inputForm: InputForm,
+  domain: string,
+  pipeCode: string,
+): PipeInputFormDescriptor {
+  const descriptor = getPipeInputForm(inputForm, domain, pipeCode);
+  if (!descriptor) {
+    throw new Error(
+      `No input-form descriptor for "${domain}.${pipeCode}" in the generated INPUT_FORM ` +
+        `(found: ${Object.keys(inputForm).join(", ") || "none"}). ` +
+        `Check the domain and pipe code against methods/<name>/main.mthds, then run \`npm run codegen\`.`,
+    );
+  }
+  return descriptor;
 }
 
 export type GateOutcome =

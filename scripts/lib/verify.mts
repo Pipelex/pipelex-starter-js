@@ -162,10 +162,13 @@ async function runVerifyInner(): Promise<number> {
     }
 
     // The contracts artifact rides `/v1/validate`, not `/v1/codegen`, so the
-    // crate fingerprint above says nothing about it. Compare the rendered bytes.
+    // crate fingerprint above says nothing about it. Compare the rendered bytes —
+    // with the same `views` opt-in the writer sends, or the render differs on
+    // every tree by the descriptor's absence alone.
     try {
       const response = await client.validateFiles(
         method.files.map((file) => ({ content: file.content, uri: file.source })),
+        { views: ["input_form"] },
       );
       if (!response.is_valid) {
         console.error(`\n✗ ${method.name} — the bundle no longer validates:`);
@@ -175,7 +178,16 @@ async function runVerifyInner(): Promise<number> {
         failed = true;
         continue;
       }
-      const live = renderContracts(response.pipe_io_contracts);
+      if (!response.input_form) {
+        console.error(
+          `\n✗ ${method.name} — /v1/validate returned no input_form view, so the committed ` +
+            `${CONTRACTS_FILENAME} cannot be verified. This base URL serves an API too old ` +
+            `for the wire descriptor — check PIPELEX_BASE_URL.`,
+        );
+        failed = true;
+        continue;
+      }
+      const live = renderContracts(response.pipe_io_contracts, response.input_form);
       const committed = await readTextFile(path.join(outDir, CONTRACTS_FILENAME));
       if (live !== committed) {
         console.error(

@@ -2,7 +2,7 @@
 
 lock_version = 1
 crate_fingerprint = "9a4af3ab3ff33ee8c8ad83c23cb4702346e1adfae8c64660a6dd64eae80c663a"
-engine_version = "0.52.0"
+engine_version = "0.53.0"
 
 [[artifacts]]
 path = "binder.ts"

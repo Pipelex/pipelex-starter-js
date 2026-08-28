@@ -139,12 +139,41 @@ describe("checkMethod", () => {
 // load-bearing claim here is about the SDK's own orphan rule.
 describe("checkMethod over a tree carrying contracts.ts", () => {
   const FINGERPRINT = "f".repeat(64);
-  const CONTRACTS = renderContracts({
-    "demo.demo": {
-      inputs: { text: { concept_ref: "native.Text", json_schema: {}, optional: false } },
-      output: { concept_ref: "native.Text", multiplicity: "single", optional: false },
+  const CONTRACTS = renderContracts(
+    {
+      "demo.demo": {
+        inputs: {
+          text: {
+            concept_ref: "native.Text",
+            presence: "plain",
+            multiplicity: "single",
+            item_count: null,
+            json_schema: {},
+          },
+        },
+        output: {
+          concept_ref: "native.Text",
+          multiplicity: "single",
+          item_count: null,
+          optional: false,
+        },
+      },
     },
-  });
+    {
+      "demo.demo": {
+        fields: [
+          {
+            kind: "prose",
+            name: "text",
+            concept_ref: "native.Text",
+            required: true,
+            presence: "plain",
+            gating: true,
+          },
+        ],
+      },
+    },
+  );
 
   /** A body plus the stamp the SDK expects over it — the hash is of the body alone. */
   function stamped(body: string): string {

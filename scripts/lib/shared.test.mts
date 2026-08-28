@@ -176,7 +176,20 @@ describe("findOrphanTrees", () => {
 describe("compareSidecar", () => {
   const HASH_A = hashSource("a = 1\n");
   const HASH_B = hashSource("b = 2\n");
-  const CONTRACTS = renderContracts({ "d.p": { inputs: {}, output: {} } });
+  const CONTRACTS = renderContracts(
+    {
+      "d.p": {
+        inputs: {},
+        output: {
+          concept_ref: "native.Text",
+          multiplicity: "single",
+          item_count: null,
+          optional: false,
+        },
+      },
+    },
+    { "d.p": { fields: [] } },
+  );
 
   /**
    * Write a sidecar plus a matching `contracts.ts`, so a test that is about the
@@ -292,19 +305,35 @@ describe("renderContracts", () => {
     // `runCodegenCheck` calls a *stamped* file the lock does not track an orphan,
     // and `writeTree` deletes orphans. An unstamped `.ts` is the supported shape
     // for a consumer-owned file beside the lock — this is what keeps it alive.
-    expect(renderContracts({})).not.toContain("pipelex-codegen-stamp");
+    expect(renderContracts({}, {})).not.toContain("pipelex-codegen-stamp");
   });
 
   it("is deterministic and ends with exactly one newline", () => {
-    const payload = { "d.p": { inputs: { a: 1 }, output: { b: 2 } } };
-    expect(renderContracts(payload)).toBe(renderContracts(payload));
-    expect(renderContracts(payload).endsWith(";\n")).toBe(true);
+    const payload = {
+      "d.p": {
+        inputs: {},
+        output: {
+          concept_ref: "native.Text",
+          multiplicity: "single",
+          item_count: null,
+          optional: false,
+        },
+      },
+    } as const;
+    const form = { "d.p": { fields: [] } };
+    expect(renderContracts(payload, form)).toBe(renderContracts(payload, form));
+    expect(renderContracts(payload, form).endsWith(";\n")).toBe(true);
   });
 
-  it("types the literal against the kernel's mirror, so tsc gates contract drift", () => {
-    const rendered = renderContracts({});
-    expect(rendered).toContain('import type { PipeIOContracts } from "@pipelex/mthds-form";');
+  it("types the literals against the kernel's mirrors, so tsc gates contract drift", () => {
+    const rendered = renderContracts({}, {});
+    expect(rendered).toContain(
+      'import type { InputForm, PipeIOContracts } from "@pipelex/mthds-form";',
+    );
     expect(rendered).toContain("export const PIPE_IO_CONTRACTS: PipeIOContracts =");
+    // `as` rather than `:` on this one — a documented workaround for the
+    // deployed engine's extra `name` on list items; see `renderContracts`.
+    expect(rendered).toContain("as InputForm;");
   });
 });
 

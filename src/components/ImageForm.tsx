@@ -7,10 +7,10 @@ import {
   startGenerateImageRun,
 } from "@/actions/runGenerateImagePipeline";
 import { DEFAULT_EXECUTION_MODE, type ExecutionMode } from "@/config";
-import { PIPE_IO_CONTRACTS } from "@/generated/generate-image/contracts";
+import { INPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/generate-image/contracts";
 import { useRun } from "@/hooks/useRun";
 import { useRunInputs } from "@/hooks/useRunInputs";
-import { requireContract } from "@/lib/runInputs";
+import { requireContract, requireInputForm } from "@/lib/runInputs";
 import { CostReport } from "./CostReport";
 import { ImageResult } from "./ImageResult";
 import { ErrorDisplay } from "./ErrorDisplay";
@@ -19,12 +19,13 @@ import { RunInputsForm } from "./RunInputsForm";
 import { RunStatus } from "./RunStatus";
 
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "generate_image", "generate_image");
+const DESCRIPTOR = requireInputForm(INPUT_FORM, "generate_image", "generate_image");
 
 const SAMPLE_PROMPT =
   "A friendly robot reading a book under a tree, soft watercolor style, warm afternoon light.";
 
 export function ImageForm() {
-  const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, {
+  const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR, {
     image_prompt: SAMPLE_PROMPT,
   });
   const [mode, setMode] = useState<ExecutionMode>(DEFAULT_EXECUTION_MODE);

@@ -93,7 +93,7 @@ Each example runs in one of **two execution modes**, switchable per-example at r
 
 The flow, end to end:
 
-1. A form renders its inputs with `useRunInputs(contract)` + `<RunInputsForm>` — **no form field is written by hand**; every label, control and required-ness comes from the method's own contract, committed by `npm run codegen` (see [Input forms](#input-forms)). It then calls the `useRun({ mode, blocking, start, poll })` hook, which dispatches to the right **Server Actions** by mode.
+1. A form renders its inputs with `useRunInputs(contract, descriptor)` + `<RunInputsForm>` — **no form field is written by hand**; every label, control and required-ness comes from the method's own wire input-form descriptor (co-walking its IO contract), both committed by `npm run codegen` (see [Input forms](#input-forms)). It then calls the `useRun({ mode, blocking, start, poll })` hook, which dispatches to the right **Server Actions** by mode.
 2. The Server Action gates the same contract, applying the kernel's rules in full (a Server Action is a public endpoint; the browser's check is only UX), then reads the `.mthds` bundle from disk and calls the SDK (`execute` for blocking, `start` + `getRunStatus`/`getRunResult` for durable) with the bundle TOML + inputs.
 3. The Pipelex API runs the pipe and returns the main output as `main_stuff` — the same resolved field on both paths.
 4. A `parseXxx(results)` narrower in `src/types/` validates it into a typed shape, using a zod schema generated from the method's own `.mthds` bundle (see [Generated types](#generated-types)).
@@ -101,7 +101,7 @@ The flow, end to end:
 
 ## Input forms
 
-**No form field in this app is written by hand.** Each form is rendered from its method's input contract by the [`@pipelex/mthds-form`](https://www.npmjs.com/package/@pipelex/mthds-form) kernel: `npm run codegen` commits a `contracts.ts` beside the generated types, the form derives its fields from it, and the Run button gates on whatever that method actually requires. Add an input to a `.mthds` bundle, re-run codegen, and it shows up with the right control and the right label — no component edit.
+**No form field in this app is written by hand.** Each form is rendered from its method's wire input-form descriptor by the [`@pipelex/mthds-form`](https://www.npmjs.com/package/@pipelex/mthds-form) kernel: `npm run codegen` commits a `contracts.ts` beside the generated types — the method's IO contracts plus the descriptor, both from one `/v1/validate` call — the form derives its fields from it, and the Run button gates on whatever that method actually requires. Add an input to a `.mthds` bundle, re-run codegen, and it shows up with the right control and the right label — no component edit.
 
 The same kernel supplies the input rules on **both** sides of the Server Action boundary, so there are no hand-written per-input guards left anywhere. The two sides call it differently, on purpose: the browser runs `computeReadiness` to decide whether Run is live, and the server runs `gateRunInputs` (`src/lib/runInputs.ts`), which calls readiness's own two functions over the same derived fields _and_ validates shapes _and_ builds the wire envelope. The server side is deliberately a strict superset — it is the trust boundary, because a Server Action is a public endpoint — and a test runs both sides over one table of inputs to hold them to it.
 
@@ -129,7 +129,7 @@ npm run codegen:check   # prove the committed trees are current — offline, no 
 npm run codegen:verify  # ask the API whether the committed types are still semantically current — needs a key
 ```
 
-`npm run codegen` sends each method to the API's `/v1/codegen` route, which returns a `types.ts` (zod schemas plus their inferred TypeScript types), a `binder.ts` (`parseXxx` / `serializeXxx` over those schemas), and a `codegen.lock`. It also asks `/v1/validate` for the method's input/output contracts and writes a `contracts.ts`, which is what the input forms render from. Every artifact carries a stamp and the lock records their hashes, so `npm run codegen:check` re-derives the whole verdict **offline** — no key, no network — and fails if a generated file was edited, deleted, or left behind. Beside each lock, a `sources.json` records a hash of every source `.mthds`, which catches the other kind of staleness: editing a bundle and forgetting to regenerate. `make check` runs that check, so `make all` does too.
+`npm run codegen` sends each method to the API's `/v1/codegen` route, which returns a `types.ts` (zod schemas plus their inferred TypeScript types), a `binder.ts` (`parseXxx` / `serializeXxx` over those schemas), and a `codegen.lock`. It also asks `/v1/validate` for the method's input/output contracts and its input-form descriptor (`views: ["input_form"]`) and writes a `contracts.ts`, which is what the input forms render from and the run gate validates against. The codegen artifacts carry a stamp and the lock records their hashes; `contracts.ts` is deliberately unstamped, tracked instead by its hash in `sources.json`'s `derived` map. Either way `npm run codegen:check` re-derives the whole verdict **offline** — no key, no network — and fails if a generated file was edited, deleted, or left behind. Beside each lock, that same `sources.json` records a hash of every source `.mthds`, which catches the other kind of staleness: editing a bundle and forgetting to regenerate. `make check` runs that check, so `make all` does too.
 
 A few things worth knowing:
 
@@ -145,7 +145,7 @@ A few things worth knowing:
 1. Add `methods/<name>/main.mthds` (the `/mthds-build` skill from the [mthds-plugins](https://github.com/Pipelex/mthds-plugins) marketplace can generate one).
 2. Run `npm run codegen` — it writes `src/generated/<name>/` with the zod schemas and binders for the concepts that method declares.
 3. Add a loader in `src/lib/loadBundle.ts`, a `parseXxx(results)` adapter over the generated binder in `src/types/`, and the action trio (`run<Name>Blocking`, `start<Name>Run`, `poll<Name>Run`) in `src/actions/`. Each action takes the schema-shaped data dict and starts with `gateRunInputs(CONTRACT, data)`.
-4. Wire it from a component with `useRunInputs(CONTRACT)` + `<RunInputsForm>` for the inputs and `useRun({ mode, blocking, start, poll })` for the run. **You write no form fields** — they come from the contract. The three existing examples are the canonical patterns to copy.
+4. Wire it from a component with `useRunInputs(CONTRACT, DESCRIPTOR)` + `<RunInputsForm>` for the inputs and `useRun({ mode, blocking, start, poll })` for the run. **You write no form fields** — they come from the method's own descriptor. The three existing examples are the canonical patterns to copy.
 
 ## Remove an example
 

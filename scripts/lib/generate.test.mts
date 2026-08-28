@@ -52,7 +52,20 @@ function noDrifts(): void {
 }
 
 const SOURCES = { "methods/demo/main.mthds": "abc123" };
-const CONTRACTS = renderContracts({ "demo.demo": { inputs: {}, output: {} } });
+const CONTRACTS = renderContracts(
+  {
+    "demo.demo": {
+      inputs: {},
+      output: {
+        concept_ref: "native.Text",
+        multiplicity: "single",
+        item_count: null,
+        optional: false,
+      },
+    },
+  },
+  { "demo.demo": { fields: [] } },
+);
 
 let outDir: string;
 
