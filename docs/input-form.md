@@ -6,7 +6,7 @@ This is the reference for how the demo forms are built — why none of them name
 
 The same argument as [codegen](codegen.md), one layer up. A method's `.mthds` bundle already declares what it takes: variable names, concepts, which inputs are required. Before this, each demo form hand-rolled a `<textarea>` or a file picker for those inputs and hand-wrote a guard for each on **both** sides of the Server Action boundary. Every consumer who swapped in their own method inherited the obligation to write a form and to write its validation twice.
 
-Now the form is derived from the method's own input contract. Swap the method, run `npm run codegen`, and the form follows — new inputs appear, renamed inputs relabel, a file input becomes a dropzone, and the Run button gates on whatever that method actually requires.
+Now the form is derived from the method's own **wire input-form descriptor** — the standard's per-pipe, ordered presentation view of a method's inputs, requested from `POST /v1/validate` with `views: ["input_form"]` — with the IO contract co-walked beside it for the two facts the wire deliberately omits (the scalar content-wrapper key, a nested list's bounds). Swap the method, run `npm run codegen`, and the form follows — new inputs appear, renamed inputs relabel, a file input becomes a dropzone, and the Run button gates on whatever that method actually requires.
 
 The kernel doing the deriving is [`@pipelex/mthds-form`](https://www.npmjs.com/package/@pipelex/mthds-form), which ships in two halves and this app uses both:
 
@@ -15,9 +15,9 @@ The kernel doing the deriving is [`@pipelex/mthds-form`](https://www.npmjs.com/p
 
 Import from those two specifiers only. Never reach into `dist/`.
 
-## The contract artifact
+## The contract artifacts
 
-`buildRunFields` consumes the `inputs` map of a pipe's IO contract — the `pipe_io_contracts` payload from `POST /v1/validate`. This app takes it as a **committed codegen artifact** rather than a runtime fetch, so first paint needs no network and no API key: `npm run codegen` writes `src/generated/<method>/contracts.ts` alongside the types and the binder.
+`fieldsForContract(contract, descriptor)` consumes two payloads of one `POST /v1/validate` response: the pipe's IO contract (`pipe_io_contracts`) and its input-form descriptor (`input_form`, an opt-in structured view requested with `views: ["input_form"]`). The descriptor states what each field IS — kind, order, constraints, presence, gating — so the kernel maps it structurally instead of guessing from concept names and schema shapes; the contract is co-walked for the two facts the wire deliberately omits (the scalar wrapper key, a nested list's bounds) and is what the run gate validates against. This app takes both as one **committed codegen artifact** rather than a runtime fetch, so first paint needs no network and no API key: `npm run codegen` writes `src/generated/<method>/contracts.ts` alongside the types and the binder.
 
 ```ts
 export const PIPE_IO_CONTRACTS: PipeIOContracts = {
@@ -34,17 +34,29 @@ export const PIPE_IO_CONTRACTS: PipeIOContracts = {
     output: { concept_ref: "extract_entities.ExtractedEntities", multiplicity: "single", item_count: null, optional: false },
   },
 };
+
+export const INPUT_FORM = {
+  "extract_entities.extract_entities": {
+    fields: [
+      // one descriptor per declared input slot, in authored order
+      { kind: "prose", name: "text", concept_ref: "native.Text", required: true, presence: "plain", gating: true },
+    ],
+  },
+} as InputForm;
 ```
 
-The map is keyed by **namespaced pipe ref** (`<domain>.<pipe_code>`), so entries are looked up rather than indexed:
+(`INPUT_FORM` is emitted with an `as` assertion rather than a `:` annotation, a documented workaround with an expiry: the deployed hosted engine still emits a `name` on a list's `item`, which the standard's closed shape forbids and tsc's excess-property check would reject. Fixed upstream in pipelex 0.54.0 — once the hosted engine carries it, the emitter reverts to an annotation. See `renderContracts` in `scripts/lib/shared.mts`.)
+
+Both maps are keyed by **namespaced pipe ref** (`<domain>.<pipe_code>`), so entries are looked up rather than indexed:
 
 ```ts
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "extract_entities", "extract_entities");
+const DESCRIPTOR = requireInputForm(INPUT_FORM, "extract_entities", "extract_entities");
 ```
 
-`requireContract` (`src/lib/runInputs.ts`) wraps the kernel's `getPipeIOContract` — **contracts, then domain, then pipe code** — and throws when it misses. That wrapper earns its place: the kernel returns `undefined` on a miss, and an undefined contract renders as an empty form with a live Run button, which reads like a styling bug rather than a typo. Both the form and its Server Action call it at module scope, so a bad lookup fails at import.
+`requireContract` (`src/lib/runInputs.ts`) wraps the kernel's `getPipeIOContract` — **contracts, then domain, then pipe code** — and throws when it misses; `requireInputForm` is its twin over `getPipeInputForm`, same argument order. The wrappers earn their place: the kernel returns `undefined` on a miss, and `fieldsForContract` returns `[]` unless both artifacts are present — so a missed lookup renders as an empty form with a live Run button, which reads like a styling bug rather than a typo. Both the form and its Server Action call `requireContract` at module scope (the form additionally `requireInputForm`), so a bad lookup fails at import.
 
-Drift is covered the same way the rest of the tree is: `contracts.ts` carries no codegen stamp (it is not the codegen server's output), so its SHA-256 rides in the `sources.json` sidecar's `derived` map, and `npm run codegen:verify` re-fetches `/v1/validate` and compares the rendered bytes. See [`docs/codegen.md`](codegen.md).
+Drift is covered the same way the rest of the tree is: `contracts.ts` carries no codegen stamp (it is not the codegen server's output), so its SHA-256 rides in the `sources.json` sidecar's `derived` map, and `npm run codegen:verify` re-fetches `/v1/validate` — with the same `views` opt-in — and compares the rendered bytes. See [`docs/codegen.md`](codegen.md).
 
 ## The three pieces in the app
 
@@ -52,12 +64,12 @@ Drift is covered the same way the rest of the tree is: `contracts.ts` carries no
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `src/hooks/useRunInputs.ts`        | Form values, the derived `fields`, readiness, and the wire shape. The companion to `useRun`: this one owns what goes **in**, `useRun` owns the run and what comes **out**.           |
 | `src/components/RunInputsForm.tsx` | The kernel composition, purely presentational — `FieldRenderer` per field, empty optionals folded behind `OptionalToggle`, all under `FieldPresentationProvider presentation="app"`. |
-| `src/lib/runInputs.ts`             | `requireContract` and `gateRunInputs` — the server-side gate, and the mapping from an invalid verdict to a `PipelineError`.                                                          |
+| `src/lib/runInputs.ts`             | `requireContract`, `requireInputForm` and `gateRunInputs` — the server-side gate, and the mapping from an invalid verdict to a `PipelineError`.                                      |
 
 A form is then two lines of wiring plus its own chrome:
 
 ```tsx
-const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, { text: SAMPLE_TEXT });
+const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR, { text: SAMPLE_TEXT });
 // …
 <RunInputsForm fields={fields} values={values} onValuesChange={setValues} disabled={running} />
 <button type="submit" disabled={running || !ready}>Extract entities</button>
@@ -70,7 +82,7 @@ const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, { te
 The kernel's headless core is server-safe on purpose, and that is the whole design:
 
 - **In the browser, for UX.** `computeReadiness(fields, values)` decides whether the Run button is live. Nothing more — the browser's checks are trivially bypassed and are not a gate.
-- **On the server, for trust.** A Server Action is a public endpoint. It runs the kernel's **`gateRunInputs(contract, data)`** against the same committed contract the browser rendered from: one call that combines the per-input schemas, repairs the data, validates it with ajv, re-applies the readiness rules with `computeReadiness`'s own functions over the same derived fields, and builds the `{concept, content}` payload the run expects. `src/lib/runInputs.ts` is a thin shim over it — all that remains here is rendering the kernel's refusal (`missingInputs`, raw ajv `errors`) as the `bad_request` `PipelineError` this template's `<ErrorDisplay>` shows.
+- **On the server, for trust.** A Server Action is a public endpoint. It runs the kernel's **`gateRunInputs(contract, data)`** against the same committed contract the browser co-rendered from: one call that combines the per-input schemas, repairs the data, validates it with ajv, re-applies the readiness rules over the contract's own schema, and builds the `{concept, content}` payload the run expects. The gate deliberately takes the **contract alone**, never the descriptor — a machine consumer must never need the presentation artifact to validate a payload — so its emptiness re-check walks the contract's `json_schema` for itself, and the kernel's gate-agreement suite proves that walk and the descriptor-mapped readiness answer together. `src/lib/runInputs.ts` is a thin shim over it — all that remains here is rendering the kernel's refusal (`missingInputs`, raw ajv `errors`) as the `bad_request` `PipelineError` this template's `<ErrorDisplay>` shows.
 
 Because both sides get their rules from the same kernel, the hand-written guards on both sides are **deleted**, not kept as belt-and-braces. Two rules that can disagree is the failure mode this removes. An earlier version of this repo assembled the gate from the kernel's four exported steps itself; the kernel now owns that assembly precisely because the emptiness step is where assemblies go wrong — there are four look-alike predicates and only two of them are the ones the Run button reads (the near-miss pair, `inputMustBeFilled` + `isFilled`, agrees on every native concept and diverges on a structured one in both directions). The kernel's `docs/run-gate.md` tells that story in full.
 

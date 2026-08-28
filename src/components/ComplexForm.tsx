@@ -7,10 +7,10 @@ import {
   startComplexFormRun,
 } from "@/actions/runComplexFormPipeline";
 import { DEFAULT_EXECUTION_MODE, type ExecutionMode } from "@/config";
-import { PIPE_IO_CONTRACTS } from "@/generated/complex-form/contracts";
+import { INPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/complex-form/contracts";
 import { useRun } from "@/hooks/useRun";
 import { useRunInputs } from "@/hooks/useRunInputs";
-import { requireContract } from "@/lib/runInputs";
+import { requireContract, requireInputForm } from "@/lib/runInputs";
 import { ComplexFormResult } from "./ComplexFormResult";
 import { CostReport } from "./CostReport";
 import { ErrorDisplay } from "./ErrorDisplay";
@@ -19,6 +19,7 @@ import { RunInputsForm } from "./RunInputsForm";
 import { RunStatus } from "./RunStatus";
 
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "complex_form", "extract_brief");
+const DESCRIPTOR = requireInputForm(INPUT_FORM, "complex_form", "extract_brief");
 
 const SAMPLE_TEXT =
   "Apple announced new products in Cupertino on March 5th, 2026, with Tim Cook presenting alongside Jony Ive.";
@@ -35,7 +36,7 @@ const SAMPLE_TEXT =
  * contract `npm run codegen` committed beside the bundle.
  */
 export function ComplexForm() {
-  const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, {
+  const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR, {
     text: SAMPLE_TEXT,
   });
   const [mode, setMode] = useState<ExecutionMode>(DEFAULT_EXECUTION_MODE);

@@ -7,10 +7,10 @@ import {
   startExtractEntitiesRun,
 } from "@/actions/runExtractEntitiesPipeline";
 import { DEFAULT_EXECUTION_MODE, type ExecutionMode } from "@/config";
-import { PIPE_IO_CONTRACTS } from "@/generated/extract-entities/contracts";
+import { INPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/extract-entities/contracts";
 import { useRun } from "@/hooks/useRun";
 import { useRunInputs } from "@/hooks/useRunInputs";
-import { requireContract } from "@/lib/runInputs";
+import { requireContract, requireInputForm } from "@/lib/runInputs";
 import { CostReport } from "./CostReport";
 import { EntityResult } from "./EntityResult";
 import { ErrorDisplay } from "./ErrorDisplay";
@@ -18,15 +18,16 @@ import { ModeToggle } from "./ModeToggle";
 import { RunInputsForm } from "./RunInputsForm";
 import { RunStatus } from "./RunStatus";
 
-// The form is derived from the method's own contract, committed by `npm run
-// codegen` beside the generated output types.
+// The form is derived from the method's own wire descriptor and contract,
+// committed by `npm run codegen` beside the generated output types.
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "extract_entities", "extract_entities");
+const DESCRIPTOR = requireInputForm(INPUT_FORM, "extract_entities", "extract_entities");
 
 const SAMPLE_TEXT =
   "Apple announced new products in Cupertino on March 5th, 2026, with Tim Cook presenting alongside Jony Ive.";
 
 export function EntityForm() {
-  const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, {
+  const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR, {
     text: SAMPLE_TEXT,
   });
   const [mode, setMode] = useState<ExecutionMode>(DEFAULT_EXECUTION_MODE);

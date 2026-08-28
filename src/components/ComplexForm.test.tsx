@@ -144,7 +144,12 @@ describe("ComplexForm", () => {
     fireEvent.click(screen.getByRole("button", { name: /optional field/i }));
     fireEvent.click(screen.getByRole("radio", { name: "legal" }));
     fireEvent.click(screen.getByRole("button", { name: /add item/i }));
-    fireEvent.change(document.querySelector("#must_include\\.0")!, {
+    // The kernel derives each control's DOM id from its field path behind a
+    // `useId` prefix (so two forms on one page cannot collide), which makes the
+    // id unpredictable from here — reach the new row by role instead. It is the
+    // last textbox because `must_include` is the descriptor's last field.
+    const textboxes = screen.getAllByRole("textbox");
+    fireEvent.change(textboxes[textboxes.length - 1]!, {
       target: { value: "Cupertino" },
     });
     submitForm();

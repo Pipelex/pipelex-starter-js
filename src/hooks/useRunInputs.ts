@@ -5,6 +5,7 @@ import {
   computeReadiness,
   fieldsForContract,
   rjsfDataFromRunValues,
+  type PipeInputFormDescriptor,
   type PipeIOContract,
   type RunField,
 } from "@pipelex/mthds-form";
@@ -21,20 +22,24 @@ export interface RunInputsState {
 }
 
 /**
- * Form-value state derived from a method's IO contract.
+ * Form-value state derived from a method's wire input-form descriptor and its
+ * IO contract — both committed by `npm run codegen`.
  *
  * Every field, its control, its label and its readiness rule come from the
- * contract `npm run codegen` committed — swap the method, re-run codegen, and
- * the form follows. Nothing here knows what `extract_entities` is.
+ * descriptor (the contract is co-walked for the scalar wrapper key and nested
+ * list bounds, the two facts the wire deliberately omits) — swap the method,
+ * re-run codegen, and the form follows. Nothing here knows what
+ * `extract_entities` is.
  *
  * The companion to `useRun`: this hook owns what goes *in*, `useRun` owns the
  * run itself and what comes *out*.
  */
 export function useRunInputs(
   contract: PipeIOContract,
+  descriptor: PipeInputFormDescriptor,
   initialValues?: Record<string, unknown>,
 ): RunInputsState {
-  const fields = useMemo(() => fieldsForContract(contract), [contract]);
+  const fields = useMemo(() => fieldsForContract(contract, descriptor), [contract, descriptor]);
   const [values, setValues] = useState<Record<string, unknown>>(() => initialValues ?? {});
 
   // Optional and variable-plural inputs never gate, and a whitespace-only

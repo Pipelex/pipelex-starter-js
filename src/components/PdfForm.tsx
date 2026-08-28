@@ -15,10 +15,10 @@ import {
 } from "@/lib/fileEncoding";
 import { classifyTransportError, type PipelineError } from "@/lib/errors";
 import { DEFAULT_EXECUTION_MODE, type ExecutionMode } from "@/config";
-import { PIPE_IO_CONTRACTS } from "@/generated/summarize-pdf/contracts";
+import { INPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/summarize-pdf/contracts";
 import { useRun } from "@/hooks/useRun";
 import { useRunInputs } from "@/hooks/useRunInputs";
-import { requireContract } from "@/lib/runInputs";
+import { requireContract, requireInputForm } from "@/lib/runInputs";
 import { CostReport } from "./CostReport";
 import { PdfSummaryResult } from "./PdfSummaryResult";
 import { ErrorDisplay } from "./ErrorDisplay";
@@ -27,6 +27,7 @@ import { RunInputsForm } from "./RunInputsForm";
 import { RunStatus } from "./RunStatus";
 
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "summarize_pdf", "summarize_pdf");
+const DESCRIPTOR = requireInputForm(INPUT_FORM, "summarize_pdf", "summarize_pdf");
 
 const SAMPLE_PDF_PATH = "/sample-invoice.pdf";
 /** The input the sample PDF fills. Like a seeded sample text, a demo shortcut
@@ -66,7 +67,7 @@ function withPdfMime(file: File): File {
 }
 
 export function PdfForm() {
-  const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT);
+  const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR);
   const [mode, setMode] = useState<ExecutionMode>(DEFAULT_EXECUTION_MODE);
   // File-selection errors (too large, FileReader failure) live separately from
   // the run state: they happen *before* a run, so there is no useRun error to

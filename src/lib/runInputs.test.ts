@@ -3,12 +3,19 @@ import {
   computeReadiness,
   fieldsForContract,
   rjsfDataFromRunValues,
+  type InputForm,
   type PipeIOContracts,
 } from "@pipelex/mthds-form";
-import { gateRunInputs, requireContract } from "./runInputs";
-import { PIPE_IO_CONTRACTS } from "@/generated/extract-entities/contracts";
-import { PIPE_IO_CONTRACTS as PDF_CONTRACTS } from "@/generated/summarize-pdf/contracts";
-import { PIPE_IO_CONTRACTS as COMPLEX_CONTRACTS } from "@/generated/complex-form/contracts";
+import { gateRunInputs, requireContract, requireInputForm } from "./runInputs";
+import { INPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/extract-entities/contracts";
+import {
+  INPUT_FORM as PDF_INPUT_FORM,
+  PIPE_IO_CONTRACTS as PDF_CONTRACTS,
+} from "@/generated/summarize-pdf/contracts";
+import {
+  INPUT_FORM as COMPLEX_INPUT_FORM,
+  PIPE_IO_CONTRACTS as COMPLEX_CONTRACTS,
+} from "@/generated/complex-form/contracts";
 
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "extract_entities", "extract_entities");
 /** A file-shaped input, to cover the `{url}` envelope alongside `{text}`. */
@@ -26,6 +33,24 @@ describe("requireContract", () => {
       /extract_entities\.nope/,
     );
     expect(() => requireContract(PIPE_IO_CONTRACTS, "extract_entities", "nope")).toThrow(
+      /extract_entities\.extract_entities/,
+    );
+  });
+});
+
+describe("requireInputForm", () => {
+  it("looks a pipe's descriptor up by domain and pipe code", () => {
+    const descriptor = requireInputForm(INPUT_FORM, "extract_entities", "extract_entities");
+    expect(descriptor.fields.map((field) => field.name)).toEqual(["text"]);
+  });
+
+  it("throws naming the available keys when the lookup misses", () => {
+    // Same failure mode as a missed contract, and worse: `fieldsForContract`
+    // returns `[]` without the descriptor, so the miss IS the empty form.
+    expect(() => requireInputForm(INPUT_FORM, "extract_entities", "nope")).toThrow(
+      /extract_entities\.nope/,
+    );
+    expect(() => requireInputForm(INPUT_FORM, "extract_entities", "nope")).toThrow(
       /extract_entities\.extract_entities/,
     );
   });
@@ -208,6 +233,26 @@ describe("the gate agrees with the Run button", () => {
     },
   };
 
+  /** The wire descriptor `person` would ride beside — hand-built to the spec. */
+  const personForm: InputForm = {
+    "d.p": {
+      fields: [
+        {
+          kind: "object",
+          name: "person",
+          concept_ref: "d.Person",
+          required: true,
+          presence: "plain",
+          gating: true,
+          fields: [
+            { kind: "text", name: "first_name", required: true },
+            { kind: "text", name: "last_name", required: true },
+          ],
+        },
+      ],
+    },
+  };
+
   const allOptional: PipeIOContracts = {
     "d.p": {
       inputs: {
@@ -232,6 +277,30 @@ describe("the gate agrees with the Run button", () => {
         item_count: null,
         optional: false,
       },
+    },
+  };
+
+  /**
+   * `allOptional`'s descriptor. A required struct gates even when every child
+   * is optional — the wire states `gating: true` and the kernel's readiness
+   * asks the value bridge whether anything inside was touched.
+   */
+  const allOptionalForm: InputForm = {
+    "d.p": {
+      fields: [
+        {
+          kind: "object",
+          name: "opts",
+          concept_ref: "d.Options",
+          required: true,
+          presence: "plain",
+          gating: true,
+          fields: [
+            { kind: "text", name: "tone", required: false },
+            { kind: "text", name: "style", required: false },
+          ],
+        },
+      ],
     },
   };
 
@@ -271,9 +340,31 @@ describe("the gate agrees with the Run button", () => {
     },
   };
 
+  /**
+   * `plural`'s descriptor. The required arm's one underivable fact, stated on
+   * the wire: a variable list is required yet `[]` satisfies it, so
+   * `gating: false`. The `item` carries no `name` — the index labels items.
+   */
+  const pluralForm: InputForm = {
+    "d.p": {
+      fields: [
+        {
+          kind: "list",
+          name: "pages",
+          concept_ref: "native.Text",
+          required: true,
+          presence: "plain",
+          gating: false,
+          item: { kind: "prose", concept_ref: "native.Text", required: true },
+        },
+      ],
+    },
+  };
+
   const cases: Array<{
     label: string;
     contracts: PipeIOContracts;
+    inputForm: InputForm;
     domain: string;
     pipe: string;
     /** Form values as the browser holds them, not the wire shape. */
@@ -282,6 +373,7 @@ describe("the gate agrees with the Run button", () => {
     {
       label: "text untouched",
       contracts: PIPE_IO_CONTRACTS,
+      inputForm: INPUT_FORM,
       domain: "extract_entities",
       pipe: "extract_entities",
       values: {},
@@ -289,6 +381,7 @@ describe("the gate agrees with the Run button", () => {
     {
       label: "text filled",
       contracts: PIPE_IO_CONTRACTS,
+      inputForm: INPUT_FORM,
       domain: "extract_entities",
       pipe: "extract_entities",
       values: { text: "Ada met Charles" },
@@ -296,6 +389,7 @@ describe("the gate agrees with the Run button", () => {
     {
       label: "document untouched",
       contracts: PDF_CONTRACTS,
+      inputForm: PDF_INPUT_FORM,
       domain: "summarize_pdf",
       pipe: "summarize_pdf",
       values: {},
@@ -303,17 +397,26 @@ describe("the gate agrees with the Run button", () => {
     {
       label: "document pasted as a URL",
       contracts: PDF_CONTRACTS,
+      inputForm: PDF_INPUT_FORM,
       domain: "summarize_pdf",
       pipe: "summarize_pdf",
       values: { document: { url: "https://example.com/a.pdf" } },
     },
-    { label: "struct untouched", contracts: person, domain: "d", pipe: "p", values: {} },
+    {
+      label: "struct untouched",
+      contracts: person,
+      inputForm: personForm,
+      domain: "d",
+      pipe: "p",
+      values: {},
+    },
     // A required struct whose children are all optional gates until *touched* —
     // and reads filled the moment anything inside it is. Both directions used
     // to disagree between the two sides; see the named-missing test below.
     {
       label: "all-optional struct untouched",
       contracts: allOptional,
+      inputForm: allOptionalForm,
       domain: "d",
       pipe: "p",
       values: {},
@@ -321,6 +424,7 @@ describe("the gate agrees with the Run button", () => {
     {
       label: "all-optional struct touched",
       contracts: allOptional,
+      inputForm: allOptionalForm,
       domain: "d",
       pipe: "p",
       values: { opts: { tone: "formal" } },
@@ -330,6 +434,7 @@ describe("the gate agrees with the Run button", () => {
     {
       label: "struct half-filled",
       contracts: person,
+      inputForm: personForm,
       domain: "d",
       pipe: "p",
       values: { person: { first_name: "Ada", last_name: "" } },
@@ -337,11 +442,19 @@ describe("the gate agrees with the Run button", () => {
     {
       label: "struct filled",
       contracts: person,
+      inputForm: personForm,
       domain: "d",
       pipe: "p",
       values: { person: { first_name: "Ada", last_name: "Lovelace" } },
     },
-    { label: "plural input untouched", contracts: plural, domain: "d", pipe: "p", values: {} },
+    {
+      label: "plural input untouched",
+      contracts: plural,
+      inputForm: pluralForm,
+      domain: "d",
+      pipe: "p",
+      values: {},
+    },
     {
       // A bare string array, which is what a `kind: "list"` over a text item
       // holds. The item-shaped `[{text: "first page"}]` looks right and is not:
@@ -349,6 +462,7 @@ describe("the gate agrees with the Run button", () => {
       // untouched row above, and the filled-plural envelope goes untested.
       label: "plural input with one entry",
       contracts: plural,
+      inputForm: pluralForm,
       domain: "d",
       pipe: "p",
       values: { pages: ["first page"] },
@@ -360,6 +474,7 @@ describe("the gate agrees with the Run button", () => {
     {
       label: "complex-form untouched",
       contracts: COMPLEX_CONTRACTS,
+      inputForm: COMPLEX_INPUT_FORM,
       domain: "complex_form",
       pipe: "extract_brief",
       values: { text: "Ada met Charles" },
@@ -367,6 +482,7 @@ describe("the gate agrees with the Run button", () => {
     {
       label: "complex-form with the optional struct's enum picked",
       contracts: COMPLEX_CONTRACTS,
+      inputForm: COMPLEX_INPUT_FORM,
       domain: "complex_form",
       pipe: "extract_brief",
       values: { text: "Ada met Charles", focus: { audience: "legal" } },
@@ -374,6 +490,7 @@ describe("the gate agrees with the Run button", () => {
     {
       label: "complex-form with only the optional struct's free-text child",
       contracts: COMPLEX_CONTRACTS,
+      inputForm: COMPLEX_INPUT_FORM,
       domain: "complex_form",
       pipe: "extract_brief",
       values: { text: "Ada met Charles", focus: { notes: "formal names" } },
@@ -381,6 +498,7 @@ describe("the gate agrees with the Run button", () => {
     {
       label: "complex-form fully filled",
       contracts: COMPLEX_CONTRACTS,
+      inputForm: COMPLEX_INPUT_FORM,
       domain: "complex_form",
       pipe: "extract_brief",
       values: {
@@ -391,9 +509,9 @@ describe("the gate agrees with the Run button", () => {
     },
   ];
 
-  it.each(cases)("$label", ({ contracts, domain, pipe, values }) => {
+  it.each(cases)("$label", ({ contracts, inputForm, domain, pipe, values }) => {
     const contract = requireContract(contracts, domain, pipe);
-    const fields = fieldsForContract(contract);
+    const fields = fieldsForContract(contract, requireInputForm(inputForm, domain, pipe));
     const runButtonLive = computeReadiness(fields, values).missing.length === 0;
 
     // Exactly what the form sends: the hook's `toData()`.
@@ -410,7 +528,7 @@ describe("the gate agrees with the Run button", () => {
   // `must have required property 'opts'`).
   it("names a required struct input with no required children, on both sides", () => {
     const contract = requireContract(allOptional, "d", "p");
-    const fields = fieldsForContract(contract);
+    const fields = fieldsForContract(contract, requireInputForm(allOptionalForm, "d", "p"));
 
     expect(computeReadiness(fields, {}).missing).toEqual(["opts"]);
 
@@ -424,7 +542,7 @@ describe("the gate agrees with the Run button", () => {
     // both sides say "ready" for an empty list too, so the row above passes
     // either way. Assert the payload the plural case is there to exercise.
     const contract = requireContract(plural, "d", "p");
-    const fields = fieldsForContract(contract);
+    const fields = fieldsForContract(contract, requireInputForm(pluralForm, "d", "p"));
     const gate = gateRunInputs(contract, rjsfDataFromRunValues({ pages: ["first"] }, fields));
     expect(gate).toEqual({
       ok: true,
