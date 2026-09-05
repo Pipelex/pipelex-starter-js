@@ -48,7 +48,7 @@ export function CostReport({ usage }: CostReportProps) {
         <p className="font-medium text-slate-700">Usage reporting is unavailable for this run.</p>
         <details className="text-xs text-slate-500">
           <summary className="cursor-pointer select-none font-medium">Technical details</summary>
-          <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-white p-2 font-mono">
+          <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-sm bg-white p-2 font-mono">
             {usage.assemblyError}
           </pre>
         </details>

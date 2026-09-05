@@ -49,7 +49,7 @@ Extract the entries between `## [v{CURRENT}]` (exclusive) and `## [v{TARGET_VERS
 - **The gate and readiness** — `src/lib/runInputs.ts` (`getPipeIOContract`, `fieldsForContract`, `buildRunInputsSchema`, `prepareRunInputs`, `validateRunInputs`, `mustBeFilled`, `fieldFilled`, `describeValidationError`) and `src/hooks/useRunInputs.ts` (`computeReadiness`, `rjsfDataFromRunValues`). A semantics change here is what the browser/server invariant test (`src/lib/runInputs.test.ts`) exists to catch.
 - **The wire format** — anything the changelog marks "visible on the wire" changes what the Server Action sends to the API. Unit tests mock the SDK, so only e2e sees this (Step 6).
 - **The React controls** — `src/components/RunInputsForm.tsx` (`FieldRenderer` and friends from `@pipelex/mthds-form/react`, `isFilled`, `RunField`) and the `setValueAtPath` file seam in `PdfForm.tsx`. Rendering changes can also break test selectors: labels come from `humanizeFieldName`, and this repo's tests query by role plus name.
-- **Theming and Tailwind** — `src/app/layout.tsx` imports `@pipelex/mthds-form/theme.css`, and `tailwind.config.ts` keeps a **mirror of the kernel's own `tailwind.config.cjs` token block** (the shadcn semantic colors and radii) plus the `./node_modules/@pipelex/mthds-form/dist/**/*.js` content glob. A release that adds tokens or moves the CSS entry points needs that mirror re-synced by hand — nothing automated catches it.
+- **Theming and Tailwind** — `src/app/layout.tsx` imports `@pipelex/mthds-form/theme.css`, and `src/app/globals.css` (Tailwind v4 is configured in CSS; there is no `tailwind.config.ts`) keeps a **mirror of the kernel's own `src/styles/tailwind-entry.css` token block** as an `@theme inline` mapping (the shadcn semantic colors and radii) plus `@source "../../node_modules/@pipelex/mthds-form/dist"`. A release that adds tokens, changes the form a token value takes, or moves the CSS entry points needs that mirror re-synced by hand — nothing automated catches it. A release that moves the kernel's own Tailwind major is the loudest case: 0.8.0 did, and a host on the previous major compiles the renamed utilities to nothing rather than failing.
 - **The generated contracts type** — every `src/generated/*/contracts.ts` imports `type PipeIOContracts` from the kernel. Those files are generated and **never hand-edited** (see "Generated types" in this repo's `CLAUDE.md`): if a release renames or reshapes that type, the fix routes through the emitter upstream and `npm run codegen`, not through an edit to `src/generated/`.
 
 Everything else (internal refactors, non-breaking additions, docs) is FYI only — mention briefly, don't dwell.
@@ -68,7 +68,7 @@ Not every impactful change is a mechanical rename — most of this kernel's chan
 ## Step 5 — Apply the Version Bump
 
 1. Edit the `"@pipelex/mthds-form"` line in `package.json` to `"^{TARGET_VERSION}"` — keep the existing caret-pin style, don't switch to an exact pin.
-2. Run `npm install` (not `--package-lock-only` — this needs the actual new package contents in `node_modules`: the Tailwind content glob and the CSS imports read the installed `dist/`, not the manifest).
+2. Run `npm install` (not `--package-lock-only` — this needs the actual new package contents in `node_modules`: the `@source` directive and the CSS imports read the installed `dist/`, not the manifest).
 3. Confirm it landed: `node -p "require('./node_modules/@pipelex/mthds-form/package.json').version"` should now read `TARGET_VERSION`.
 
 ## Step 6 — Run Checks
@@ -81,7 +81,7 @@ Run `make all` (lint + format-check + typecheck + unit tests + build, per this r
 Then, conditionally:
 
 - **If any changelog entry is wire-visible or touches the gate**, offer `make test-e2e`. The wire shape a run submits only travels form → Server Action → live API on the e2e path; unit tests mock the SDK and can pass while the API rejects the new shape. It costs an LLM call per run and needs `PIPELEX_API_KEY`, so only run it with explicit user approval.
-- **If any changelog entry touches the controls, `styles.css`/`theme.css`, or Tailwind classes**, run the deterministic purge check from `docs/input-form.md` (diff the built stylesheet with and without the kernel's content glob — the with-glob build must be strictly larger), and offer `make dev` for a visual pass over the four example forms. A styling regression here is silent: the form still renders, just subtly unstyled.
+- **If any changelog entry touches the controls, `styles.css`/`theme.css`, or Tailwind classes**, run the deterministic purge check from `docs/input-form.md` (diff the built stylesheet with and without the kernel's `@source` directive — the with-`@source` build must be strictly larger), and offer `make dev` for a visual pass over the four example forms. A styling regression here is silent: the form still renders, just subtly unstyled.
 - **If any changelog entry renames or reshapes `PipeIOContracts`** (or anything else `contracts.ts` carries), run `npm run codegen` (needs `PIPELEX_API_KEY`) and commit the regenerated trees with the bump — never patch `src/generated/` by hand.
 
 ## Step 7 — Update This Repo's CHANGELOG.md

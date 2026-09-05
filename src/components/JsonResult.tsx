@@ -92,7 +92,7 @@ export function JsonResult({ value, label = "Run output" }: JsonResultProps) {
         </div>
       )}
       {/* Wide output scrolls inside its own box rather than stretching the page. */}
-      <pre className="overflow-x-auto rounded bg-slate-50 p-4 text-xs leading-relaxed text-slate-800">
+      <pre className="overflow-x-auto rounded-sm bg-slate-50 p-4 text-xs leading-relaxed text-slate-800">
         {JSON.stringify(value, null, 2)}
       </pre>
     </section>

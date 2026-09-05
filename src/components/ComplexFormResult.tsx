@@ -34,7 +34,7 @@ function BriefList({ label, items }: BriefListProps) {
       ) : (
         <ul className="space-y-1 text-sm text-slate-800">
           {items.map((item) => (
-            <li key={item} className="rounded bg-slate-100 px-2 py-1">
+            <li key={item} className="rounded-sm bg-slate-100 px-2 py-1">
               {item}
             </li>
           ))}

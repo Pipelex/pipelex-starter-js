@@ -32,7 +32,7 @@ export function ErrorDisplay({ error }: ErrorDisplayProps) {
           <p className="font-medium text-slate-800">{error.hint.summary}</p>
           {error.hint.code && (
             <pre
-              className="mt-2 overflow-x-auto rounded bg-slate-900 p-3 text-xs leading-relaxed text-slate-100"
+              className="mt-2 overflow-x-auto rounded-sm bg-slate-900 p-3 text-xs leading-relaxed text-slate-100"
               data-language={error.hint.codeLanguage}
             >
               <code>{error.hint.code}</code>
@@ -53,7 +53,7 @@ export function ErrorDisplay({ error }: ErrorDisplayProps) {
 
       <details className="text-xs text-red-700">
         <summary className="cursor-pointer select-none font-medium">Technical details</summary>
-        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-white p-2 font-mono">
+        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-sm bg-white p-2 font-mono">
           {error.details}
         </pre>
       </details>

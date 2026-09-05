@@ -25,7 +25,7 @@ export function PdfSummaryResult({ summary }: PdfSummaryResultProps) {
         ) : (
           <ul className="space-y-1 text-sm text-slate-800">
             {summary.key_points.map((point) => (
-              <li key={point} className="rounded bg-slate-100 px-2 py-1">
+              <li key={point} className="rounded-sm bg-slate-100 px-2 py-1">
                 {point}
               </li>
             ))}
