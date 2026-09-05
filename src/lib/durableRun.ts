@@ -2,12 +2,15 @@ import { getPipelexClient } from "@/lib/pipelexClient";
 import { classifyPipelineError, type PipelineError, type PipelineErrorKind } from "@/lib/errors";
 import { readClassifyEnv } from "@/lib/serverEnv";
 import { buildUsageReport, type UsageReport } from "@/lib/usageReport";
+// `PipelexStartOptions` rather than the pure protocol `StartOptions`: it adds
+// the run extensions (`method_ref`, `method_id`) a scaffolded action sends in
+// place of an inline bundle. See the note in `blockingRun.ts`.
 import {
   RunFailedError,
   isTerminalRunStatus,
+  type PipelexStartOptions,
   type RunResults,
   type RunStatus,
-  type StartOptions,
 } from "@pipelex/sdk";
 
 export type StartOutcome = { ok: true; runId: string } | { ok: false; error: PipelineError };
@@ -46,7 +49,7 @@ function isTransientPollError(kind: PipelineErrorKind): boolean {
  * the user to check PIPELEX_BASE_URL.
  */
 export async function startDurableRun(
-  buildOptions: () => Promise<StartOptions>,
+  buildOptions: () => Promise<PipelexStartOptions>,
 ): Promise<StartOutcome> {
   try {
     const options = await buildOptions();

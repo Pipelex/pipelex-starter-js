@@ -217,6 +217,16 @@ function explain(
 export interface ValidateArtifacts {
   pipeIoContracts: PipeIOContracts;
   inputForm: InputForm;
+  /**
+   * The report's own entry pipe, carried through for the scaffold's pipe rule
+   * (`make add-method`) and written into no artifact.
+   *
+   * It is read in preference to `bundle_blueprint.main_pipe` because it is
+   * typed and because it is the field a published package's manifest fills:
+   * `github.com/Pipelex/methods/documents` has no bundle-level `main_pipe` and
+   * still names an entry pipe here.
+   */
+  defaultPipeRef: string | null;
 }
 
 /**
@@ -271,7 +281,11 @@ export async function fetchValidateArtifacts(
       );
       return null;
     }
-    return { pipeIoContracts: response.pipe_io_contracts, inputForm: response.input_form };
+    return {
+      pipeIoContracts: response.pipe_io_contracts,
+      inputForm: response.input_form,
+      defaultPipeRef: response.default_pipe_ref ?? null,
+    };
   } catch (error) {
     console.error(`\n✗ ${source.name} — ${explain(error, baseUrl, "POST /v1/validate", source)}`);
     return null;

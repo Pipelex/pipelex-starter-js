@@ -1,4 +1,4 @@
-.PHONY: help run dev build start lint format format-check typecheck codegen codegen-check codegen-verify test test-watch test-e2e test-e2e-ui confirm-live-e2e agent-test check clean install lock all use-local use-npm ul un
+.PHONY: help run dev build start lint format format-check typecheck codegen codegen-check codegen-verify add-method test test-watch test-e2e test-e2e-ui confirm-live-e2e agent-test check clean install lock all use-local use-npm ul un
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -45,6 +45,17 @@ codegen-check: ## Verify src/generated/ is current, offline (no API key needed)
 # of `make all` — run it before a release, or after touching methods/.
 codegen-verify: ## Ask the engine whether the committed crates are still current (needs PIPELEX_API_KEY)
 	npm run codegen:verify
+
+# Scaffolds a method that lives on the platform (a catalog id) or in a published
+# package (an address) into the app: the manifest, the generated tree, the action
+# trio, the narrower, the form and a tab. One-shot — it never overwrites, and
+# `npm run codegen` is the refresh. Keyed and online, so it stays out of `make all`.
+add-method: ## Scaffold a method into the app from METHOD=<mt_… | github.com/owner/repo[/pkg][@tag]> (needs PIPELEX_API_KEY)
+	@if [ -z "$(METHOD)" ]; then \
+		echo "usage: make add-method METHOD=<mt_… | github.com/owner/repo[/pkg][@tag]> [PIPE=<pipe_code>] [NAME=<dir-name>] [LABEL=<tab label>] [DRY_RUN=1]"; \
+		exit 2; \
+	fi
+	npm run add-method -- $(METHOD) $(if $(PIPE),--pipe $(PIPE)) $(if $(NAME),--name $(NAME)) $(if $(LABEL),--label "$(LABEL)") $(if $(DRY_RUN),--dry-run)
 
 test: ## Run tests (single pass)
 	npm run test
