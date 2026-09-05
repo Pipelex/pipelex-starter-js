@@ -2,7 +2,7 @@
 
 lock_version = 1
 crate_fingerprint = "3e1c36f8a330084c2bf982f30e88cf62585eb5e14d8d70a5776a10230ed016b8"
-engine_version = "0.53.0"
+engine_version = "0.56.0"
 
 [[artifacts]]
 path = "binder.ts"
@@ -10,4 +10,4 @@ content_hash = "1f7740a7a048f956b140886637ad2def86cc1e7e7b1855908fbb4973b818a846
 
 [[artifacts]]
 path = "types.ts"
-content_hash = "280ee834869870dfcca8c0d707d9856023debd979539ea90cc68679e5cbe942e"
+content_hash = "1bbe58b59335df9cce8b04a08f3900c887e5abb60905ba6fdbe8e36854e5253b"

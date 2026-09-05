@@ -178,6 +178,7 @@ describe("gateRunInputs", () => {
           multiplicity: "single",
           item_count: null,
           optional: false,
+          json_schema: {},
         },
       },
     };
@@ -229,6 +230,7 @@ describe("the gate agrees with the Run button", () => {
         multiplicity: "single",
         item_count: null,
         optional: false,
+        json_schema: {},
       },
     },
   };
@@ -276,6 +278,7 @@ describe("the gate agrees with the Run button", () => {
         multiplicity: "single",
         item_count: null,
         optional: false,
+        json_schema: {},
       },
     },
   };
@@ -336,6 +339,7 @@ describe("the gate agrees with the Run button", () => {
         multiplicity: "single",
         item_count: null,
         optional: false,
+        json_schema: {},
       },
     },
   };

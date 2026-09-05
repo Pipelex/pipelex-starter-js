@@ -108,7 +108,37 @@ export const PIPE_IO_CONTRACTS: PipeIOContracts = {
       "concept_ref": "summarize_pdf.DocumentSummary",
       "multiplicity": "single",
       "item_count": null,
-      "optional": false
+      "optional": false,
+      "json_schema": {
+        "description": "A structured summary of a document",
+        "properties": {
+          "title": {
+            "description": "A concise title for the document",
+            "title": "Title",
+            "type": "string"
+          },
+          "doc_type": {
+            "description": "The kind of document, such as invoice, report, article, or contract",
+            "title": "Doc Type",
+            "type": "string"
+          },
+          "key_points": {
+            "description": "The main takeaways from the document, one per item",
+            "items": {
+              "type": "string"
+            },
+            "title": "Key Points",
+            "type": "array"
+          }
+        },
+        "required": [
+          "title",
+          "doc_type",
+          "key_points"
+        ],
+        "title": "summarize_pdf.DocumentSummary",
+        "type": "object"
+      }
     }
   }
 };

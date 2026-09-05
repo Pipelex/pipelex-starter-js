@@ -111,7 +111,49 @@ export const PIPE_IO_CONTRACTS: PipeIOContracts = {
       "concept_ref": "complex_form.ExtractionBrief",
       "multiplicity": "single",
       "item_count": null,
-      "optional": false
+      "optional": false,
+      "json_schema": {
+        "description": "Entities pulled from a text, framed for a chosen audience.",
+        "properties": {
+          "summary": {
+            "description": "One sentence framing the findings for the chosen audience",
+            "title": "Summary",
+            "type": "string"
+          },
+          "people": {
+            "description": "Names of people mentioned in the text",
+            "items": {
+              "type": "string"
+            },
+            "title": "People",
+            "type": "array"
+          },
+          "orgs": {
+            "description": "Names of organizations mentioned in the text",
+            "items": {
+              "type": "string"
+            },
+            "title": "Orgs",
+            "type": "array"
+          },
+          "dates": {
+            "description": "Dates or time references mentioned in the text",
+            "items": {
+              "type": "string"
+            },
+            "title": "Dates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "summary",
+          "people",
+          "orgs",
+          "dates"
+        ],
+        "title": "complex_form.ExtractionBrief",
+        "type": "object"
+      }
     }
   }
 };
@@ -166,7 +208,6 @@ export const INPUT_FORM = {
         "gating": false,
         "item": {
           "kind": "prose",
-          "name": "must_include",
           "concept_ref": "native.Text",
           "description": "A text",
           "required": true

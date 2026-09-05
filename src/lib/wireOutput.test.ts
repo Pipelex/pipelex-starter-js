@@ -4,9 +4,26 @@ import type { RunResults } from "@pipelex/sdk";
 import { describeSchemaFailure, dropWireNulls, MAX_WIRE_DEPTH, wireOutput } from "./wireOutput";
 import { ImageSchema } from "@/generated/generate-image/types";
 
+/**
+ * What the ts-zod emitter projected a non-required concept field as before
+ * pipelex 0.54.0: `.optional()`, which in zod means `| undefined` and *rejects*
+ * `null`. That is the mismatch `dropWireNulls` exists to bridge, and it has to
+ * be built by hand now: the committed schemas are `.nullish()` since the trees
+ * were regenerated on engine 0.56.0 (the pair of tests below records both
+ * halves of that). The helper stays because an older engine is still what some
+ * deployments serve, and regenerating against one brings `.optional()` back.
+ */
+const LEGACY_IMAGE = z.object({
+  url: z.string(),
+  public_url: z.string().optional(),
+  caption: z.string().optional(),
+  width: z.number().int().optional(),
+  height: z.number().int().optional(),
+});
+
 describe("dropWireNulls", () => {
   it("drops a null on an .optional() field so it reads as absent", () => {
-    expect(dropWireNulls({ url: "https://x", caption: null }, ImageSchema)).toEqual({
+    expect(dropWireNulls({ url: "https://x", caption: null }, LEGACY_IMAGE)).toEqual({
       url: "https://x",
     });
   });
@@ -48,13 +65,24 @@ describe("dropWireNulls", () => {
     expect(dropWireNulls(7, ImageSchema)).toBe(7);
   });
 
-  it("is what lets a generated schema accept the runtime's own wire payload", () => {
+  it("is what lets an .optional() schema accept the runtime's own wire payload", () => {
     // The regression this whole helper exists for: the hosted runtime emits
     // `"caption": null` for an unset optional field, and `.optional()` rejects
     // null. Without the normalization the schema rejects a perfectly good run.
     const wire = { url: "https://x/y.png", caption: null, width: null, height: null };
-    expect(ImageSchema.safeParse(wire).success).toBe(false);
-    expect(ImageSchema.safeParse(dropWireNulls(wire, ImageSchema)).success).toBe(true);
+    expect(LEGACY_IMAGE.safeParse(wire).success).toBe(false);
+    expect(LEGACY_IMAGE.safeParse(dropWireNulls(wire, LEGACY_IMAGE)).success).toBe(true);
+  });
+
+  it("is a no-op against today's generated schema, which accepts the null itself", () => {
+    // The workaround's expiry condition, recorded rather than assumed: the
+    // emitter projects a non-required field as `.nullish()` since pipelex
+    // 0.54.0, so the schema accepts the runtime's own payload unaided and the
+    // strip has nothing to do. Deleting the helper waits until no engine this
+    // template can be regenerated against still emits `.optional()`.
+    const wire = { url: "https://x/y.png", caption: null, width: null, height: null };
+    expect(ImageSchema.safeParse(wire).success).toBe(true);
+    expect(dropWireNulls(wire, ImageSchema)).toEqual(wire);
   });
 
   // The reason the walk is schema-guided rather than blind. Inside these shapes a
@@ -97,7 +125,7 @@ describe("wireOutput", () => {
       pipeline_run_id: "run-1",
       main_stuff: { url: "https://x", caption: null },
     };
-    expect(wireOutput(results, ImageSchema)).toEqual({ url: "https://x" });
+    expect(wireOutput(results, LEGACY_IMAGE)).toEqual({ url: "https://x" });
   });
 
   it("reads only main_stuff — a matching pipe_output entry must not rescue it", () => {

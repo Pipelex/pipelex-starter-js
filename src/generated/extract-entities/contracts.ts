@@ -43,7 +43,43 @@ export const PIPE_IO_CONTRACTS: PipeIOContracts = {
       "concept_ref": "extract_entities.ExtractedEntities",
       "multiplicity": "single",
       "item_count": null,
-      "optional": false
+      "optional": false,
+      "json_schema": {
+        "description": "Named entities extracted from a piece of text.",
+        "properties": {
+          "people": {
+            "description": "Names of people mentioned in the text",
+            "items": {
+              "type": "string"
+            },
+            "title": "People",
+            "type": "array"
+          },
+          "orgs": {
+            "description": "Names of organizations mentioned in the text",
+            "items": {
+              "type": "string"
+            },
+            "title": "Orgs",
+            "type": "array"
+          },
+          "dates": {
+            "description": "Dates or time references mentioned in the text",
+            "items": {
+              "type": "string"
+            },
+            "title": "Dates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "people",
+          "orgs",
+          "dates"
+        ],
+        "title": "extract_entities.ExtractedEntities",
+        "type": "object"
+      }
     }
   }
 };
