@@ -26,7 +26,8 @@ Regeneration is the dev action, the offline check is the CI action — the split
 
 ```
 methods/
-  extract-entities/main.mthds        # source of truth
+  extract-entities/main.mthds        # source of truth — a bundle in this repo
+  text-stats/method.json             # source of truth — a selector naming a method elsewhere
 src/generated/                        # committed, generated, never hand-edited
   extract-entities/
     types.ts                          # zod schemas + z.infer types — imports only `zod`
@@ -39,15 +40,40 @@ scripts/
   codegen.mts                         # CLI entry — npm run codegen
   codegen-check.mts                   # CLI entry — npm run codegen:check
   codegen-verify.mts                  # CLI entry — npm run codegen:verify
+  add-method.mts                      # CLI entry — npm run add-method (see docs/add-method.md)
   lib/
-    generate.mts                      # the generator: runGenerate, writeTree
+    generate.mts                      # the generator: runGenerate, generateMethod, fetchGenerated, writeGenerated
     check.mts                         # the offline check: runCheck, checkMethod, summarizeVerdicts
     verify.mts                        # the keyed semantic gate: runVerify
-    shared.mts                        # paths, walk, sha256, discoverMethods, the sidecar
+    shared.mts                        # paths, walk, sha256, discoverMethods, readManifest, the sidecar
+    api.mts                           # the network-facing half the keyed entry points share
+    add-method.mts                    # the scaffold, over generate.mts's own fetch/write halves
 tsconfig.scripts.json                 # type-checks scripts/, the tsconfig.e2e.json pattern
 ```
 
 One generated tree per method, mirroring `methods/` one-to-one: each method is its own closure, so each gets its own crate, artifact set, and lock. The trees live under `src/` so the `@/` alias reaches them and `tsc` type-checks them as part of the app.
+
+## Two source kinds
+
+A method directory says where its method lives, and there are two answers. It holds either **`.mthds` files** — the bundle is in this repo, which is the four demo methods — or a **`method.json` manifest** naming a method that lives elsewhere:
+
+```json
+{ "method_ref": "github.com/Pipelex/methods/text_stats@v0.1.1" }
+```
+
+Exactly one selector key, `method_ref` (a published package address) or `method_id` (a method saved under your key's organization), as a non-empty string; both keys, neither, an unknown key, or a non-string value is a refusal with no verdict, the way a non-UTF-8 source is. A directory holding **both** kinds is refused naming the two, because they would disagree about where the tree came from; a directory holding neither is skipped, as it always was.
+
+`discoverMethods` returns a `MethodSource` discriminated on `kind`, with `name` and `sourceHashes` common to both arms — so every kind-blind gate reads those two members and needed no change at all. In particular:
+
+- **The offline check is untouched in logic.** `compareSidecar` hashes `method.json` exactly the way it hashes a bundle, so editing a tag and forgetting to regenerate fails `make check` with the same "run `npm run codegen`" remedy. That is the feature, not a side effect: **bumping a published method's version is a one-line edit plus a regeneration.**
+- **Orphan detection is unchanged** — a generated tree with no `methods/<name>/` behind it is still an orphan, and a method with no tree is still the other half.
+- **`npm run codegen` regenerates both kinds in one pass.** A selector-sourced tree is not a second regeneration path; `make add-method` writes its tree by calling the generator's own halves, so a scaffolded tree is byte-for-byte the tree a regeneration would write.
+
+What actually differs is two calls. For a bundle source, `validateFiles(files, { views: ["input_form"] })` and `codegen({ files, … })`; for a selector source, `validate(selector, …, ["input_form"])` and `codegen({ ...selector, … })`. `codegen:verify` branches the same way, re-resolving by selector where it re-resolves by files.
+
+Two consequences worth stating plainly. A **`method_id`** slice regenerates only with a key of the same organization, since the catalog is org-scoped — which is why the template itself ships only an address-sourced slice. And a selector is resolved **server-side**, so the base URL has to forward it; see the handshake below.
+
+[`docs/add-method.md`](add-method.md) is the reference for the gesture that writes a manifest and the app files around it.
 
 **Committed, deliberately.** A template consumer must see the generated code without holding an API key, `git clone && make all` must pass keyless, and the diff of a regeneration is itself documentation of what a bundle edit changed. The offline check keeps the committed tree honest.
 
@@ -80,7 +106,7 @@ The generator also mirrors pipelex's own write discipline:
 
 The offline check proves the tree matches the lock; it deliberately never proves the tree is current with the _bundles_, since that needs the engine. So there are two gates:
 
-- **Offline (`codegen:check`, in `make check`)** — the `sources.json` sidecar. `npm run codegen` writes it beside each lock: the repo-relative path and SHA-256 of every source `.mthds` in the closure, compared on every check. Edit a bundle, forget to regenerate, and `make check` fails with "run `npm run codegen`" instead of shipping silently stale types. Coarse and knowingly so — a byte hash where the crate fingerprint is semantic, so reformatting a bundle trips a false "stale" whose remedy is a regeneration that write-if-changed turns into a clean no-op. Hashing normalizes CRLF and lone CR first, so a Windows checkout is not a false stale. The sidecar is starter-owned, unstamped, and outside the lock (which stays byte-exact); the check also covers the whole-tree cases a single tree cannot see — a method with no generated tree, and a generated tree with no method behind it.
+- **Offline (`codegen:check`, in `make check`)** — the `sources.json` sidecar. `npm run codegen` writes it beside each lock: the repo-relative path and SHA-256 of everything the method is generated from — every source `.mthds` in the closure, or the `method.json` manifest naming where it lives — compared on every check. Edit a bundle or bump a manifest's tag, forget to regenerate, and `make check` fails with "run `npm run codegen`" instead of shipping silently stale types. Coarse and knowingly so — a byte hash where the crate fingerprint is semantic, so reformatting a bundle trips a false "stale" whose remedy is a regeneration that write-if-changed turns into a clean no-op. Hashing normalizes CRLF and lone CR first, so a Windows checkout is not a false stale. The sidecar is starter-owned, unstamped, and outside the lock (which stays byte-exact); the check also covers the whole-tree cases a single tree cannot see — a method with no generated tree, and a generated tree with no method behind it.
 - **Keyed (`codegen:verify`)** — the semantic gate the sidecar approximates. The script re-runs `codegen()` live and compares its `crate_fingerprint` against each committed lock's, writing nothing. No false positives on reformatting — the fingerprint is semantic — but it needs a key and a network, so it stays out of `make all` and complements the sidecar rather than replacing it.
 
 **Exit codes are a contract**: `0` current, `1` drift or stale sources, `2` no verdict. No-verdict causes: a missing or malformed lock; a `lock_version` this SDK build does not know (whose message names the version found and says to bump `@pipelex/sdk`, not to touch the tree); a refused symlink or special file; a non-UTF-8 `.mthds` source; or any other tree-read failure — in that last case the check prints the underlying message and never the regenerate remedy, which would claim a verdict the run did not produce. Aggregation across methods is by precedence — no-verdict outranks drift outranks current — because as long as any method could not be checked, the run has not produced the full verdict a `0` or `1` would claim. A per-category summary line (`N current · N drift · N no verdict`) at the end shows the mix the single exit code cannot.
@@ -96,6 +122,7 @@ The verdicts above are only worth trusting because of a few deliberately loud po
 - **The scripts are cwd-independent.** `REPO_ROOT` anchors on `import.meta.dirname`, not `process.cwd()`, so running a script from any directory produces the same verdict instead of a raw ENOENT.
 - **A server-named artifact path may not escape its tree.** `codegen.mts` runs every `artifact.path` in the response through `isContainedPath` before the first write, and refuses the whole method — nothing written — if one resolves outside `src/generated/<method>/`. `writeIfChanged` creates directories recursively, so a `..` in a path the writer trusted would land a file wherever the process can reach, in a place no stamp guards and no check ever looks. This is the response half of the same exposure the base-URL guard below closes on the wire.
 - **The keyed scripts refuse a plaintext `http:` base URL for any non-loopback host** (`assertSecureBaseUrl`; `localhost`, `*.localhost`, `127.0.0.1`, and `[::1]` are allowed). They send the API key as a bearer token and write server-supplied TypeScript into the repo, so a non-local plaintext URL exposes both on the wire.
+- **A base URL that cannot resolve a selector is named before anything is fetched.** When any discovered source is selector-sourced, the keyed scripts ask `GET /v1/version` once and refuse — nothing written — if its `extensions` array lacks the kind they need, naming the base URL, the missing kind, and what it does advertise. Without the handshake the failure is a bare `403`, which on an env-scoped key says nothing at all about forwarding. Two cases deliberately **proceed** rather than refuse, because the handshake has no verdict to give and the real call's own error is the better message: the handshake itself failing, and a response that advertises no capabilities at all. `explain()` learns the matching resolution failures — a 404 from a selector call means the route is there and the method is not, so the server's own message (which for a bad address lists the packages the repository does contain) is printed **verbatim** rather than replaced by a guess about `PIPELEX_BASE_URL`.
 
 **An engine bump restamps everything, and that is expected.** `engine_version` rides in the artifact stamps, so an upstream pipelex release restamps the whole tree with zero semantic change — `crate_fingerprint` is the semantic signal, and it stays put. `codegen:verify` reports an engine difference as a **note**, not a failure, leaving the whole-tree restamp to a deliberate commit.
 
@@ -111,6 +138,7 @@ It normalizes **values, never names** — it re-declares no field, so it is not 
 
 ## What is deliberately not built
 
+- **The manifest is the whole of the selector story on this side.** `method.json` names where a method lives and nothing else; the scripts gained a second source kind and no second regeneration path, no download-the-closure-locally mode, and no per-kind gate. Everything else the selector makes possible — the app files, the tab — belongs to [`make add-method`](add-method.md), not here.
 - **No `resolve` example.** Codegen subsumes it for this template's purpose; the bare crate becomes interesting only for fingerprint-based caching or a custom projection.
 - **No generated-code edits, ever.** Customization rides sibling extension files; the adapters in `src/types/` _are_ that sibling layer here.
 - **No watch mode, no build-time hook.** Regeneration stays an explicit dev action; wiring it into `next dev` or `next build` would put a network + key dependency inside the build. The sidecar check is the forgetting-guard.

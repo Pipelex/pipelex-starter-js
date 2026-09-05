@@ -181,6 +181,8 @@ Two behaviour details of the current kernel worth knowing rather than debugging,
 
 The check that would catch a readiness-versus-gate regression is the agreement table in `src/lib/runInputs.test.ts`. A new method with a structured or plural input should add its states there before anything else.
 
+**When the method lives elsewhere, the shape of this is identical.** A slice written by [`make add-method`](add-method.md) — one whose source is a `methods/<name>/method.json` selector rather than a bundle in this repo — renders through exactly the same composition: `useRunInputs(CONTRACT, DESCRIPTOR)`, `<RunInputsForm>`, and `gateRunInputs` on the server, all reading the same committed `contracts.ts`. `src/components/TextStatsForm.tsx` is the scaffolded example, and reading it beside `EntityForm.tsx` is the point — the scaffold could write it precisely because there was nothing method-specific to write. The one difference is where you go to add an input: the method is not yours to edit here, so you change it where it lives (its repository, or [app.pipelex.com](https://app.pipelex.com) for a catalog method), point the manifest at the new version, and run `npm run codegen`.
+
 ## What is deliberately not built
 
 - **No client-side pre-validation with inline field errors.** The kernel supports it (`validateRunInputs` plus `describeValidationError` render per-field messages), and every demo method here has exactly one _required_ input, so readiness is the whole story. A form with several structured inputs would want it.

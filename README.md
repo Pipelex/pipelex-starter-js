@@ -8,6 +8,7 @@ It ships demo pipelines, presented as tabs:
 - **PDF summary** (`methods/summarize-pdf`) — uploads a PDF in the browser and returns a structured `{ title, doc_type, key_points }` summary from a cheap OpenAI model.
 - **Image generation** (`methods/generate-image`) — turns a text prompt into an image with `gpt-image-2`.
 - **Complex inputs** (`methods/complex-form`) — the same extraction with an optional structured input and a plural one, so the form has something to derive beyond a single text box. Its point is what the code does _not_ contain: `src/components/ComplexForm.tsx` is no longer than `EntityForm.tsx` and names no input.
+- **Text stats** (`methods/text-stats`) — a method that does **not** live in this repo. `methods/text-stats/method.json` names a published package by address, and every file behind the tab was written by `make add-method` rather than by hand (see [Add a method that lives elsewhere](#add-a-method-that-lives-elsewhere)).
 
 Starting from zero? Use this template (next section). Adding Pipelex to an app you already have? This repo doubles as the worked example of the pattern — [`docs/adopt-in-an-existing-project.md`](docs/adopt-in-an-existing-project.md) is the transplant checklist.
 
@@ -49,7 +50,7 @@ make install
 make dev
 ```
 
-Open [http://localhost:4300](http://localhost:4300) and try the three example tabs.
+Open [http://localhost:4300](http://localhost:4300) and try the example tabs.
 
 ## Project structure
 
@@ -58,8 +59,9 @@ methods/
   extract-entities/main.mthds # text → { people, orgs, dates }
   summarize-pdf/main.mthds    # PDF Document → { title, doc_type, key_points }
   generate-image/main.mthds   # text prompt → generated Image
+  text-stats/method.json      # a selector — the method lives in a published package, not here
 public/sample-invoice.pdf     # sample PDF, so the PDF example works out of the box
-scripts/                      # npm run codegen / codegen:check / codegen:verify
+scripts/                      # npm run codegen / codegen:check / codegen:verify / add-method
 src/
   config.ts                   # ExecutionMode + DEFAULT_EXECUTION_MODE
   app/                        # Next.js App Router (layout, page, globals.css)
@@ -80,7 +82,9 @@ src/
   hooks/
     useRun.ts                 # unified blocking|durable client state machine — the run
     useRunInputs.ts           # form values + readiness + the wire shape — the inputs
+    useFileInputs.ts          # the drop → encode → write-back seam for file inputs
   components/                 # ExampleTabs + RunInputsForm + per-example form/result + chrome
+    JsonResult.tsx            # the generic result view, for an output nobody designed a component for
   types/                      # thin adapters over src/generated/ — parseXxx(RunResults)
 ```
 
@@ -94,7 +98,7 @@ Each example runs in one of **two execution modes**, switchable per-example at r
 The flow, end to end:
 
 1. A form renders its inputs with `useRunInputs(contract, descriptor)` + `<RunInputsForm>` — **no form field is written by hand**; every label, control and required-ness comes from the method's own wire input-form descriptor (co-walking its IO contract), both committed by `npm run codegen` (see [Input forms](#input-forms)). It then calls the `useRun({ mode, blocking, start, poll })` hook, which dispatches to the right **Server Actions** by mode.
-2. The Server Action gates the same contract, applying the kernel's rules in full (a Server Action is a public endpoint; the browser's check is only UX), then reads the `.mthds` bundle from disk and calls the SDK (`execute` for blocking, `start` + `getRunStatus`/`getRunResult` for durable) with the bundle TOML + inputs.
+2. The Server Action gates the same contract, applying the kernel's rules in full (a Server Action is a public endpoint; the browser's check is only UX), then names the method — reading its `.mthds` bundle from disk, or passing the selector its `method.json` manifest carries — and calls the SDK (`execute` for blocking, `start` + `getRunStatus`/`getRunResult` for durable) with it and the inputs.
 3. The Pipelex API runs the pipe and returns the main output as `main_stuff` — the same resolved field on both paths.
 4. A `parseXxx(results)` narrower in `src/types/` validates it into a typed shape, using a zod schema generated from the method's own `.mthds` bundle (see [Generated types](#generated-types)).
 5. The hook drives the result: a live-status card while running, then the result component, or a classified `PipelineError` shown by `<ErrorDisplay>`.
@@ -138,14 +142,35 @@ A few things worth knowing:
 - **Field names stay wire-native.** `DocumentSummary` is `{ title, doc_type, key_points }`, not a camelCase mirror — a hand-maintained mirror is the duplication this removes.
 - **`src/generated/` is excluded from Prettier and ESLint** (see `.prettierignore`), because reformatting the files would break their stamps. TypeScript still checks them in full.
 
-**After editing anything under `methods/`, run `npm run codegen`** and commit the result alongside the bundle. `make check` fails until you do. Regeneration needs only `PIPELEX_API_KEY` — the default hosted API serves `/v1/codegen`, so no base-URL override is involved.
+**After editing anything under `methods/`, run `npm run codegen`** and commit the result alongside the bundle. `make check` fails until you do.
+
+A method directory holds either a `.mthds` bundle or a `method.json` manifest naming a method that lives elsewhere; `npm run codegen` regenerates both kinds in one pass, and bumping a published method's version is an edit to that manifest's tag plus a regeneration. See [`docs/codegen.md`](docs/codegen.md) for the two source kinds, and [Add a method that lives elsewhere](#add-a-method-that-lives-elsewhere) for the gesture that writes one.
+
+**Regeneration currently needs `PIPELEX_BASE_URL=https://api-dev.pipelex.com`.** Measured 2026-09-05: `api.pipelex.com` is on an older release that does not return `/v1/validate`'s `input_form` view (which codegen needs for every method) and does not advertise `method_ref` (which a package-sourced manifest needs). Both scripts say so rather than failing obscurely, and this is a deploy away. Nothing in the committed tree depends on it — `npm run codegen:check` is pure hashing, so `git clone && make all` passes with no key and no network either way.
 
 ## Swap in your own pipeline
 
 1. Add `methods/<name>/main.mthds` (the `/mthds-build` skill from the [mthds-plugins](https://github.com/Pipelex/mthds-plugins) marketplace can generate one).
 2. Run `npm run codegen` — it writes `src/generated/<name>/` with the zod schemas and binders for the concepts that method declares.
 3. Add a loader in `src/lib/loadBundle.ts`, a `parseXxx(results)` adapter over the generated binder in `src/types/`, and the action trio (`run<Name>Blocking`, `start<Name>Run`, `poll<Name>Run`) in `src/actions/`. Each action takes the schema-shaped data dict and starts with `gateRunInputs(CONTRACT, data)`.
-4. Wire it from a component with `useRunInputs(CONTRACT, DESCRIPTOR)` + `<RunInputsForm>` for the inputs and `useRun({ mode, blocking, start, poll })` for the run. **You write no form fields** — they come from the method's own descriptor. The three existing examples are the canonical patterns to copy.
+4. Wire it from a component with `useRunInputs(CONTRACT, DESCRIPTOR)` + `<RunInputsForm>` for the inputs and `useRun({ mode, blocking, start, poll })` for the run. **You write no form fields** — they come from the method's own descriptor. The existing examples are the canonical patterns to copy.
+
+## Add a method that lives elsewhere
+
+The checklist above assumes the method's bundle is in this repo. When it isn't — when it was authored on [app.pipelex.com](https://app.pipelex.com) and saved under your organization, or published as a package in a public repository — one command does the whole checklist for you:
+
+```bash
+make add-method METHOD=github.com/Pipelex/methods/text_stats@v0.1.1   # a published package
+make add-method METHOD=mt_abc123…                                      # a method in your org's catalog
+```
+
+It writes a `methods/<name>/method.json` manifest naming the method, the generated tree beside it, the narrower, the action trio, the form, an action test, and a tab entry — then tells you the one line to replace once you know what the output should look like. The "Text stats" tab this template ships is the output of exactly that command, committed untouched, so you have something to diff your own run against.
+
+The method itself is never copied here: the manifest names it, the run resolves it server-side, and moving to a newer version is editing the tag and running `npm run codegen`. The gesture is **one-shot** — it refuses rather than overwriting a slice that already exists, because the files it writes become yours the moment they land.
+
+Useful arguments: `PIPE=<pipe_code>` when the method carries several pipes (without it, the method's own default is used, and a method with several pipes and no default is refused listing them), `NAME=` and `LABEL=` to override the derived directory name and tab label, and `DRY_RUN=1` to print the whole plan without writing anything.
+
+**It needs a key and a base URL that resolves the selector** — see the note on `PIPELEX_BASE_URL` in [Environment variables](#environment-variables). The full reference is [`docs/add-method.md`](docs/add-method.md).
 
 ## Remove an example
 
@@ -160,6 +185,8 @@ Stripping the demos is usually the first act of making this template yours. Each
 
 Then run `make all`. `tsc` type-checks the co-located tests, so it names most dangling references itself; the two it cannot see — the `vi.mock` module string in `ExampleTabs.test.tsx` and the Playwright selectors — surface as test failures instead. The PDF example additionally owns `public/sample-invoice.pdf`, and the image example is the one exercising the blocking-cap e2e case.
 
+**A scaffolded example (`text-stats`) comes apart the same way, with two differences**: `methods/text-stats/` holds a `method.json` manifest rather than a bundle, so there is nothing in `src/lib/loadBundle.ts` to remove; and its result view is the shared `<JsonResult>`, which stays because other scaffolded slices will want it. Leave the two `add-method:` anchor comments in `ExampleTabs.tsx` in place — `make add-method` inserts at them, and a test fails if they go missing.
+
 ## Make targets
 
 | Target                | Purpose                                                                                                  |
@@ -173,6 +200,7 @@ Then run `make all`. `tsc` type-checks the co-located tests, so it names most da
 | `make codegen`        | Regenerate `src/generated/` from `methods/` (needs an API key — see [Generated types](#generated-types)) |
 | `make codegen-check`  | Prove `src/generated/` is current — offline, no key (part of `make check`)                               |
 | `make codegen-verify` | Ask the API whether the committed types still match the methods (needs an API key)                       |
+| `make add-method`     | Scaffold a method that lives elsewhere into the app — `METHOD=<mt_… \| address>` (needs an API key)      |
 | `make test`           | Vitest single pass (unit tests, no API call)                                                             |
 | `make agent-test`     | Vitest, silent on success (for AI agents)                                                                |
 | `make test-e2e`       | **Optional** Playwright e2e — live API, costs an LLM call (prompts first; auto-skips without a key)      |
@@ -186,12 +214,12 @@ Then run `make all`. `tsc` type-checks the co-located tests, so it names most da
 
 The Playwright specs are **optional** — `make all` never runs them, and you can delete `e2e/` entirely if you don't want live tests. They open the dev server and exercise each example tab end-to-end, asserting the expected output.
 
-The three happy-path specs (`extract`, `summarize-pdf`, `generate-image`) hit the **live** Pipelex API using `PIPELEX_API_KEY` from `.env.local`, so they cost an LLM call each. To keep that deliberate and safe:
+The happy-path specs (`extract`, `summarize-pdf`, `generate-image`, `text-stats`) hit the **live** Pipelex API using `PIPELEX_API_KEY` from `.env.local`, so they cost an LLM call each. To keep that deliberate and safe:
 
 - **They auto-skip without a key.** No `PIPELEX_API_KEY`? Those specs skip cleanly (you'll see them reported as skipped) instead of failing with an auth error — so a fresh fork can run `make test-e2e` before configuring credentials.
 - **`make test-e2e` prompts for confirmation** before spending, since it costs money. The prompt is skipped in CI / non-interactive shells; pass `CONFIRM=1 make test-e2e` to bypass it in scripts.
 - **It is excluded from `make all`.**
-- The fourth spec, `error-display`, tests the offline error UX — it needs **no** key, costs nothing, and runs out of the box.
+- The remaining spec, `error-display`, tests the offline error UX — it needs **no** key, costs nothing, and runs out of the box.
 - First-time setup needs the browser binary: `npx playwright install chromium`.
 
 ## Local package development (sibling `pipelex-sdk-js` and `mthds-form` repos)
@@ -207,13 +235,15 @@ Aliases: `make ul` / `make un`. **Re-run `make use-local` after every edit to ei
 
 ## Environment variables
 
-| Variable                     | Purpose                                                                                                    | Default                   |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------- |
-| `PIPELEX_BASE_URL`           | Pipelex API base URL. Override only to point at another Pipelex endpoint                                   | `https://api.pipelex.com` |
-| `PIPELEX_API_KEY`            | Bearer token used by the SDK                                                                               | (required at runtime)     |
-| `NEXT_PUBLIC_EXECUTION_MODE` | Default execution mode for the examples — `durable` or `blocking`. Each example also has a runtime toggle. | `durable`                 |
+| Variable                     | Purpose                                                                                                                                                   | Default                   |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `PIPELEX_BASE_URL`           | Pipelex API base URL. Running the examples needs no override; `npm run codegen`, `codegen:verify` and `make add-method` currently do — see the note below | `https://api.pipelex.com` |
+| `PIPELEX_API_KEY`            | Bearer token used by the SDK                                                                                                                              | (required at runtime)     |
+| `NEXT_PUBLIC_EXECUTION_MODE` | Default execution mode for the examples — `durable` or `blocking`. Each example also has a runtime toggle.                                                | `durable`                 |
 
 A variable already exported in your shell wins over `.env.local` — Next.js loads the file without overwriting what is already in the environment. If a run reaches an endpoint you did not configure here, check your shell first.
+
+**The three keyed build-time scripts want `https://api-dev.pipelex.com` for now.** Running the app needs no override at all, but as measured on 2026-09-05 `api.pipelex.com` is on an older release: it does not return `/v1/validate`'s `input_form` view, which `npm run codegen` needs for every method, and it does not advertise the `method_ref` selector, which `make add-method` and a package-sourced manifest need. Each script names the missing capability and the base URL rather than failing obscurely. This is a deploy away, and it does not reach a consumer who only runs the app: the committed trees make `git clone && make all` pass with no key and no network.
 
 ## License
 

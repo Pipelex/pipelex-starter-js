@@ -24,17 +24,21 @@ methods/                      # the source of truth — everything in src/genera
   summarize-pdf/main.mthds    # PDF Document → structured summary
   generate-image/main.mthds   # text prompt → image (gpt-image-2)
   complex-form/main.mthds     # text + optional struct + plural text → brief
+  text-stats/method.json      # a SELECTOR, not a bundle — the method lives in a published package
 public/
   sample-invoice.pdf          # sample PDF the PDF example loads out of the box
 scripts/                      # native-Node TypeScript (node --experimental-strip-types)
   codegen.mts                 # npm run codegen — CLI entry, one line over lib/generate
   codegen-check.mts           # npm run codegen:check — CLI entry over lib/check
   codegen-verify.mts          # npm run codegen:verify — CLI entry over lib/verify
+  add-method.mts              # npm run add-method — CLI entry over lib/add-method
   lib/                        # the behavior, importable so it can be tested
-    generate.mts              # runGenerate + writeTree — regenerates src/generated/
+    generate.mts              # runGenerate + generateMethod (= fetchGenerated + writeGenerated)
     check.mts                 # runCheck + checkMethod + summarizeVerdicts — the offline gate
     verify.mts                # runVerify — the keyed semantic gate
-    shared.mts                # paths, tree walk, sha256, sources.json — shared by all three
+    shared.mts                # paths, tree walk, sha256, MethodSource, readManifest, sources.json
+    api.mts                   # assertSelectorSupport + explainSelectorFailure — the network half
+    add-method.mts            # runAddMethod — the scaffold, over generate.mts's two halves
     *.test.mts                # vitest over the lib (vitest's glob matches .mts)
 src/
   config.ts                   # ExecutionMode + DEFAULT_EXECUTION_MODE (client-safe)
@@ -44,6 +48,7 @@ src/
     runSummarizePdfPipeline.ts  # …Blocking + start… + poll…
     runGenerateImagePipeline.ts # …Blocking + start… + poll…
     runComplexFormPipeline.ts   # …Blocking + start… + poll…
+    runTextStatsPipeline.ts     # …Blocking + start… + poll… — SCAFFOLDED by `make add-method`
   generated/                  # COMMITTED and GENERATED — never hand-edit (see "Generated types")
     extract-entities/
       types.ts                # zod schemas + z.infer types, stamped
@@ -54,6 +59,7 @@ src/
     summarize-pdf/ …          # same set per method
     generate-image/ …
     complex-form/ …
+    text-stats/ …             # same set — projected from a selector, not from local .mthds files
   lib/
     pipelexClient.ts          # PipelexApiClient singleton factory
     loadBundle.ts             # fs.readFile of the .mthds bundles
@@ -69,13 +75,16 @@ src/
   hooks/
     useRun.ts                 # unified blocking|durable state machine (client)
     useRunInputs.ts           # form values + derived fields + readiness + wire shape (client)
+    useFileInputs.ts          # drop → encode → write-back the FileValue; the kernel's file seam (client)
   components/
     ExampleTabs.tsx           # client component — tab switcher across the examples
     RunInputsForm.tsx         # client component — the one kernel composition (FieldRenderer per field)
     EntityForm/PdfForm/ImageForm/ComplexForm.tsx  # client components (per-example chrome, mode-agnostic)
+    TextStatsForm.tsx         # client component — SCAFFOLDED, the same composition with no design
     ModeToggle.tsx            # client component — Blocking|Durable segmented control
     RunStatus.tsx             # live-status card (spinner + status label + elapsed)
     EntityResult/PdfSummaryResult/ImageResult/ComplexFormResult.tsx  # server components (render output)
+    JsonResult.tsx            # the generic result view — typed value as JSON + any image it carries
     CostReport.tsx            # per-run token usage + cost breakdown
     ErrorDisplay.tsx          # server component (renders classified PipelineError)
   types/                      # the adapter layer over src/generated/ — no shapes re-declared
@@ -84,19 +93,21 @@ src/
     summarizePipeline.ts      # re-exports DocumentSummary + parseDocumentSummary(RunResults)
     generateImagePipeline.ts  # aliases Image as GeneratedImage + parseGeneratedImage(RunResults)
     complexFormPipeline.ts    # re-exports ExtractionBrief + parseExtractionBriefResult(RunResults)
+    textStatsPipeline.ts      # re-exports Text as TextStatsOutput + parseTextStatsOutput — SCAFFOLDED
 e2e/
   extract.spec.ts             # Playwright e2e (hits live API)
   summarize-pdf.spec.ts
   generate-image.spec.ts
+  text-stats.spec.ts
 ```
 
 ### What lives where
 
-- **`methods/`** — `.mthds` bundles (TOML). Treat them as first-class artifacts, not embedded strings. Use the `/mthds-build`, `/mthds-edit`, `/mthds-check`, `/mthds-run` skills from the `mthds-plugins` marketplace to author and validate them.
+- **`methods/`** — one directory per method, saying where that method lives: `.mthds` bundles (TOML) for a method authored here, or a `method.json` manifest naming one that lives on the platform or in a published package. Treat bundles as first-class artifacts, not embedded strings. Use the `/mthds-build`, `/mthds-edit`, `/mthds-check`, `/mthds-run` skills from the `mthds-plugins` marketplace to author and validate them.
 - **`src/actions/`** — Server Actions (`"use server"`). The only place that calls the Pipelex SDK. Each pipeline exports a **trio**: `run<Name>Blocking` (the blocking `execute` path), `start<Name>Run` + `poll<Name>Run` (the durable start/poll path). They are thin: pre-flight guard → build options → delegate to `executeBlockingRun` / `startDurableRun` / `pollDurableRun`.
-- **`src/lib/`** — Server-side utilities. No React. `runInputs.ts` is pure (kernel core only, no `process.env`, no Node built-ins) so both sides import it — that shared import is the point. The two execution helpers `blockingRun.ts` and `durableRun.ts` are server-only (they construct the SDK client and read `process.env` through `serverEnv.ts`'s shared `readClassifyEnv`, so the two paths can't drift on classification env); `wireOutput.ts` is pure (it reads `main_stuff` and normalizes it — the generated schema does the shape-checking) and carries `import "server-only"`, so a `"use client"` import of a narrower fails the Next build instead of shipping zod plus every generated schema to the browser (vitest aliases the package to `vitest.server-only-stub.ts` so unit tests keep passing). Deliberate client-touching exceptions: `errors.ts` (its types cross the server→client boundary, and `classifyTransportError` + `buildClientTimeoutError` run client-side), and `clientFile.ts` (a browser `FileReader` wrapper imported only by client components). `fileEncoding.ts` is pure (no React, no `process.env`) so it is safe to import from either side. Because `errors.ts` is bundled into the client, it imports the SDK error classes from **`@pipelex/sdk`**. That barrel is client-safe — `PipelexApiClient` is fetch-based and pulls no `node:fs` into the graph — so a client bundler handles it without breaking `make build`. Only `pipelexClient.ts` (server-only) constructs `PipelexApiClient` from `@pipelex/sdk`. The forms import `blockingRun`/`durableRun` **types only** (`import type`), so no server code leaks into the client bundle.
-- **`src/hooks/`** — `useRun<TInput,TOutput>`, the unified client state machine (`idle → running → done|error`) that dispatches blocking vs durable by `mode`. Holds the durable poll loop, the staleness token, the elapsed ticker, the wall-clock ceiling, the `classifyTransportError` wrapping, and the **transient-failure budget** (a momentary 5xx/network blip on one poll tick — flagged `transient` by `pollDurableRun` — or a rejected poll await is retried up to `MAX_TRANSIENT_POLL_FAILURES`, surfacing `health: "retrying"` meanwhile, rather than abandoning a run that's still completing server-side). The running state's `health` field (`RunHealth | null`) names _why_ the poll loop is in a resilient state so `<RunStatus>` can show reassuring, cause-specific copy instead of one alarming "degraded" note: `"reconnecting"` when the **server** reported `degraded` (its status endpoint served a last-known DB status because Temporal was unreachable), `"retrying"` for a **client-side** poll blip, `null` when polling cleanly. A durable `start` that returns `lifecycle_unavailable` (the configured URL doesn't serve the durable run lifecycle) surfaces as an explicit error — `useRun` never silently downgrades durable to blocking. Forms never branch on mode — they just call `run(input)`.
-- **`src/components/`** — React components. `"use client"` only when the component uses hooks, event handlers, or browser APIs (`ModeToggle` does; `RunStatus` is a pure render).
+- **`src/lib/`** — Server-side utilities. No React. `runInputs.ts` is pure (kernel core only, no `process.env`, no Node built-ins) so both sides import it — that shared import is the point. The two execution helpers `blockingRun.ts` and `durableRun.ts` are server-only (they construct the SDK client and read `process.env` through `serverEnv.ts`'s shared `readClassifyEnv`, so the two paths can't drift on classification env); `wireOutput.ts` is pure (it reads `main_stuff` and normalizes it — the generated schema does the shape-checking) and carries `import "server-only"`, so a `"use client"` import of a narrower fails the Next build instead of shipping zod plus every generated schema to the browser (vitest aliases the package to `vitest.server-only-stub.ts` so unit tests keep passing). Deliberate client-touching exceptions: `errors.ts` (its types cross the server→client boundary, and `classifyTransportError` + `buildClientTimeoutError` run client-side), and `clientFile.ts` (a browser `FileReader` wrapper imported only by client components). `fileEncoding.ts` is pure (no React, no `process.env`) so it is safe to import from either side. Because `errors.ts` is bundled into the client, it imports the SDK error classes from **`@pipelex/sdk`**. That barrel is client-safe — `PipelexApiClient` is fetch-based and pulls no `node:fs` into the graph — so a client bundler handles it without breaking `make build`. Only `pipelexClient.ts` (server-only) constructs `PipelexApiClient` from `@pipelex/sdk`. The forms import `blockingRun`/`durableRun` **types only** (`import type`), so no server code leaks into the client bundle. Both take a `() => Promise<PipelexStartOptions>`, not the pure-protocol `StartOptions`: the run selectors `method_ref` / `method_id` live on the SDK's Pipelex run extensions, which is what lets a scaffolded action name a method that is not shipped as a bundle. Every extension is optional, so the four hand-written actions satisfy the wider type unchanged.
+- **`src/hooks/`** — `useRun<TInput,TOutput>`, the unified client state machine (`idle → running → done|error`) that dispatches blocking vs durable by `mode`. Holds the durable poll loop, the staleness token, the elapsed ticker, the wall-clock ceiling, the `classifyTransportError` wrapping, and the **transient-failure budget** (a momentary 5xx/network blip on one poll tick — flagged `transient` by `pollDurableRun` — or a rejected poll await is retried up to `MAX_TRANSIENT_POLL_FAILURES`, surfacing `health: "retrying"` meanwhile, rather than abandoning a run that's still completing server-side). The running state's `health` field (`RunHealth | null`) names _why_ the poll loop is in a resilient state so `<RunStatus>` can show reassuring, cause-specific copy instead of one alarming "degraded" note: `"reconnecting"` when the **server** reported `degraded` (its status endpoint served a last-known DB status because Temporal was unreachable), `"retrying"` for a **client-side** poll blip, `null` when polling cleanly. A durable `start` that returns `lifecycle_unavailable` (the configured URL doesn't serve the durable run lifecycle) surfaces as an explicit error — `useRun` never silently downgrades durable to blocking. Forms never branch on mode — they just call `run(input)`. `useFileInputs` is the file seam — drop, size early-exit, encode through `fileToDataUrl`, write the `FileValue` back at the field's dotted path, and hold the id in the set the kernel reads as `uploadingIds` meanwhile — extracted from `PdfForm` so a scaffolded form with a file input composes it rather than restating it.
+- **`src/components/`** — React components. `"use client"` only when the component uses hooks, event handlers, or browser APIs (`ModeToggle` does; `RunStatus` is a pure render). `JsonResult` is the generic result view a scaffolded form renders: the typed value as JSON plus an `<img>` for any web-renderable image URL it carries, one level down. It exists because a result component is a design decision about a shape and `make add-method` has no design — the scaffold names that line as the one to replace.
 - **`src/types/`** — the **adapter layer over `src/generated/`**, not a place where shapes are declared. Each `parseXxx(results: RunResults)` hands `wireOutput(results)` to the binder generated from that method's own bundle, and translates a thrown `ZodError` into the template's tagged error model; the type itself is re-exported from the generated `types.ts`. Hand-written validation survives only where it adds semantics the concept does not declare — `parseGeneratedImage`'s web-renderable-URL check is the single example. Narrowers throw on mismatch; that's deliberate (system boundary).
 
 ## Generated types (`src/generated/`)
@@ -109,6 +120,8 @@ e2e/
 | `npm run codegen:check` / `make codegen-check`   | No — pure hashing, fully offline               | Every `make check`, so every `make all`        |
 | `npm run codegen:verify` / `make codegen-verify` | Yes                                            | Before a release, or after touching `methods/` |
 
+**Selector-sourced methods.** A method directory says where its method lives, and there are two answers: `.mthds` files (the bundle is here) or a `method.json` manifest carrying exactly one selector — `method_ref` (a published package address) or `method_id` (a method in the key's org catalog). Never both in one directory; that is refused. `discoverMethods` returns a `MethodSource` discriminated on `kind`, with `name` and `sourceHashes` common, so every kind-blind gate reads those two and needed no change: `sources.json` hashes the manifest the way it hashes a bundle, orphan detection is unchanged, and `npm run codegen` regenerates both kinds in one pass. Two consequences to hold on to: **a `method_id` slice regenerates only with a key of the same organization**, which is why the template ships only an address-sourced slice; and a selector is resolved server-side, so the three keyed scripts ask `GET /v1/version` once and refuse when `extensions` lacks the kind, naming the base URL rather than surfacing a bare `403`. `make add-method` (see below) is what writes a manifest and the app files around it; [`docs/add-method.md`](docs/add-method.md) is its reference.
+
 The rules below are each load-bearing — breaking one produces a wrong verdict rather than an error:
 
 - **Never hand-edit anything under `src/generated/`.** Artifacts are written verbatim and each carries a stamp hashing its own body, so any edit — a reformat included — makes `codegen:check` report `hand-edited` and fails `make check`. To customize a generated type, wrap it rather than edit it: `src/types/` is that wrapper layer.
@@ -116,7 +129,7 @@ The rules below are each load-bearing — breaking one produces a wrong verdict 
 - **Two staleness gates, because they answer different questions.** `codegen:check` proves each tree still matches its own lock, and compares `sources.json` (the SHA-256 of every source `.mthds` in the closure) against the bundles on disk — that is what catches "edited a bundle, forgot to regenerate". It cannot know whether the _engine_ would produce something different today; `codegen:verify` asks the server exactly that, comparing live `crate_fingerprint`s against the committed locks and writing nothing.
 - **Exit codes are a contract**: `0` current, `1` drift or stale sources, `2` no verdict (a missing or malformed lock). `make check` fails on `1` and `2` alike.
 - **An engine bump rewrites every artifact.** `engine_version` rides in the stamp, so an upstream pipelex release restamps the whole tree with zero semantic change (`crate_fingerprint` is the semantic signal, and it stays put). A whole-tree diff after such a release is correct behaviour, not drift — which is why `codegen:verify` reports an engine difference as a **note**, not a failure, leaving the restamp to a deliberate commit.
-- **Regeneration runs against the default hosted URL.** `POST /v1/codegen` is served on `api.pipelex.com`, so `npm run codegen` needs a key and nothing else — no base-URL override. `codegen:check` needs no server at all.
+- **Regeneration currently wants `PIPELEX_BASE_URL=https://api-dev.pipelex.com`.** Measured 2026-09-05: `api.pipelex.com` (hosted `0.10.1`) does not return `/v1/validate`'s `input_form` view, which codegen needs for **every** method, and does not advertise `method_ref`, which a package-sourced manifest needs. Both scripts name the missing capability rather than failing obscurely, and the gap is a deploy away. `codegen:check` needs no server at all, so `make all` stays green offline regardless — which is the property that makes the gap survivable.
 - **Field names stay wire-native snake_case, deliberately** — `doc_type`, `key_points`, `public_url`, `mime_type` travel unchanged from the bundle to the components. Do **not** add a camelCase mapping layer: a hand-maintained mirror of a generated shape is precisely the duplicated surface this removes.
 - **`contracts.ts` is the one artifact the lock does not sign, and that is deliberate.** The SDK's orphan rule is "a _stamped_ file the lock does not track", and the writer deletes orphans — so a stamped `contracts.ts` would silently vanish on every regeneration. Its SHA-256 lives instead in `sources.json`'s `derived` map, written by the generator from the content it wrote and compared by `codegen:check`; `codegen:verify` re-fetches `/v1/validate` and compares the rendered bytes. It is still never hand-edited.
 
@@ -218,7 +231,9 @@ Text inputs are plain strings. File inputs (PDFs, images) take one extra step, d
 - **Mind the Server Action body limit.** Next.js caps Server Action bodies at 1 MB by default; base64 inflates payloads ~37%. `next.config.js` raises `serverActions.bodySizeLimit`, and `MAX_PDF_BYTES` in `fileEncoding.ts` caps the raw file size with margin.
 - **File/image outputs come back as a URL** — a storage URL or a base64 data URL — in the output content. On the hosted durable path the runtime returns both a non-web `url` (`pipelex-storage://…`) and a web `public_url` (a signed S3 URL); `parseGeneratedImage` keeps both and validates the one `<ImageResult>` actually displays (`public_url ?? url`), so a non-web `url` can't ship a silently-broken image. Render it directly in an `<img>` (see `ImageResult.tsx`).
 
-To add a new pipeline:
+To add a new pipeline **whose method lives elsewhere** — on the platform (a `mt_…` catalog id) or in a published package (a `github.com/owner/repo[/pkg][@tag]` address) — do not follow the checklist below by hand. Run `make add-method METHOD=<selector>`: it writes the manifest, the generated tree, the adapter, the action trio, an action test, the form and the tab entry, refusing rather than overwriting anything that already exists. `src/components/TextStatsForm.tsx` and its siblings are one such slice, committed untouched. [`docs/add-method.md`](docs/add-method.md) is the reference; the checklist below is what it automates, and remains the path for a bundle you author here.
+
+To add a new pipeline whose bundle lives in this repo:
 
 1. Create `methods/<name>/main.mthds` (use `/mthds-build`).
 2. Run `npm run codegen`. It writes `src/generated/<name>/` — the zod schemas, the binders, the IO contracts, the lock, and the sources sidecar — for every concept that method declares. Commit that tree alongside the bundle.
@@ -262,7 +277,7 @@ Enforced via Husky + lint-staged on commit.
 ### E2E (Playwright)
 
 - **Location**: `e2e/*.spec.ts`
-- **Optional, and gated.** The three live-API specs (`extract`, `summarize-pdf`, `generate-image`) hit the live Pipelex API using `PIPELEX_API_KEY` from `.env.local` and cost an LLM call each. Two guards make this safe: (1) they **auto-skip** when no key is set — `requireLiveApi()` in `e2e/liveApi.ts` calls `test.skip()`, and `playwright.config.ts` loads `.env.local` via `@next/env` so a configured key is visible to the runner; (2) `make test-e2e` **prompts for confirmation** before spending (the `confirm-live-e2e` target — skipped in CI / non-TTY shells, bypass with `CONFIRM=1`). Additionally, the blocking-cap case in `generate-image` skips unless `PIPELEX_BASE_URL` is a **hosted gateway** (`api[-env].pipelex.com`) — other endpoints may not enforce the ~30s blocking cap, so the spec would be flaky there. The fourth spec, `error-display`, tests the offline error UX — it needs no key and is **not** key-guarded; it probes the same URL the app will use (`PIPELEX_BASE_URL`, defaulting to the SDK's hosted URL) and skips when that API is reachable, so it runs exactly when the app would render `api_unreachable`.
+- **Optional, and gated.** The live-API specs (`extract`, `summarize-pdf`, `generate-image`, `text-stats`) hit the live Pipelex API using `PIPELEX_API_KEY` from `.env.local` and cost an LLM call each. Two guards make this safe: (1) they **auto-skip** when no key is set — `requireLiveApi()` in `e2e/liveApi.ts` calls `test.skip()`, and `playwright.config.ts` loads `.env.local` via `@next/env` so a configured key is visible to the runner; (2) `make test-e2e` **prompts for confirmation** before spending (the `confirm-live-e2e` target — skipped in CI / non-TTY shells, bypass with `CONFIRM=1`). Additionally, the blocking-cap case in `generate-image` skips unless `PIPELEX_BASE_URL` is a **hosted gateway** (`api[-env].pipelex.com`) — other endpoints may not enforce the ~30s blocking cap, so the spec would be flaky there. `text-stats` additionally needs a base URL that advertises `method_ref`, since its method is resolved by address. The remaining spec, `error-display`, tests the offline error UX — it needs no key and is **not** key-guarded; it probes the same URL the app will use (`PIPELEX_BASE_URL`, defaulting to the SDK's hosted URL) and skips when that API is reachable, so it runs exactly when the app would render `api_unreachable`.
 - **Excluded from `make all`** — run explicitly with `make test-e2e`
 - **First-time setup**: `npx playwright install chromium`
 - **Excluded from**: `vitest.config.mts` (`exclude: ["e2e/**", ...]`) and the base `tsconfig.json` (`exclude: [..., "e2e"]`) so unit-test infra and Next's build typecheck don't pick up Playwright specs
@@ -281,6 +296,7 @@ Enforced via Husky + lint-staged on commit.
 | `make codegen`        | Regenerate `src/generated/` from `methods/` (needs `PIPELEX_API_KEY`; **not** in `make all`)   |
 | `make codegen-check`  | Prove `src/generated/` is current — offline, no key. Part of `make check`                      |
 | `make codegen-verify` | Ask the engine whether the committed crates are still current (needs a key; not in `make all`) |
+| `make add-method`     | Scaffold a method that lives elsewhere into the app — `METHOD=<mt_… \| address>` (needs a key) |
 | `make test`           | Vitest single pass                                                                             |
 | `make agent-test`     | Vitest, silent on success (preferred for AI agents)                                            |
 | `make test-e2e`       | Optional Playwright e2e (live API, costs an LLM call; prompts first, auto-skips without a key) |
@@ -301,7 +317,7 @@ We use a tarball install rather than a symlink (`ln -s`) because Next.js 16's Tu
 
 **After any code change, run `make all`.** It runs `check` (lint + format-check + typecheck + the offline codegen check) + `test` + `build`, which catches the failure classes that block CI: ESLint violations, Prettier formatting drift, TypeScript errors, generated types that no longer match their bundles, and broken unit tests / production build. Do not declare a task done if `make all` doesn't pass cleanly.
 
-**After editing anything under `methods/`, run `npm run codegen`.** `make check` compares each generated tree against a hash of the `.mthds` files it was projected from, so a bundle edit without a regeneration fails with "Run `npm run codegen` to regenerate." rather than shipping types that quietly lie. Regeneration needs `PIPELEX_API_KEY`; the default hosted URL serves `/v1/codegen`. Commit the regenerated tree in the same commit as the bundle edit.
+**After editing anything under `methods/`, run `npm run codegen`.** `make check` compares each generated tree against a hash of the `.mthds` files it was projected from, so a bundle edit without a regeneration fails with "Run `npm run codegen` to regenerate." rather than shipping types that quietly lie. Regeneration needs `PIPELEX_API_KEY` and, until the hosted deploy lands, `PIPELEX_BASE_URL=https://api-dev.pipelex.com`. Commit the regenerated tree in the same commit as the bundle edit. The same applies to a `methods/<name>/method.json` manifest: bumping its tag is a source edit, and `make check` fails until you regenerate.
 
 If `make format-check` fails, run `make format` to auto-fix and re-run `make all`. Don't hand-edit files to satisfy Prettier — let the formatter do it.
 
@@ -335,6 +351,7 @@ Other targets that matter:
 
 ## Gotchas
 
+- **The two `add-method:` anchor comments in `src/components/ExampleTabs.tsx` are a contract — never move, reword or delete the marker tokens.** `make add-method` inserts one import line above `// add-method:imports` and one `TABS` entry above `// add-method:tabs`, and refuses when it cannot find either. The match is on the token alone, so the prose after a marker can be reworded freely; the tokens themselves cannot move. An anchor test in `scripts/lib/add-method.test.mts` reads the real file, so a template edit that loses one fails the suite rather than the next person's scaffold run. The same is why `TABS` carries its `Component` and the panels are mapped: a hand-written `<div role="tabpanel">` per form would make a scaffolded tab a second insertion point.
 - **The dev server runs on port 4300, and it must not go back to 4100.** The port is declared in `package.json` (`dev` and `start`) and once more in `playwright.config.ts`, which derives both `baseURL` and `webServer.url` from it — change both places together. It was moved off 4100 because the `pipelex-server` local stack (`make local-up`) publishes its sandbox container, the MTHDS build chatbot, on `127.0.0.1:4100`, and `pipelex-app` hardcodes that port in `src/lib/agent-server.ts`, so the stack is the side that cannot move. The collision is silent rather than loud: Docker holds IPv4 loopback, so `next dev` still binds 4100 on IPv6 and prints `Ready`, while Playwright's health check resolves to IPv4, reaches the container's 404 forever, and fails with `Timed out waiting 120000ms from config.webServer` — a message that names neither the port nor the real owner. When e2e times out with the app apparently up, run `lsof -nP -iTCP:4300 -sTCP:LISTEN` before believing anything else.
 - **Husky `prepare` warning**: `npm install` prints `.git can't be found` if you install before `git init`. Harmless — just re-run `npm install` after `git init` to wire `.husky/_/`.
 - **Renaming App Router directories**: delete `.next/` before running `make check` — stale type references in `.next/types/` will fail typecheck.
