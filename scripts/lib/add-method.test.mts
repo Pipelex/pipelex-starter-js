@@ -286,23 +286,30 @@ describe("bindOutput", () => {
 
 describe("fileInputsOf", () => {
   it("finds nothing in a text-only method", () => {
-    expect(fileInputsOf(TEXT_STATS_INPUT_FORM["text_stats.analyze_text"]!)).toEqual({
-      top: [],
-      nested: [],
-    });
+    expect(fileInputsOf(TEXT_STATS_INPUT_FORM["text_stats.analyze_text"]!)).toEqual([]);
   });
 
   it("finds a top-level document input", () => {
-    expect(fileInputsOf(DOCUMENTS_INPUT_FORM["documents.extract_text_pages"]!).top).toEqual([
-      { name: "document", kind: "document" },
+    expect(fileInputsOf(DOCUMENTS_INPUT_FORM["documents.extract_text_pages"]!)).toEqual([
+      { path: "document", kind: "document" },
     ]);
   });
 
-  it("warns about a file nested inside a structured or list input", () => {
-    // `checkFileInputs` refuses a nested file at RUN time; the scaffold says so
-    // at scaffold time rather than letting the first run be the surprise.
-    const nested = fileInputsOf({
+  it("finds a file inside a list or a structured input, at its dotted path", () => {
+    // Depth changes nothing about what is scaffolded: `checkFileInputs` walks
+    // the same descriptor, so a nested position is gated like a top-level one.
+    const files = fileInputsOf({
       fields: [
+        {
+          kind: "list",
+          name: "cvs",
+          concept_ref: "native.Document",
+          description: null,
+          required: true,
+          presence: "plain",
+          gating: false,
+          item: { kind: "document", concept_ref: "native.Document", description: null },
+        },
         {
           kind: "object",
           name: "packet",
@@ -329,23 +336,26 @@ describe("fileInputsOf", () => {
         },
       ],
     } as never);
-    expect(nested.top).toEqual([]);
-    expect(nested.nested).toEqual(["packet.scan", "packet.shots[]"]);
+    expect(files).toEqual([
+      { path: "cvs[]", kind: "document" },
+      { path: "packet.scan", kind: "document" },
+      { path: "packet.shots[]", kind: "image" },
+    ]);
   });
 });
 
 describe("allowedMimesFor", () => {
   it("maps each file kind to the types the action accepts", () => {
-    expect(allowedMimesFor([{ name: "d", kind: "document" }])).toEqual(["application/pdf"]);
-    expect(allowedMimesFor([{ name: "i", kind: "image" }])).toEqual([
+    expect(allowedMimesFor([{ path: "d", kind: "document" }])).toEqual(["application/pdf"]);
+    expect(allowedMimesFor([{ path: "i", kind: "image" }])).toEqual([
       "image/png",
       "image/jpeg",
       "image/webp",
     ]);
     expect(
       allowedMimesFor([
-        { name: "d", kind: "document" },
-        { name: "i", kind: "image" },
+        { path: "d", kind: "document" },
+        { path: "shots[]", kind: "image" },
       ]),
     ).toEqual(["application/pdf", "image/png", "image/jpeg", "image/webp"]);
   });
@@ -437,7 +447,7 @@ const TEXT_STATS_PLAN: ScaffoldPlan = {
   selector: { method_ref: TEXT_STATS_REF },
   pipe: { ref: "text_stats.analyze_text", domain: "text_stats", code: "analyze_text" },
   binding: { conceptCode: "Text", plural: false },
-  files: { top: [], nested: [] },
+  files: [],
   gating: true,
 };
 
@@ -447,7 +457,7 @@ const DOCUMENTS_PLAN: ScaffoldPlan = {
   selector: { method_id: "mt_ca0aa9d3-61ac-4db1-8b46-fb0cc75787df" },
   pipe: { ref: "documents.extract_text_pages", domain: "documents", code: "extract_text_pages" },
   binding: { conceptCode: "Page", plural: true },
-  files: { top: [{ name: "document", kind: "document" }], nested: [] },
+  files: [{ path: "document", kind: "document" }],
   gating: true,
 };
 
@@ -502,7 +512,15 @@ describe("renderAction", () => {
   it("adds the file gate and prepareInputs when the method takes a file", () => {
     const source = renderAction(DOCUMENTS_PLAN);
     expect(source).toContain('const ALLOWED_MIMES = ["application/pdf"];');
-    expect(source).toContain("checkFileInputs(gated.inputs, {");
+    // The file gate walks the pipe's wire descriptor, the same one the form is
+    // rendered from — so the action looks it up beside the contract.
+    expect(source).toContain(
+      'import { INPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/documents/contracts";',
+    );
+    expect(source).toContain(
+      'const DESCRIPTOR = requireInputForm(INPUT_FORM, "documents", PIPE_CODE);',
+    );
+    expect(source).toContain("checkFileInputs(DESCRIPTOR, gated.inputs, {");
     // prepareInputs keys on the QUALIFIED ref — a bare pipe code is refused.
     expect(source).toContain('const PIPE_REF = "documents.extract_text_pages";');
     expect(source).toContain("pipe_ref: PIPE_REF,");
@@ -511,8 +529,20 @@ describe("renderAction", () => {
     // inside `gateInputs` the shape gate comes first and short-circuits.
     const gate = source.slice(source.indexOf("function gateInputs("));
     expect(gate.indexOf("gateRunInputs(CONTRACT, data)")).toBeLessThan(
-      gate.indexOf("checkFileInputs(gated.inputs"),
+      gate.indexOf("checkFileInputs(DESCRIPTOR, gated.inputs"),
     );
+  });
+
+  it("scaffolds the same file path for a file below the top level", () => {
+    // A `cvs: Document[]` slice is gated, uploaded and dropped into exactly like
+    // a top-level document — the descriptor walk reaches every position.
+    const source = renderAction({
+      ...DOCUMENTS_PLAN,
+      files: [{ path: "cvs[]", kind: "document" }],
+    });
+    expect(source).toContain('const ALLOWED_MIMES = ["application/pdf"];');
+    expect(source).toContain("checkFileInputs(DESCRIPTOR, gated.inputs, {");
+    expect(source).toContain("prepareInputs({");
   });
 });
 
@@ -795,7 +825,11 @@ describe("runAddMethod", () => {
     expect(await written()).toEqual(["src/components/ExampleTabs.tsx"]);
   });
 
-  it("warns about a nested file input rather than pretending the gate reaches it", async () => {
+  it("scaffolds the whole file path for a file below the top level, and warns of nothing", async () => {
+    // A file inside a structured or list input used to be a scaffold-time
+    // warning, because the action's gate could not reach it. The gate now walks
+    // the descriptor, so the slice gets the gate, the upload and the drop seam
+    // like a top-level document — and the plan names the position instead.
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((line: unknown) => void lines.push(String(line)));
     const client = fakeClient({
@@ -831,7 +865,17 @@ describe("runAddMethod", () => {
 
     expect(await runAddMethod([TEXT_STATS_REF], deps(client))).toBe(0);
 
-    expect(lines.join("\n")).toContain("packet.scan");
+    const printed = lines.join("\n");
+    expect(printed).toContain("files:  packet.scan");
+    expect(printed).not.toContain("handle it yourself");
+
+    const action = await readFile(
+      path.join(root, "src", "actions", "runTextStatsPipeline.ts"),
+      "utf-8",
+    );
+    expect(action).toContain("checkFileInputs(DESCRIPTOR, gated.inputs, {");
+    const form = await readFile(path.join(root, "src", "components", "TextStatsForm.tsx"), "utf-8");
+    expect(form).toContain("useFileInputs");
   });
 
   it("refuses a tab switcher whose anchor is gone, before writing anything", async () => {

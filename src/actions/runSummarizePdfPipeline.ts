@@ -11,30 +11,35 @@ import {
   type PollOutcome,
   type StartOutcome,
 } from "@/lib/durableRun";
-import { gateRunInputs, requireContract } from "@/lib/runInputs";
-import { PIPE_IO_CONTRACTS } from "@/generated/summarize-pdf/contracts";
+import { gateRunInputs, requireContract, requireInputForm } from "@/lib/runInputs";
+import { INPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/summarize-pdf/contracts";
 import type { PipelineError } from "@/lib/errors";
 import type { StartOptions } from "@pipelex/sdk";
 
 const PIPE_CODE = "summarize_pdf";
 
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "summarize_pdf", PIPE_CODE);
+// The file gate walks the same wire descriptor the browser rendered the form
+// from, and the SDK's `prepareInputs` resolves uploads by — so the three agree
+// on where the files are.
+const DESCRIPTOR = requireInputForm(INPUT_FORM, "summarize_pdf", PIPE_CODE);
 
 /**
  * Shape gate, then file gate, in that order. Shared by both execution paths.
  *
  * The kernel gate proves the shape a contract can declare; `checkFileInputs`
- * proves what it cannot — that the `url` is a reference we accept, and that any
- * bytes riding inline are a PDF under the cap. The scheme half is the
- * security-relevant one: `prepareInputs` reads an unrecognised string as a local
- * filesystem path, and a Server Action is a public endpoint. See its docstring.
+ * proves what it cannot — that the `url` at every file position the descriptor
+ * declares is a reference we accept, and that any bytes riding inline are a PDF
+ * under the cap. The scheme half is the security-relevant one: `prepareInputs`
+ * reads an unrecognised string as a local filesystem path, and a Server Action
+ * is a public endpoint. See its docstring.
  */
 function gatePdfInputs(
   data: Record<string, unknown>,
 ): { ok: true; inputs: Record<string, unknown> } | { ok: false; error: PipelineError } {
   const gated = gateRunInputs(CONTRACT, data);
   if (!gated.ok) return gated;
-  const error = checkFileInputs(gated.inputs, {
+  const error = checkFileInputs(DESCRIPTOR, gated.inputs, {
     allowedMimes: ["application/pdf"],
     maxBytes: MAX_PDF_BYTES,
   });

@@ -1,10 +1,16 @@
 import type { PipelineError } from "@/lib/errors";
+// Type-only, so nothing of the SDK reaches the client bundle through this
+// module. The descriptor types are the MTHDS standard's (`mthds/protocol`),
+// re-exported by the SDK whose `prepareInputs` walks the same nodes.
+import type { InputFormItem, PipeInputFormDescriptor } from "@pipelex/sdk";
 
 /**
  * The authoritative pre-flight for the file-bearing inputs of a run.
- * `checkFileInputs` is the entry point: it validates the *reference* each file
- * input carries against a closed set of schemes, and then — only for a `data:`
- * URL, the one form that arrives as bytes — its MIME type and its size.
+ * `checkFileInputs` is the entry point: it walks the method's wire input-form
+ * descriptor to find every file position — top-level, inside a list, nested in
+ * a structured concept — validates the *reference* each one carries against a
+ * closed set of schemes, and then — only for a `data:` URL, the one form that
+ * arrives as bytes — its MIME type and its size.
  *
  * The scheme half is the security-relevant one, because the SDK's
  * `prepareInputs` resolves an unrecognised string as a **local filesystem
@@ -158,42 +164,88 @@ export function validateDataUrl(
  */
 const ALLOWED_FILE_SCHEMES = ["data:", "https://", "pipelex-storage://"];
 
-/** How deep `carriesUrl` will look before giving up and refusing. */
-const MAX_INPUT_DEPTH = 8;
-
-/**
- * Whether `value` is, or contains, an object carrying a `url` key — i.e. a file
- * position. Descends arrays and plain objects only, and treats hitting the depth
- * cap as "yes", so a deeply nested or self-referential payload refuses rather
- * than passing (and the walk cannot run away on a cycle).
- */
-function carriesUrl(value: unknown, depth = 0): boolean {
-  if (depth >= MAX_INPUT_DEPTH) return true;
-  if (Array.isArray(value)) return value.some((item) => carriesUrl(item, depth + 1));
-  if (typeof value !== "object" || value === null) return false;
-  if ("url" in value) return true;
-  return Object.values(value).some((child) => carriesUrl(child, depth + 1));
+/** Strict plain-object test — the SDK's own, so the two walks agree on what an object is. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Object.prototype.toString.call(value) === "[object Object]";
 }
 
 /**
- * Whether `content` hides a file position besides the one {@link checkFileInputs}
- * goes on to read and validate — its own `url`, *when that is a string*.
- *
- * Two things make the exclusion narrow, and both were bypasses before they were
- * rules. It is asked unconditionally, never only when `url` is missing: `url` is
- * a key the caller supplies, so a check that runs only in its absence is
- * switched off by pasting a perfectly good `https://` URL beside a nested one.
- * And the exclusion is keyed on the value's *type*, not on the key's name: a
- * non-string under `url` is a subtree this gate never inspects, so waving it
- * through on the strength of its name skips exactly what the walk exists to
- * catch. Excluded is only ever what the scheme check below actually reads.
+ * The kernel's explicit `{ concept, content }` envelope — exact keys, not a
+ * superset, which is the SDK's test (`isExplicitEnvelope`) and the runtime's
+ * (`input_shaper.py`'s `_is_explicit`). A structured input that merely happens
+ * to carry both fields is not an envelope.
  */
-function hidesFilePosition(content: unknown): boolean {
-  if (Array.isArray(content)) return carriesUrl(content, 1);
-  if (typeof content !== "object" || content === null) return false;
-  return Object.entries(content).some(
-    ([key, child]) => !(key === "url" && typeof child === "string") && carriesUrl(child, 1),
-  );
+function isExplicitEnvelope(value: unknown): value is { concept: unknown; content: unknown } {
+  if (!isPlainObject(value)) return false;
+  const keys = Object.keys(value);
+  return keys.length === 2 && "concept" in value && "content" in value;
+}
+
+/** One file position the descriptor declares, with the source the value put there. */
+interface FilePosition {
+  /** Dotted, list indices included: `document`, `cvs.1`, `packet.scan`. */
+  path: string;
+  /** What `prepareInputs` would resolve: `value.url` for `{url}` content, else the value. */
+  source: unknown;
+  /** The filename the value states, for the error that names the file. */
+  filename?: string;
+}
+
+/**
+ * The file positions under one descriptor node, found by walking the
+ * DESCRIPTOR — never the value. This is `prepareInputs`'s `resolveNode`, read
+ * rather than resolved: `document` / `image` is a file position whatever the
+ * value's shape, `object` descends the fields it declares (a key the descriptor
+ * does not name is copied through untouched by the SDK, so it is not a file
+ * position here either), `list` descends `item` against each element, and
+ * every other kind passes through at any depth — `unknown` included, which the
+ * SDK deliberately does not interpret. A value whose shape disagrees with the
+ * node (a scalar at an `object`, a non-array at a `list`) is left to the shape
+ * gate and the run.
+ *
+ * At a file position the source is read the way `resolveFilePosition` reads
+ * it: canonical `{url}` content yields its `url`, anything else IS the source.
+ */
+function collectFilePositions(
+  node: InputFormItem,
+  value: unknown,
+  path: string,
+  out: FilePosition[],
+): void {
+  switch (node.kind) {
+    case "document":
+    case "image": {
+      if (isPlainObject(value) && "url" in value) {
+        const filename = value["filename"];
+        out.push({
+          path,
+          source: value["url"],
+          filename: typeof filename === "string" ? filename : undefined,
+        });
+      } else {
+        out.push({ path, source: value });
+      }
+      return;
+    }
+    case "object": {
+      if (!isPlainObject(value)) return;
+      for (const child of node.fields) {
+        if (Object.hasOwn(value, child.name)) {
+          collectFilePositions(child, value[child.name], `${path}.${child.name}`, out);
+        }
+      }
+      return;
+    }
+    case "list": {
+      if (!Array.isArray(value)) return;
+      value.forEach((entry, index) => {
+        collectFilePositions(node.item, entry, `${path}.${index}`, out);
+      });
+      return;
+    }
+    default:
+      return;
+  }
 }
 
 /**
@@ -202,93 +254,71 @@ function hidesFilePosition(content: unknown): boolean {
  * express — "a reference we accept, and if it carries bytes, few enough of the
  * right kind".
  *
+ * **The descriptor is the classifier, never the value's shape.** The SDK's
+ * `prepareInputs` finds the positions it will resolve by walking the method's
+ * wire input-form descriptor — `document` / `image` at any depth, through
+ * `object` fields and `list` items — and this gate walks the same descriptor,
+ * so the set of positions it verifies is exactly the set the SDK goes on to
+ * read. That is what lets a method take `cvs: list[Document]`, or a file inside
+ * a structured concept, without a value heuristic on either side: a `text`
+ * field merely *named* `url` is not a file, and a `Document` two levels down
+ * is. The earlier shape of this gate read `content.url` one level down and
+ * refused anything deeper, because a value walk cannot tell a document string
+ * from a text one; the descriptor can.
+ *
  * Three properties worth keeping when adapting this:
  *
  * 1. **Scheme first, and refuse by default.** Treating "not a data URL" as
  *    "nothing to check" is how the local-file read above opens — the absence of
  *    bytes to inspect is not the absence of something to verify.
- * 2. **Keyed on the values, not on an input's name.** Hard-coding `inputs.document`
- *    makes this whole gate return "fine" the day the bundle renames that input,
- *    while codegen carries the rename into the form, the readiness rules and the
- *    wire envelope. It fails open, silently, on a routine edit.
- * 3. **It reads one level — `content.url`, or a bare `content` string, which
- *    the SDK treats the same way — and refuses a deeper shape that hides a file
- *    position *carrying a `url` key*.** `prepareInputs` walks the method's signature, so it
- *    resolves a file inside a list (`documents: list[Document]`) or nested in a
- *    structured concept, both of which `content.url` misses entirely. Property 2
- *    is worth nothing if pluralising an input reopens the hole instead — so an
- *    unreachable `url` is a refusal here, not a pass. The refusal is asked
- *    *unconditionally*, not merely when `content.url` is absent: guarding it
- *    behind a missing `url` lets the caller switch it off with a benign outer
- *    `url` beside the nested one, which is the bypass shape
- *    {@link hidesFilePosition} exists to close.
- *
- *    The `url` key is what makes that walk possible, and it is also its limit:
- *    the SDK accepts a *bare source string* at a file position too, and a bare
- *    string carries nothing to recognise it by. So a hypothetical
- *    `documents: list[Document]` declared with string items would reach
- *    `prepareInputs` unread by this gate, which resolves an unrecognised string
- *    as a local filesystem path. No committed method declares a plural or nested
- *    file input, so nothing reaches that today — and the obvious patch is worse
- *    than the gap: treating any nested string as a file position refuses
- *    `list[Text]` and every structured concept, because a blind value walk
- *    cannot tell a document string from a text one. Widening the walk to descend
- *    the contract's `json_schema` in lockstep (the way `wireOutput`'s
- *    `dropWireNulls` descends a zod schema, and for the same reason) is the real
- *    fix, and it is a prerequisite for the first method that needs one of those
- *    shapes — not an optional hardening.
+ * 2. **Keyed on the descriptor, not on an input's name.** Hard-coding
+ *    `inputs.document` makes this whole gate return "fine" the day the bundle
+ *    renames that input, while codegen carries the rename into the form, the
+ *    readiness rules and the wire envelope. The descriptor is regenerated with
+ *    them, so a rename moves the gate too.
+ * 3. **A file position holds a string, or it is refused.** `prepareInputs`
+ *    accepts a *bare source string* at a file position as readily as `{url}`
+ *    and resolves the two identically, so both are read here. Anything else
+ *    that is present — bytes smuggled past the size cap, an object with no
+ *    `url` — is refused rather than skipped: the verdict rests on this walk,
+ *    never on the schema gate in front of it happening to refuse the same
+ *    thing. `null` and `undefined` are the one exception, because they are how
+ *    an optional file position is left empty, and nothing reads a file for them.
  *
  * This is the authoritative check. The browser's own size check is an early exit
  * that saves an encode, not a gate — it is trivially bypassed.
  */
 export function checkFileInputs(
+  descriptor: PipeInputFormDescriptor,
   inputs: Record<string, unknown>,
   opts: { allowedMimes: string[]; maxBytes: number },
 ): PipelineError | null {
-  for (const [name, envelope] of Object.entries(inputs)) {
-    const content = (envelope as { content?: unknown })?.content;
+  const positions: FilePosition[] = [];
+  for (const field of descriptor.fields) {
+    if (!Object.hasOwn(inputs, field.name)) continue;
+    const value = inputs[field.name];
+    // The kernel gate hands over `{ concept, content }` envelopes; the SDK reads
+    // the inner content against the same node, and so does this.
+    const content = isExplicitEnvelope(value) ? value.content : value;
+    collectFilePositions(field, content, field.name, positions);
+  }
 
-    if (hidesFilePosition(content)) {
-      return {
-        kind: "bad_request",
-        title: "Unsupported input shape",
-        message:
-          `The "${name}" input carries a file reference this app cannot verify — ` +
-          `a repeated or nested file position. Refused rather than passed through.`,
-        details: `unverifiable_file_position: ${name}`,
-      };
-    }
-    // `prepareInputs` accepts a *bare source string* at a file position as
-    // readily as `{url}`, and resolves the two identically — so reading only
-    // the object form would leave this gate's verdict resting on the schema in
-    // front of it (ajv refuses a string where `native.Document` declares an
-    // object) rather than on its own walk. That is the coupling property 2
-    // disclaims, and no committed method reaches the compact form today, which
-    // is exactly why it must not be the thing keeping this correct.
-    const file: { url?: unknown; filename?: unknown } =
-      typeof content === "string" ? { url: content } : ((content ?? {}) as typeof file);
-    if (typeof file.url !== "string") continue;
-    const url = file.url;
-
-    if (!ALLOWED_FILE_SCHEMES.some((scheme) => url.startsWith(scheme))) {
+  for (const { path, source, filename } of positions) {
+    if (source === undefined || source === null) continue; // An empty optional position.
+    if (typeof source !== "string" || !ALLOWED_FILE_SCHEMES.some((s) => source.startsWith(s))) {
       return {
         kind: "bad_request",
         title: "Unsupported file reference",
         message:
-          `The "${name}" input must be an uploaded file, an https:// URL, or a ` +
+          `The "${path}" input must be an uploaded file, an https:// URL, or a ` +
           `pipelex-storage:// reference.`,
-        details: `unsupported_scheme: ${name}`,
+        details: `unsupported_scheme: ${path}`,
       };
     }
-    if (!url.startsWith("data:")) continue; // A reference, not bytes — `prepareInputs` resolves it.
+    if (!source.startsWith("data:")) continue; // A reference, not bytes — `prepareInputs` resolves it.
 
-    const fileError = validateDataUrl(url, opts);
-    if (fileError) {
-      return fileInputErrorToPipelineError(
-        fileError,
-        typeof file.filename === "string" ? file.filename : "document",
-      );
-    }
+    const fileError = validateDataUrl(source, opts);
+    if (fileError) return fileInputErrorToPipelineError(fileError, filename ?? path);
   }
   return null;
 }

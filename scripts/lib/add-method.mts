@@ -418,56 +418,43 @@ export function bindOutput(
 
 // ── File inputs ─────────────────────────────────────────────────────────────
 
-/** The file-bearing positions of a pipe's inputs, split by what the gate can reach. */
-export interface FileInputs {
-  /** Top-level file fields — the ones `checkFileInputs` gates by value. */
-  top: { name: string; kind: "document" | "image" }[];
-  /** Dotted paths of file fields nested inside a structured or list input. */
-  nested: string[];
+/** One file-bearing position of a pipe's inputs, at any depth. */
+export interface FileInput {
+  /** Dotted, with `[]` for a list's items: `document`, `cvs[]`, `packet.scan`. */
+  path: string;
+  kind: "document" | "image";
 }
 
-function isFileKind(kind: string): kind is "document" | "image" {
-  return kind === "document" || kind === "image";
-}
-
-function collectNestedFiles(node: InputFormItem, at: string, out: string[]): void {
-  if (node.kind === "object") {
-    for (const child of node.fields) {
-      const childPath = `${at}.${child.name}`;
-      if (isFileKind(child.kind)) out.push(childPath);
-      collectNestedFiles(child, childPath, out);
-    }
+function collectFiles(node: InputFormItem, at: string, out: FileInput[]): void {
+  if (node.kind === "document" || node.kind === "image") {
+    out.push({ path: at, kind: node.kind });
+  } else if (node.kind === "object") {
+    for (const child of node.fields) collectFiles(child, `${at}.${child.name}`, out);
   } else if (node.kind === "list") {
-    const itemPath = `${at}[]`;
-    if (isFileKind(node.item.kind)) out.push(itemPath);
-    collectNestedFiles(node.item, itemPath, out);
+    collectFiles(node.item, `${at}[]`, out);
   }
 }
 
 /**
- * Which of a pipe's inputs carry files, and where.
+ * Every file position a pipe's inputs declare, in descriptor order.
  *
- * A top-level file input gets the PDF example's whole path: the browser encodes
- * it through `useFileInputs`, and the action gates it with `checkFileInputs`
- * before handing the inputs to `prepareInputs`. A file *nested* inside a
- * structured or list input is refused by `checkFileInputs` at run time, so the
- * scaffold warns about it at scaffold time rather than letting the first run be
- * the surprise.
+ * Any one of them gives the slice the PDF example's whole path: the browser
+ * encodes through `useFileInputs` (the kernel's list and object controls hand
+ * a nested file to the same `onDropFile` seam, at its dotted id), the action
+ * gates every position with `checkFileInputs` — which walks this same
+ * descriptor — and `prepareInputs` uploads them. Depth does not change the
+ * shape of what is scaffolded, only the media types the gate accepts.
  */
-export function fileInputsOf(descriptor: PipeInputFormDescriptor): FileInputs {
-  const top: FileInputs["top"] = [];
-  const nested: string[] = [];
-  for (const field of descriptor.fields) {
-    if (isFileKind(field.kind)) top.push({ name: field.name, kind: field.kind });
-    collectNestedFiles(field, field.name, nested);
-  }
-  return { top, nested };
+export function fileInputsOf(descriptor: PipeInputFormDescriptor): FileInput[] {
+  const files: FileInput[] = [];
+  for (const field of descriptor.fields) collectFiles(field, field.name, files);
+  return files;
 }
 
 /** The media types a scaffolded action accepts, by the file kinds it declares. */
-export function allowedMimesFor(top: FileInputs["top"]): string[] {
+export function allowedMimesFor(files: FileInput[]): string[] {
   const mimes = new Set<string>();
-  for (const field of top) {
+  for (const field of files) {
     if (field.kind === "document") mimes.add("application/pdf");
     else for (const mime of ["image/png", "image/jpeg", "image/webp"]) mimes.add(mime);
   }
@@ -565,7 +552,7 @@ export interface ScaffoldPlan {
   selector: ValidateMethodSelector;
   pipe: ChosenPipe;
   binding: OutputBinding;
-  files: FileInputs;
+  files: FileInput[];
   /** Does the run gate refuse an empty submission? Decides the emitted test. */
   gating: boolean;
 }
@@ -683,10 +670,10 @@ export function renderAction(plan: ScaffoldPlan): string {
   const outputType = `${names.pascal}Output`;
   const parseName = `parse${names.pascal}Output`;
   const constant = selectorConstant(selector);
-  const hasFiles = files.top.length > 0;
+  const hasFiles = files.length > 0;
 
   const imports = [
-    `import { PIPE_IO_CONTRACTS } from "@/generated/${names.slug}/contracts";`,
+    `import { ${hasFiles ? "INPUT_FORM, " : ""}PIPE_IO_CONTRACTS } from "@/generated/${names.slug}/contracts";`,
     `import { ${parseName}, type ${outputType} } from "@/types/${names.camel}Pipeline";`,
     'import { executeBlockingRun, type BlockingOutcome } from "@/lib/blockingRun";',
     "import {",
@@ -695,7 +682,7 @@ export function renderAction(plan: ScaffoldPlan): string {
     "  type PollOutcome,",
     "  type StartOutcome,",
     '} from "@/lib/durableRun";',
-    'import { gateRunInputs, requireContract } from "@/lib/runInputs";',
+    `import { gateRunInputs, requireContract${hasFiles ? ", requireInputForm" : ""} } from "@/lib/runInputs";`,
     'import type { PipelexStartOptions } from "@pipelex/sdk";',
   ];
   if (hasFiles) {
@@ -733,8 +720,16 @@ export function renderAction(plan: ScaffoldPlan): string {
     "// The same generated contract the browser rendered the form from. One gate, two",
     "// call sites, zero drift — and the server's copy is the one that's trusted.",
     `const CONTRACT = requireContract(PIPE_IO_CONTRACTS, ${JSON.stringify(pipe.domain)}, PIPE_CODE);`,
-    "",
   );
+  if (hasFiles) {
+    head.push(
+      "// The file gate walks the same wire descriptor the browser rendered the form",
+      "// from, and the SDK's `prepareInputs` resolves uploads by — so the three agree",
+      "// on where the files are, at any depth.",
+      `const DESCRIPTOR = requireInputForm(INPUT_FORM, ${JSON.stringify(pipe.domain)}, PIPE_CODE);`,
+    );
+  }
+  head.push("");
 
   const gateName = hasFiles ? "gateInputs" : "gateRunInputs";
   const body: string[] = [];
@@ -742,23 +737,25 @@ export function renderAction(plan: ScaffoldPlan): string {
   if (hasFiles) {
     body.push(
       "/** Media types the file input(s) accept. Widen it if your method takes more. */",
-      `const ALLOWED_MIMES = ${JSON.stringify(allowedMimesFor(files.top))};`,
+      `const ALLOWED_MIMES = ${JSON.stringify(allowedMimesFor(files))};`,
       "",
       "/**",
       " * Shape gate, then file gate, in that order — the PDF example's pattern.",
       " *",
       " * The kernel gate proves the shape a contract can declare; `checkFileInputs`",
-      " * proves what it cannot: that the `url` is a reference we accept, and that any",
-      " * bytes riding inline are an allowed type under the cap. The scheme half is the",
-      " * security-relevant one — `prepareInputs` reads an unrecognised string as a",
-      " * local filesystem path, and a Server Action is a public endpoint.",
+      " * proves what it cannot: that the `url` at every file position the descriptor",
+      " * declares — top-level, in a list, nested in a structured concept — is a",
+      " * reference we accept, and that any bytes riding inline are an allowed type",
+      " * under the cap. The scheme half is the security-relevant one — `prepareInputs`",
+      " * reads an unrecognised string as a local filesystem path, and a Server Action",
+      " * is a public endpoint.",
       " */",
       "function gateInputs(",
       "  data: Record<string, unknown>,",
       "): { ok: true; inputs: Record<string, unknown> } | { ok: false; error: PipelineError } {",
       "  const gated = gateRunInputs(CONTRACT, data);",
       "  if (!gated.ok) return gated;",
-      "  const error = checkFileInputs(gated.inputs, {",
+      "  const error = checkFileInputs(DESCRIPTOR, gated.inputs, {",
       "    allowedMimes: ALLOWED_MIMES,",
       "    maxBytes: MAX_PDF_BYTES,",
       "  });",
@@ -862,7 +859,7 @@ export function renderActionTest(plan: ScaffoldPlan): string {
   const { names, selector, pipe, files, gating } = plan;
   const constant = selectorConstant(selector);
   const selectorField = constant.name === "METHOD_REF" ? "method_ref" : "method_id";
-  const hasFiles = files.top.length > 0;
+  const hasFiles = files.length > 0;
 
   const clientMethods = ["execute", "start", "getRunStatus", "getRunResult"];
   if (hasFiles) clientMethods.push("prepareInputs");
@@ -940,7 +937,7 @@ export function renderActionTest(plan: ScaffoldPlan): string {
  */
 export function renderForm(plan: ScaffoldPlan): string {
   const { names, pipe, files } = plan;
-  const hasFiles = files.top.length > 0;
+  const hasFiles = files.length > 0;
 
   const imports = [
     '"use client";',
@@ -1322,14 +1319,6 @@ async function runAddMethodInner(argv: readonly string[], deps?: AddMethodDeps):
   ];
 
   const warnings: string[] = [];
-  if (plan.files.nested.length > 0) {
-    warnings.push(
-      `this method takes a file inside a structured or list input ` +
-        `(${plan.files.nested.join(", ")}). The scaffolded action's file gate only reaches ` +
-        `top-level inputs, and \`checkFileInputs\` refuses a nested one at run time — ` +
-        `handle it yourself in ${paths.action}.`,
-    );
-  }
   if (selectorKind(selector) === "method_id") {
     warnings.push(
       "a method_id is scoped to your key's organization, so `npm run codegen` on this " +
@@ -1345,6 +1334,9 @@ async function runAddMethodInner(argv: readonly string[], deps?: AddMethodDeps):
     `  output: ${contract.output.concept_ref}` +
       `${plan.binding.plural ? " (plural — a { items: [...] } envelope)" : ""}`,
   );
+  if (plan.files.length > 0) {
+    console.log(`  files:  ${plan.files.map((file) => file.path).join(", ")}`);
+  }
   console.log(`  tab:    ${JSON.stringify(names.label)} (id ${names.slug})`);
 
   if (args.dryRun) {
