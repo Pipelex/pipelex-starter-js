@@ -5,14 +5,26 @@ import { ComplexForm } from "./ComplexForm";
 import { EntityForm } from "./EntityForm";
 import { PdfForm } from "./PdfForm";
 import { ImageForm } from "./ImageForm";
+// add-method:imports — `make add-method` inserts a scaffolded form's import
+// directly above this line. Do not move it, reword it, or delete it; the
+// scaffold refuses when it cannot find it, and a test pins that it is here.
 
-type TabId = "text" | "pdf" | "image" | "complex";
-
-const TABS: { id: TabId; label: string }[] = [
-  { id: "text", label: "Text entities" },
-  { id: "pdf", label: "PDF summary" },
-  { id: "image", label: "Image generation" },
-  { id: "complex", label: "Complex inputs" },
+/**
+ * One entry per example, and the entry is the whole registration: the tab
+ * button, the panel and the component all come from it.
+ *
+ * `make add-method` appends an entry at the anchor below, which is why the
+ * panels are mapped rather than written out — a hand-written `<div
+ * role="tabpanel">` per form would make a scaffolded tab a second insertion
+ * point, and two anchors in two shapes is one more thing to keep in step.
+ */
+const TABS: { id: string; label: string; Component: () => React.JSX.Element }[] = [
+  { id: "text", label: "Text entities", Component: EntityForm },
+  { id: "pdf", label: "PDF summary", Component: PdfForm },
+  { id: "image", label: "Image generation", Component: ImageForm },
+  { id: "complex", label: "Complex inputs", Component: ComplexForm },
+  // add-method:tabs — `make add-method` inserts a scaffolded tab's entry
+  // directly above this line. Same rules as the import anchor above.
 ];
 
 /**
@@ -21,7 +33,9 @@ const TABS: { id: TabId; label: string }[] = [
  * tabs to look at another example.
  */
 export function ExampleTabs() {
-  const [active, setActive] = useState<TabId>("text");
+  // The first entry is the default, so adding a tab never has to touch this
+  // line and removing the first one cannot leave a dangling id behind.
+  const [active, setActive] = useState<string>(TABS[0]!.id);
 
   return (
     <div className="space-y-6">
@@ -53,23 +67,17 @@ export function ExampleTabs() {
         })}
       </div>
 
-      <div role="tabpanel" id="panel-text" aria-labelledby="tab-text" hidden={active !== "text"}>
-        <EntityForm />
-      </div>
-      <div role="tabpanel" id="panel-pdf" aria-labelledby="tab-pdf" hidden={active !== "pdf"}>
-        <PdfForm />
-      </div>
-      <div role="tabpanel" id="panel-image" aria-labelledby="tab-image" hidden={active !== "image"}>
-        <ImageForm />
-      </div>
-      <div
-        role="tabpanel"
-        id="panel-complex"
-        aria-labelledby="tab-complex"
-        hidden={active !== "complex"}
-      >
-        <ComplexForm />
-      </div>
+      {TABS.map(({ id, Component }) => (
+        <div
+          key={id}
+          role="tabpanel"
+          id={`panel-${id}`}
+          aria-labelledby={`tab-${id}`}
+          hidden={id !== active}
+        >
+          <Component />
+        </div>
+      ))}
     </div>
   );
 }
