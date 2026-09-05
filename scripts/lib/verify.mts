@@ -47,6 +47,7 @@ import {
   readTextFile,
   renderContracts,
   REPO_ROOT,
+  missingViews,
   VALIDATE_VIEWS,
   type MethodSource,
 } from "./shared.mts";
@@ -221,7 +222,7 @@ async function runVerifyInner(): Promise<number> {
       if (!response.input_form || !response.output_form) {
         console.error(
           `\n✗ ${method.name} — /v1/validate returned no ` +
-            `${response.input_form ? "output_form" : "input_form"} view, so the committed ` +
+            `${missingViews(response).join(" or ")} view, so the committed ` +
             `${CONTRACTS_FILENAME} cannot be verified. This base URL serves an API too old ` +
             `for the wire descriptors — check PIPELEX_BASE_URL.`,
         );

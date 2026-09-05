@@ -53,6 +53,7 @@ import {
   REPO_ROOT,
   SIDECAR_COMMENT,
   SOURCES_SIDECAR,
+  missingViews,
   VALIDATE_VIEWS,
   type MethodSource,
   type SourcesSidecar,
@@ -280,7 +281,7 @@ export async function fetchValidateArtifacts(
     if (!response.input_form || !response.output_form) {
       console.error(
         `\n✗ ${source.name} — /v1/validate returned no ` +
-          `${response.input_form ? "output_form" : "input_form"} view despite the ` +
+          `${missingViews(response).join(" or ")} view despite the ` +
           `views: ${JSON.stringify(VALIDATE_VIEWS)} opt-in. This base URL serves an API too old ` +
           `for the wire descriptors — check PIPELEX_BASE_URL, or report upstream.`,
       );

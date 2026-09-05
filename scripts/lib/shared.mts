@@ -129,6 +129,21 @@ export interface SourcesSidecar {
 export const VALIDATE_VIEWS: string[] = ["input_form", "output_form"];
 
 /**
+ * The views of `VALIDATE_VIEWS` a verdict came back without.
+ *
+ * A view token IS the response key it fills — `views: ["input_form"]` answers
+ * on `input_form` — which is the coupling `VALIDATE_VIEWS` already rests on, so
+ * one filter over it names every absent payload without a second list to keep in
+ * step. Reporting only the first is what sent an operator on two round trips
+ * against an API serving neither: they fix the view the message named and hit
+ * the same refusal for the other.
+ */
+export function missingViews(response: object): string[] {
+  const payload = response as Record<string, unknown>;
+  return VALIDATE_VIEWS.filter((view) => !payload[view]);
+}
+
+/**
  * The header every `contracts.ts` opens with.
  *
  * Deliberately does NOT start with codegen's stamp begin-marker: a stamped file

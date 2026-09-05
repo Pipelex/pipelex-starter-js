@@ -6,6 +6,8 @@ import {
   humanizeFieldName,
   StuffViewer,
 } from "@pipelex/mthds-form/react";
+import { useMemo } from "react";
+import { scrubResultUrls } from "@/lib/resultUrls";
 
 interface RunResultProps {
   /** The method's result descriptor, from `requireResultField`. */
@@ -44,6 +46,13 @@ interface RunResultProps {
  * concept pills, because a result and the form that produced it show the same
  * fields and must read the same way.
  *
+ * **The one thing it does re-read is URLs.** `scrubResultUrls` removes any file
+ * URL the kernel would act on and this template's policy refuses, because the
+ * kernel's own gate accepts every `data:` media type and feeds an unsandboxed
+ * `<iframe>`. That is a URL policy, not a shape re-validation: the binder still
+ * owns the shape, and a refused reference is reported rather than hidden.
+ * `src/lib/resultUrls.ts` carries the rule and the deletion criteria.
+ *
  * **Not wired yet, and deliberately:** a `pipelex-storage://` reference resolves
  * nowhere in a browser, and the kernel's seam for exchanging one is a
  * `<ResultEnvProvider resolveUrl>` mounted above this. The hosted runtime
@@ -54,6 +63,8 @@ interface RunResultProps {
  * prop threaded through here.
  */
 export function RunResult({ field, value, name }: RunResultProps) {
+  const { value: shown, refused } = useMemo(() => scrubResultUrls(field, value), [field, value]);
+
   return (
     // A labelled region rather than a bare wrapper: the kernel's header is a
     // styled span, not a heading, so without this the result is a stretch of
@@ -61,8 +72,18 @@ export function RunResult({ field, value, name }: RunResultProps) {
     // tab panel is out of the accessibility tree, so the tabs cannot collide.
     <section aria-label={humanizeFieldName(name)}>
       <FieldPresentationProvider presentation="app">
-        <StuffViewer field={field} value={value} name={name} />
+        <StuffViewer field={field} value={shown} name={name} />
       </FieldPresentationProvider>
+      {refused.length > 0 && (
+        // Said out loud rather than swallowed: the JSON view is billed as the
+        // verbatim receipt, so a payload it no longer shows in full has to
+        // account for the difference.
+        <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <span className="font-medium">Some file references were not displayed.</span> This run
+          returned a URL at {refused.join(", ")} that the result view refuses to hand a browser —
+          only <code>https:</code> URLs and PNG, JPEG or WebP <code>data:</code> URLs are shown.
+        </p>
+      )}
     </section>
   );
 }

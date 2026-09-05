@@ -39,6 +39,16 @@ import {
  * order as its two siblings: **the artifact, then domain, then pipe code**, with
  * the contract carried alongside because the schema is read off it rather than
  * looked up a second time.
+ *
+ * All three of the kernel's preconditions are checked here rather than left to
+ * fail inside it, and that is the point of the function. Every caller builds its
+ * result field at **module scope of a `"use client"` component**, so an
+ * unchecked `undefined` reaching `buildResultField` takes the whole tab chunk
+ * down with a bare `TypeError` naming neither the pipe nor the artifact — the
+ * same unreadable failure the descriptor guard exists to prevent, one line
+ * further on. The reachable cases are an engine serving `output_form` but no
+ * `json_schema` on the output contract (a recent addition to the standard), and
+ * a `contracts.ts` committed before either member existed.
  */
 export function requireResultField(
   outputForm: OutputForm,
@@ -50,9 +60,24 @@ export function requireResultField(
   if (!descriptor) {
     throw new Error(
       `No output-form descriptor for "${domain}.${pipeCode}" in the generated OUTPUT_FORM ` +
-        `(found: ${Object.keys(outputForm).join(", ") || "none"}). ` +
+        `(found: ${Object.keys(outputForm ?? {}).join(", ") || "none"}). ` +
         `Check the domain and pipe code against methods/<name>/main.mthds, then run \`npm run codegen\`.`,
     );
   }
-  return buildResultField(descriptor, contract.output.json_schema);
+  if (!descriptor.field) {
+    throw new Error(
+      `The output-form descriptor for "${domain}.${pipeCode}" carries no \`field\` node, so there ` +
+        `is nothing to render. Regenerate with \`npm run codegen\`; if it comes back the same, the ` +
+        `API served a malformed output_form view — report upstream.`,
+    );
+  }
+  const schema = contract.output?.json_schema;
+  if (!schema) {
+    throw new Error(
+      `The IO contract for "${domain}.${pipeCode}" carries no \`output.json_schema\`, so the ` +
+        `descriptor has no payload shape to pair with. Check PIPELEX_BASE_URL serves an API that ` +
+        `states an output schema, then run \`npm run codegen\`.`,
+    );
+  }
+  return buildResultField(descriptor, schema);
 }
