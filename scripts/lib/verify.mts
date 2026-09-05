@@ -47,6 +47,8 @@ import {
   readTextFile,
   renderContracts,
   REPO_ROOT,
+  missingViews,
+  VALIDATE_VIEWS,
   type MethodSource,
 } from "./shared.mts";
 
@@ -206,9 +208,9 @@ async function runVerifyInner(): Promise<number> {
         method.kind === "files"
           ? await client.validateFiles(
               method.files.map((file) => ({ content: file.content, uri: file.source })),
-              { views: ["input_form"] },
+              { views: VALIDATE_VIEWS },
             )
-          : await client.validate(method.selector, false, undefined, undefined, ["input_form"]);
+          : await client.validate(method.selector, false, undefined, undefined, VALIDATE_VIEWS);
       if (!response.is_valid) {
         console.error(`\n✗ ${method.name} — the method no longer validates:`);
         for (const item of response.validation_errors) {
@@ -217,16 +219,21 @@ async function runVerifyInner(): Promise<number> {
         failed = true;
         continue;
       }
-      if (!response.input_form) {
+      if (!response.input_form || !response.output_form) {
         console.error(
-          `\n✗ ${method.name} — /v1/validate returned no input_form view, so the committed ` +
+          `\n✗ ${method.name} — /v1/validate returned no ` +
+            `${missingViews(response).join(" or ")} view, so the committed ` +
             `${CONTRACTS_FILENAME} cannot be verified. This base URL serves an API too old ` +
-            `for the wire descriptor — check PIPELEX_BASE_URL.`,
+            `for the wire descriptors — check PIPELEX_BASE_URL.`,
         );
         failed = true;
         continue;
       }
-      const live = renderContracts(response.pipe_io_contracts, response.input_form);
+      const live = renderContracts(
+        response.pipe_io_contracts,
+        response.input_form,
+        response.output_form,
+      );
       const committed = await readTextFile(path.join(outDir, CONTRACTS_FILENAME));
       if (live !== committed) {
         console.error(

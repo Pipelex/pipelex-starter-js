@@ -183,6 +183,11 @@ describe("checkMethod over a tree carrying contracts.ts", () => {
         ],
       },
     },
+    {
+      "demo.demo": {
+        field: { kind: "prose", name: "output", concept_ref: "native.Text", required: true },
+      },
+    },
   );
 
   /** A body plus the stamp the SDK expects over it — the hash is of the body alone. */

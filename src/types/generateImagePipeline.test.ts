@@ -72,7 +72,7 @@ describe("parseGeneratedImage", () => {
   });
 
   it("refuses a data: URL whose media type is not an image", () => {
-    // Not an image-decoding concern: `<ImageResult>` puts the same string in an
+    // Not an image-decoding concern: the result view puts the same string in an
     // `<a download>`, so a text/html payload would be saved as a file that runs
     // on a file:// origin when opened.
     expect(() =>
@@ -151,7 +151,7 @@ describe("parseGeneratedImage", () => {
   );
 
   it("rejects a file:// public_url even when url is web-renderable", () => {
-    // <ImageResult> displays public_url ?? url, so a bad public_url wins.
+    // The result view displays public_url ?? url, so a bad public_url wins.
     try {
       parseGeneratedImage(
         mainStuff({

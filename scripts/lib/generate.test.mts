@@ -73,6 +73,11 @@ const CONTRACTS = renderContracts(
     },
   },
   { "demo.demo": { fields: [] } },
+  {
+    "demo.demo": {
+      field: { kind: "prose", name: "output", concept_ref: "native.Text", required: true },
+    },
+  },
 );
 
 let outDir: string;
@@ -296,6 +301,11 @@ describe("generateMethod", () => {
       },
     },
     input_form: { "demo.demo": { fields: [] } },
+    output_form: {
+      "demo.demo": {
+        field: { kind: "prose", name: "output", concept_ref: "native.Text", required: true },
+      },
+    },
   };
 
   /** A client that answers both calls with the fixtures above, unless overridden. */
@@ -333,7 +343,7 @@ describe("generateMethod", () => {
     });
     expect(client.validateFiles).toHaveBeenCalledWith(
       [{ content: "a = 1\n", uri: "methods/demo/main.mthds" }],
-      { views: ["input_form"] },
+      { views: ["input_form", "output_form"] },
     );
     expect(client.validate).not.toHaveBeenCalled();
     expect((await readdir(outDir)).sort()).toEqual(
@@ -356,7 +366,7 @@ describe("generateMethod", () => {
       false,
       undefined,
       undefined,
-      ["input_form"],
+      ["input_form", "output_form"],
     );
     expect(client.validateFiles).not.toHaveBeenCalled();
   });
@@ -407,15 +417,28 @@ describe("generateMethod", () => {
     await expect(readdir(outDir)).rejects.toThrow();
   });
 
-  it("fails before writing when the validate view is missing", async () => {
+  // Both views are refused the same way and for the same reason: the tokens are
+  // lenient-ignored by an API too old to serve them, so an absent payload is the
+  // only signal, and a `contracts.ts` written without one renders an empty form
+  // (no input descriptor) or an empty result (no output descriptor) rather than
+  // failing anywhere a reader would look.
+  it.each([
+    ["input_form", { input_form: undefined }],
+    ["output_form", { output_form: undefined }],
+  ])("fails before writing when the %s view is missing", async (view, missing) => {
     noDrifts();
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line: unknown) => {
+      errors.push(String(line));
+    });
     const client = fakeClient({
-      validate: vi.fn().mockResolvedValue({ ...VALID_VALIDATE, input_form: undefined }),
+      validate: vi.fn().mockResolvedValue({ ...VALID_VALIDATE, ...missing }),
     });
 
     expect(await generateMethod(client, SELECTOR_SOURCE, outDir, "https://api.example")).toBe(
       "failed",
     );
+    expect(errors.join("\n")).toContain(`no ${view} view`);
     await expect(readdir(outDir)).rejects.toThrow();
   });
 });

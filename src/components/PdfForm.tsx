@@ -7,20 +7,22 @@ import {
   startSummarizePdfRun,
 } from "@/actions/runSummarizePdfPipeline";
 import { DEFAULT_EXECUTION_MODE, type ExecutionMode } from "@/config";
-import { INPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/summarize-pdf/contracts";
+import { INPUT_FORM, OUTPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/summarize-pdf/contracts";
 import { useFileInputs } from "@/hooks/useFileInputs";
 import { useRun } from "@/hooks/useRun";
 import { useRunInputs } from "@/hooks/useRunInputs";
+import { requireResultField } from "@/lib/resultField";
 import { requireContract, requireInputForm } from "@/lib/runInputs";
 import { CostReport } from "./CostReport";
-import { PdfSummaryResult } from "./PdfSummaryResult";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { ModeToggle } from "./ModeToggle";
 import { RunInputsForm } from "./RunInputsForm";
+import { RunResult } from "./RunResult";
 import { RunStatus } from "./RunStatus";
 
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "summarize_pdf", "summarize_pdf");
 const DESCRIPTOR = requireInputForm(INPUT_FORM, "summarize_pdf", "summarize_pdf");
+const RESULT_FIELD = requireResultField(OUTPUT_FORM, CONTRACT, "summarize_pdf", "summarize_pdf");
 
 const SAMPLE_PDF_PATH = "/sample-invoice.pdf";
 /** The input the sample PDF fills. Like a seeded sample text, a demo shortcut
@@ -161,7 +163,7 @@ export function PdfForm() {
       {!fileError && state.phase === "error" && <ErrorDisplay error={state.error} />}
       {state.phase === "done" && (
         <>
-          <PdfSummaryResult summary={state.output} />
+          <RunResult field={RESULT_FIELD} value={state.output} name="document_summary" />
           <CostReport usage={state.usage} />
         </>
       )}

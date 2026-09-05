@@ -7,19 +7,21 @@ import {
   startComplexFormRun,
 } from "@/actions/runComplexFormPipeline";
 import { DEFAULT_EXECUTION_MODE, type ExecutionMode } from "@/config";
-import { INPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/complex-form/contracts";
+import { INPUT_FORM, OUTPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/complex-form/contracts";
 import { useRun } from "@/hooks/useRun";
 import { useRunInputs } from "@/hooks/useRunInputs";
+import { requireResultField } from "@/lib/resultField";
 import { requireContract, requireInputForm } from "@/lib/runInputs";
-import { ComplexFormResult } from "./ComplexFormResult";
 import { CostReport } from "./CostReport";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { ModeToggle } from "./ModeToggle";
 import { RunInputsForm } from "./RunInputsForm";
+import { RunResult } from "./RunResult";
 import { RunStatus } from "./RunStatus";
 
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "complex_form", "extract_brief");
 const DESCRIPTOR = requireInputForm(INPUT_FORM, "complex_form", "extract_brief");
+const RESULT_FIELD = requireResultField(OUTPUT_FORM, CONTRACT, "complex_form", "extract_brief");
 
 const SAMPLE_TEXT =
   "Apple announced new products in Cupertino on March 5th, 2026, with Tim Cook presenting alongside Jony Ive.";
@@ -79,7 +81,7 @@ export function ComplexForm() {
       {state.phase === "error" && <ErrorDisplay error={state.error} />}
       {state.phase === "done" && (
         <>
-          <ComplexFormResult brief={state.output} />
+          <RunResult field={RESULT_FIELD} value={state.output} name="extraction_brief" />
           <CostReport usage={state.usage} />
         </>
       )}

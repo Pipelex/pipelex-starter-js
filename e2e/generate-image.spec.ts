@@ -27,7 +27,15 @@ test("durable mode: streams live status, then generates an image", async ({ page
   const result = page.getByRole("region", { name: "Generated image" });
   await expect(result).toBeVisible({ timeout: 150_000 });
 
-  const image = result.getByRole("img");
+  // `locator("img")` rather than `getByRole("img")`, deliberately. The result
+  // is rendered by the form kernel's `StuffViewer`, whose own chrome sits
+  // inside this region — and its Download button carries a lucide icon, an
+  // inline `<svg>` that ARIA counts as role `img`. So the accessible query
+  // matches two elements and fails on strict mode. The element selector is the
+  // stable one here: kernel icons are always `<svg>`, a rendered file is always
+  // an `<img>`. Its `alt` is no better a handle — the kernel fills it with the
+  // payload's caption or filename and only falls back to "Preview".
+  const image = result.locator("img");
   await expect(image).toBeVisible();
   await expect(image).toHaveAttribute("src", /\S/);
 });

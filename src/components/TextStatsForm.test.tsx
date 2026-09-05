@@ -92,8 +92,13 @@ describe("TextStatsForm", () => {
     expect(screen.getByRole("status")).toBeInTheDocument();
 
     await flush(2000);
-    expect(screen.getByRole("region", { name: "Text stats output" })).toBeInTheDocument();
-    expect(screen.getByText(/Text statistics/)).toBeInTheDocument();
+    // The result is rendered from the method's own output contract, so a
+    // `native.Text` result is typeset as the markdown a model actually returns:
+    // the heading is a heading and the table is a table, where a JSON view
+    // printed the escapes. The header carries the stuff name this form passed.
+    expect(screen.getByRole("heading", { name: "Text statistics" })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "Words" })).toBeInTheDocument();
+    expect(screen.getByText("Text stats")).toBeInTheDocument();
     // The same seam every example turns on: the action gets the schema-shaped
     // dict the contract declares, not the raw run-values the form holds.
     expect(start).toHaveBeenCalledWith({ text: { text: "Some prose." } });
@@ -111,7 +116,7 @@ describe("TextStatsForm", () => {
     await flush();
     expect(blocking).toHaveBeenCalledWith({ text: { text: "Some prose." } });
     expect(start).not.toHaveBeenCalled();
-    expect(screen.getByRole("region", { name: "Text stats output" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Text statistics" })).toBeInTheDocument();
   });
 
   it("renders the structured error when a poll returns ok:false", async () => {

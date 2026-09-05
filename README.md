@@ -74,7 +74,9 @@ src/
     blockingRun.ts            # the blocking execute path
     durableRun.ts             # the durable start + poll path
     wireOutput.ts             # reads main_stuff and readies it for a generated binder
-    runInputs.ts              # requireContract + gateRunInputs — the server-side input gate
+    runInputs.ts              # requireContract + requireInputForm + gateRunInputs — the server-side input gate
+    resultField.ts            # requireResultField — the output descriptor + payload schema → one RunField
+    resultUrls.ts             # scrubResultUrls — the result's URL policy, fileEncoding's twin on the way out
     errors.ts                 # classifyPipelineError + PipelineError model
     fileEncoding.ts           # data-URL MIME + size validation
     usageReport.ts            # token usage → the render-ready cost report
@@ -83,8 +85,7 @@ src/
     useRun.ts                 # unified blocking|durable client state machine — the run
     useRunInputs.ts           # form values + readiness + the wire shape — the inputs
     useFileInputs.ts          # the drop → encode → write-back seam for file inputs
-  components/                 # ExampleTabs + RunInputsForm + per-example form/result + chrome
-    JsonResult.tsx            # the generic result view, for an output nobody designed a component for
+  components/                 # ExampleTabs + RunInputsForm + RunResult + per-example chrome
   types/                      # thin adapters over src/generated/ — parseXxx(RunResults)
 ```
 
@@ -101,13 +102,15 @@ The flow, end to end:
 2. The Server Action gates the same contract, applying the kernel's rules in full (a Server Action is a public endpoint; the browser's check is only UX), then names the method — reading its `.mthds` bundle from disk, or passing the selector its `method.json` manifest carries — and calls the SDK (`execute` for blocking, `start` + `getRunStatus`/`getRunResult` for durable) with it and the inputs.
 3. The Pipelex API runs the pipe and returns the main output as `main_stuff` — the same resolved field on both paths.
 4. A `parseXxx(results)` narrower in `src/types/` validates it into a typed shape, using a zod schema generated from the method's own `.mthds` bundle (see [Generated types](#generated-types)).
-5. The hook drives the result: a live-status card while running, then the result component, or a classified `PipelineError` shown by `<ErrorDisplay>`.
+5. The hook drives the result: a live-status card while running, then `<RunResult>` — which renders the typed value from the method's own output-form descriptor, so **no result markup is written by hand either** — or a classified `PipelineError` shown by `<ErrorDisplay>`.
 
 ## Input forms
 
 **No form field in this app is written by hand.** Each form is rendered from its method's wire input-form descriptor by the [`@pipelex/mthds-form`](https://www.npmjs.com/package/@pipelex/mthds-form) kernel: `npm run codegen` commits a `contracts.ts` beside the generated types — the method's IO contracts plus the descriptor, both from one `/v1/validate` call — the form derives its fields from it, and the Run button gates on whatever that method actually requires. Add an input to a `.mthds` bundle, re-run codegen, and it shows up with the right control and the right label — no component edit.
 
 The same kernel supplies the input rules on **both** sides of the Server Action boundary, so there are no hand-written per-input guards left anywhere. The two sides call it differently, on purpose: the browser runs `computeReadiness` to decide whether Run is live, and the server runs `gateRunInputs` (`src/lib/runInputs.ts`), which calls readiness's own two functions over the same derived fields _and_ validates shapes _and_ builds the wire envelope. The server side is deliberately a strict superset — it is the trust boundary, because a Server Action is a public endpoint — and a test runs both sides over one table of inputs to hold them to it.
+
+The **result** is the same idea on the other side of the contract. `npm run codegen` commits an output-form descriptor beside the input one, and `<RunResult>` renders the typed output through the kernel's result view: a structured concept becomes a labelled record, a plural one a table, a `native.Text` its typeset markdown, an image the picture with its file beneath it — all read off what the method declares, never off what the payload happens to look like. Change what a method produces, regenerate, and the view follows. There is no per-output component to keep in step, and a `JSON` tab sits beside the rendered view for whoever is debugging the pipe.
 
 The full reference — the contract artifact, the server-side gate, the file seam, and the Tailwind setup (including the silent purge trap) — is [`docs/input-form.md`](docs/input-form.md).
 
@@ -133,7 +136,7 @@ npm run codegen:check   # prove the committed trees are current — offline, no 
 npm run codegen:verify  # ask the API whether the committed types are still semantically current — needs a key
 ```
 
-`npm run codegen` sends each method to the API's `/v1/codegen` route, which returns a `types.ts` (zod schemas plus their inferred TypeScript types), a `binder.ts` (`parseXxx` / `serializeXxx` over those schemas), and a `codegen.lock`. It also asks `/v1/validate` for the method's input/output contracts and its input-form descriptor (`views: ["input_form"]`) and writes a `contracts.ts`, which is what the input forms render from and the run gate validates against. The codegen artifacts carry a stamp and the lock records their hashes; `contracts.ts` is deliberately unstamped, tracked instead by its hash in `sources.json`'s `derived` map. Either way `npm run codegen:check` re-derives the whole verdict **offline** — no key, no network — and fails if a generated file was edited, deleted, or left behind. Beside each lock, that same `sources.json` records a hash of every source `.mthds`, which catches the other kind of staleness: editing a bundle and forgetting to regenerate. `make check` runs that check, so `make all` does too.
+`npm run codegen` sends each method to the API's `/v1/codegen` route, which returns a `types.ts` (zod schemas plus their inferred TypeScript types), a `binder.ts` (`parseXxx` / `serializeXxx` over those schemas), and a `codegen.lock`. It also asks `/v1/validate` for the method's input/output contracts and **both** of its form descriptors (`views: ["input_form", "output_form"]`) and writes a `contracts.ts`, which is what the input forms render from, what the run gate validates against, and what the result view is built from. The codegen artifacts carry a stamp and the lock records their hashes; `contracts.ts` is deliberately unstamped, tracked instead by its hash in `sources.json`'s `derived` map. Either way `npm run codegen:check` re-derives the whole verdict **offline** — no key, no network — and fails if a generated file was edited, deleted, or left behind. Beside each lock, that same `sources.json` records a hash of every source `.mthds`, which catches the other kind of staleness: editing a bundle and forgetting to regenerate. `make check` runs that check, so `make all` does too.
 
 A few things worth knowing:
 
@@ -146,14 +149,14 @@ A few things worth knowing:
 
 A method directory holds either a `.mthds` bundle or a `method.json` manifest naming a method that lives elsewhere; `npm run codegen` regenerates both kinds in one pass, and bumping a published method's version is an edit to that manifest's tag plus a regeneration. See [`docs/codegen.md`](docs/codegen.md) for the two source kinds, and [Add a method that lives elsewhere](#add-a-method-that-lives-elsewhere) for the gesture that writes one.
 
-**Regeneration currently needs `PIPELEX_BASE_URL=https://api-dev.pipelex.com`.** Measured 2026-09-05: `api.pipelex.com` is on an older release that does not return `/v1/validate`'s `input_form` view (which codegen needs for every method) and does not advertise `method_ref` (which a package-sourced manifest needs). Both scripts say so rather than failing obscurely, and this is a deploy away. Nothing in the committed tree depends on it — `npm run codegen:check` is pure hashing, so `git clone && make all` passes with no key and no network either way.
+**Regeneration currently needs `PIPELEX_BASE_URL=https://api-dev.pipelex.com`.** Measured 2026-09-05: `api.pipelex.com` is on an older release that returns neither of `/v1/validate`'s `input_form` and `output_form` views (codegen needs both for every method) and does not advertise `method_ref` (which a package-sourced manifest needs). Both scripts say so rather than failing obscurely, and this is a deploy away. Nothing in the committed tree depends on it — `npm run codegen:check` is pure hashing, so `git clone && make all` passes with no key and no network either way.
 
 ## Swap in your own pipeline
 
 1. Add `methods/<name>/main.mthds` (the `/mthds-build` skill from the [mthds-plugins](https://github.com/Pipelex/mthds-plugins) marketplace can generate one).
 2. Run `npm run codegen` — it writes `src/generated/<name>/` with the zod schemas and binders for the concepts that method declares.
 3. Add a loader in `src/lib/loadBundle.ts`, a `parseXxx(results)` adapter over the generated binder in `src/types/`, and the action trio (`run<Name>Blocking`, `start<Name>Run`, `poll<Name>Run`) in `src/actions/`. Each action takes the schema-shaped data dict and starts with `gateRunInputs(CONTRACT, data)`.
-4. Wire it from a component with `useRunInputs(CONTRACT, DESCRIPTOR)` + `<RunInputsForm>` for the inputs and `useRun({ mode, blocking, start, poll })` for the run. **You write no form fields** — they come from the method's own descriptor. The existing examples are the canonical patterns to copy.
+4. Wire it from a component with `useRunInputs(CONTRACT, DESCRIPTOR)` + `<RunInputsForm>` for the inputs, `useRun({ mode, blocking, start, poll })` for the run, and `<RunResult field={RESULT_FIELD} …>` for the output. **You write neither the form fields nor the result view** — both come from the method's own descriptors. The existing examples are the canonical patterns to copy.
 
 ## Add a method that lives elsewhere
 
@@ -179,13 +182,13 @@ Stripping the demos is usually the first act of making this template yours. Each
 1. The bundle: `methods/extract-entities/`.
 2. Its generated tree: `src/generated/extract-entities/` — `make check` fails on a generated tree with no method behind it (and vice versa), so always remove both together. Its `contracts.ts` goes with it, and with it the form that read it.
 3. Its loader in `src/lib/loadBundle.ts`, its adapter in `src/types/extractEntitiesPipeline.ts`, and its action trio `src/actions/runExtractEntitiesPipeline.ts` — each with its co-located `.test.ts`, plus that loader's `describe` block in `src/lib/loadBundle.test.ts`.
-4. Its components — `EntityForm.tsx`, `EntityResult.tsx` and their tests — and its tab entry in `src/components/ExampleTabs.tsx`, whose own test (`ExampleTabs.test.tsx`) mocks that form and asserts its tab.
+4. Its component — `EntityForm.tsx` and its test — and its tab entry in `src/components/ExampleTabs.tsx`, whose own test (`ExampleTabs.test.tsx`) mocks that form and asserts its tab. There is no result component to remove: every example renders the shared `<RunResult>`.
 5. Its e2e spec: `e2e/extract.spec.ts`.
 6. The references the shared code keeps to it. The text example is the form `e2e/error-display.spec.ts` drives — repoint it at a surviving example. The blurb in `src/app/page.tsx` names the examples, and the bundle-read hint in `src/lib/errors.ts` names this one by path. The complex-inputs example is additionally named by the shared gate test (`src/lib/runInputs.test.ts` imports its contract for the structured and plural rows).
 
 Then run `make all`. `tsc` type-checks the co-located tests, so it names most dangling references itself; the two it cannot see — the `vi.mock` module string in `ExampleTabs.test.tsx` and the Playwright selectors — surface as test failures instead. The PDF example additionally owns `public/sample-invoice.pdf`, and the image example is the one exercising the blocking-cap e2e case.
 
-**A scaffolded example (`text-stats`) comes apart the same way, with two differences**: `methods/text-stats/` holds a `method.json` manifest rather than a bundle, so there is nothing in `src/lib/loadBundle.ts` to remove; and its result view is the shared `<JsonResult>`, which stays because other scaffolded slices will want it. Leave the two `add-method:` anchor comments in `ExampleTabs.tsx` in place — `make add-method` inserts at them, and a test fails if they go missing.
+**A scaffolded example (`text-stats`) comes apart the same way, with one difference**: `methods/text-stats/` holds a `method.json` manifest rather than a bundle, so there is nothing in `src/lib/loadBundle.ts` to remove. Leave the two `add-method:` anchor comments in `ExampleTabs.tsx` in place — `make add-method` inserts at them, and a test fails if they go missing.
 
 ## Make targets
 
@@ -243,7 +246,7 @@ Aliases: `make ul` / `make un`. **Re-run `make use-local` after every edit to ei
 
 A variable already exported in your shell wins over `.env.local` — Next.js loads the file without overwriting what is already in the environment. If a run reaches an endpoint you did not configure here, check your shell first.
 
-**The three keyed build-time scripts want `https://api-dev.pipelex.com` for now.** Running the app needs no override at all, but as measured on 2026-09-05 `api.pipelex.com` is on an older release: it does not return `/v1/validate`'s `input_form` view, which `npm run codegen` needs for every method, and it does not advertise the `method_ref` selector, which `make add-method` and a package-sourced manifest need. Each script names the missing capability and the base URL rather than failing obscurely. This is a deploy away, and it does not reach a consumer who only runs the app: the committed trees make `git clone && make all` pass with no key and no network.
+**The three keyed build-time scripts want `https://api-dev.pipelex.com` for now.** Running the app needs no override at all, but as measured on 2026-09-05 `api.pipelex.com` is on an older release: it returns neither of `/v1/validate`'s `input_form` and `output_form` views, both of which `npm run codegen` needs for every method, and it does not advertise the `method_ref` selector, which `make add-method` and a package-sourced manifest need. Each script names the missing capability and the base URL rather than failing obscurely. This is a deploy away, and it does not reach a consumer who only runs the app: the committed trees make `git clone && make all` pass with no key and no network.
 
 ## License
 

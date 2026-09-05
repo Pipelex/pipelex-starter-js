@@ -30,12 +30,13 @@ test("reports statistics for pasted text", async ({ page }) => {
 
   await page.getByRole("button", { name: /run text stats/i }).click();
 
-  // The scaffold writes `<JsonResult>`, whose section is named after the slice.
-  const output = page.getByRole("region", { name: "Text stats output" });
+  // The scaffold writes `<RunResult>`, whose region is named after the slice.
+  const output = page.getByRole("region", { name: "Text stats" });
   await expect(output).toBeVisible({ timeout: 90_000 });
 
-  // The method returns a Markdown statistics report as `native.Text`, so the
-  // JSON view carries a word count. Matched loosely — the report's exact
-  // layout is the model's, and only the count itself is the point.
+  // The method returns a Markdown statistics report as `native.Text`, and the
+  // result view typesets it — so the word count arrives as rendered prose or a
+  // table cell rather than as an escaped JSON string. Matched loosely: the
+  // report's layout is the model's, and only the count itself is the point.
   await expect(output).toContainText(/words\D{0,30}\d+/i);
 });

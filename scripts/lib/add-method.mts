@@ -933,11 +933,13 @@ export function renderActionTest(plan: ScaffoldPlan): string {
  * `src/components/<Pascal>Form.tsx` — the one kernel composition, plus the
  * chrome the four examples share.
  *
- * No input markup is written: the fields come from the method's committed wire
- * descriptor through `useRunInputs`, and `<RunInputsForm>` renders them. The
- * result view is `<JsonResult>`, because a result component is a design
- * decision about a shape the scaffold has never seen — the closing message
- * names that line as the one to replace.
+ * Nothing about the method's IO is written by hand, on either side: the input
+ * fields come from its committed input-form descriptor through `useRunInputs`
+ * and are rendered by `<RunInputsForm>`, and the result comes from its
+ * output-form descriptor paired with the payload schema and is rendered by
+ * `<RunResult>`. A result component used to be the one thing the scaffold could
+ * not project — it would have been inventing headings for fields it had never
+ * seen — and the descriptor is what removed that gap.
  */
 export function renderForm(plan: ScaffoldPlan): string {
   const { names, pipe, files } = plan;
@@ -953,26 +955,29 @@ export function renderForm(plan: ScaffoldPlan): string {
     `  start${names.pascal}Run,`,
     `} from "@/actions/run${names.pascal}Pipeline";`,
     'import { DEFAULT_EXECUTION_MODE, type ExecutionMode } from "@/config";',
-    `import { INPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/${names.slug}/contracts";`,
+    `import { INPUT_FORM, OUTPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/${names.slug}/contracts";`,
     ...(hasFiles ? ['import { useFileInputs } from "@/hooks/useFileInputs";'] : []),
     'import { useRun } from "@/hooks/useRun";',
     'import { useRunInputs } from "@/hooks/useRunInputs";',
+    'import { requireResultField } from "@/lib/resultField";',
     'import { requireContract, requireInputForm } from "@/lib/runInputs";',
     'import { CostReport } from "./CostReport";',
     'import { ErrorDisplay } from "./ErrorDisplay";',
-    'import { JsonResult } from "./JsonResult";',
     'import { ModeToggle } from "./ModeToggle";',
     'import { RunInputsForm } from "./RunInputsForm";',
+    'import { RunResult } from "./RunResult";',
     'import { RunStatus } from "./RunStatus";',
     "",
     "// Scaffolded by `make add-method` — yours to edit from here on.",
     "//",
-    "// The form is derived from the method's own wire descriptor and contract,",
-    "// committed by `npm run codegen` beside the generated output types. There are no",
-    "// hand-written fields to keep in step: change what the method takes, regenerate,",
-    "// and the form follows.",
+    "// Both halves are derived from the method's own contract, committed by",
+    "// `npm run codegen`: the form from the input-form descriptor, the result view",
+    "// from the output-form descriptor paired with the payload schema. There is",
+    "// nothing hand-written to keep in step — change what the method takes or",
+    "// produces, regenerate, and both follow.",
     `const CONTRACT = requireContract(PIPE_IO_CONTRACTS, ${JSON.stringify(pipe.domain)}, ${JSON.stringify(pipe.code)});`,
     `const DESCRIPTOR = requireInputForm(INPUT_FORM, ${JSON.stringify(pipe.domain)}, ${JSON.stringify(pipe.code)});`,
+    `const RESULT_FIELD = requireResultField(OUTPUT_FORM, CONTRACT, ${JSON.stringify(pipe.domain)}, ${JSON.stringify(pipe.code)});`,
     "",
     `export function ${names.pascal}Form() {`,
     "  const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR);",
@@ -1064,11 +1069,12 @@ export function renderForm(plan: ScaffoldPlan): string {
       : ['      {state.phase === "error" && <ErrorDisplay error={state.error} />}']),
     '      {state.phase === "done" && (',
     "        <>",
-    "          {/* The honest view for a shape nobody designed a component for. Replace",
-    "              <JsonResult> with one of your own once you know the output —",
-    "              `EntityResult` and `PdfSummaryResult` are what that looks like. The",
-    "              value is already typed by the narrower. */}",
-    `          <JsonResult value={state.output} label=${JSON.stringify(`${names.label} output`)} />`,
+    "          {/* The result, rendered from the method's own output contract — the",
+    "              scaffold has no design decision to make about a shape it has never",
+    "              seen, because there is none left to make. Swap it for a component",
+    "              of your own if this output deserves a bespoke view; the value is",
+    "              already typed by the narrower. */}",
+    `          <RunResult field={RESULT_FIELD} value={state.output} name=${JSON.stringify(names.slug.replace(/-/g, "_"))} />`,
     "          <CostReport usage={state.usage} />",
     "        </>",
     "      )}",
@@ -1387,8 +1393,8 @@ async function runAddMethodInner(argv: readonly string[], deps?: AddMethodDeps):
       "",
       "Next:",
       "  1. `make all` — the slice compiles, lints and tests with the rest of the app.",
-      `  2. Replace the <JsonResult> line in ${paths.form} with a result component of`,
-      "     your own once you know the output's shape.",
+      `  2. Open the tab and run it. The form and the result view both come from the`,
+      `     method's contract; ${paths.form} is where you replace either with your own.`,
     ].join("\n"),
   );
   return EXIT_OK;

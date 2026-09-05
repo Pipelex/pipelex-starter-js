@@ -7,21 +7,29 @@ import {
   startExtractEntitiesRun,
 } from "@/actions/runExtractEntitiesPipeline";
 import { DEFAULT_EXECUTION_MODE, type ExecutionMode } from "@/config";
-import { INPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/extract-entities/contracts";
+import { INPUT_FORM, OUTPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/extract-entities/contracts";
 import { useRun } from "@/hooks/useRun";
 import { useRunInputs } from "@/hooks/useRunInputs";
+import { requireResultField } from "@/lib/resultField";
 import { requireContract, requireInputForm } from "@/lib/runInputs";
 import { CostReport } from "./CostReport";
-import { EntityResult } from "./EntityResult";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { ModeToggle } from "./ModeToggle";
 import { RunInputsForm } from "./RunInputsForm";
+import { RunResult } from "./RunResult";
 import { RunStatus } from "./RunStatus";
 
-// The form is derived from the method's own wire descriptor and contract,
-// committed by `npm run codegen` beside the generated output types.
+// Both halves are derived from the method's own contract, committed by
+// `npm run codegen`: the form from the input-form descriptor, the result view
+// from the output-form descriptor paired with the payload schema.
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "extract_entities", "extract_entities");
 const DESCRIPTOR = requireInputForm(INPUT_FORM, "extract_entities", "extract_entities");
+const RESULT_FIELD = requireResultField(
+  OUTPUT_FORM,
+  CONTRACT,
+  "extract_entities",
+  "extract_entities",
+);
 
 const SAMPLE_TEXT =
   "Apple announced new products in Cupertino on March 5th, 2026, with Tim Cook presenting alongside Jony Ive.";
@@ -74,7 +82,7 @@ export function EntityForm() {
       {state.phase === "error" && <ErrorDisplay error={state.error} />}
       {state.phase === "done" && (
         <>
-          <EntityResult entities={state.output} />
+          <RunResult field={RESULT_FIELD} value={state.output} name="extracted_entities" />
           <CostReport usage={state.usage} />
         </>
       )}
