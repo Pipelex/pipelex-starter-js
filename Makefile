@@ -1,9 +1,50 @@
-.PHONY: help run dev build start lint format format-check typecheck codegen codegen-check codegen-verify add-method test test-watch test-e2e test-e2e-ui confirm-live-e2e agent-test check clean install lock all use-local use-npm ul un
+.PHONY: help run dev build start port-check lint format format-check typecheck codegen codegen-check codegen-verify add-method test test-watch test-e2e test-e2e-ui confirm-live-e2e agent-test check clean install lock all use-local use-npm ul un
 
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
-run: ## Start dev server
+# ── The app port ───────────────────────────────────────────────────────────
+# Declared once here and exported, so package.json's `dev`/`start` scripts and
+# playwright.config.ts all read the same number. Each of them still defaults to
+# 4300 on its own, so `npm run dev` outside make keeps working. Override it to
+# run this checkout beside one that already holds the port:
+#
+#     make run APP_PORT=4301
+#
+# The name is deliberately not `PORT`. That one is ambient — hosting platforms,
+# other dev servers and shell profiles all export it — and inheriting it would
+# move this server without saying so.
+APP_PORT ?= 4300
+export APP_PORT
+
+# `next dev` refuses a taken port with a bare EADDRINUSE naming the port and
+# nothing else. In this workspace every branch gets its own worktree and each
+# one runs `make run` on the same port, so the holder is routinely ANOTHER
+# checkout of this same app — which answers on http://localhost:4300 and looks
+# entirely right in a browser. Name the holder rather than print a stack trace.
+#
+# ALLOW_OWN=1 accepts a server started from this directory and still refuses a
+# foreign one. That is the e2e case: Playwright reuses an existing server
+# (`reuseExistingServer` in playwright.config.ts), so without this check a
+# stale worktree on the same port would run the whole suite against another
+# branch's app and report it green.
+port-check:
+	@command -v lsof >/dev/null 2>&1 || exit 0; \
+	pid=$$(lsof -nP -iTCP:$(APP_PORT) -sTCP:LISTEN -t 2>/dev/null | head -1); \
+	if [ -z "$$pid" ]; then exit 0; fi; \
+	cwd=$$(lsof -a -p $$pid -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1); \
+	if [ "$$cwd" = "$(CURDIR)" ]; then \
+		if [ -n "$(ALLOW_OWN)" ]; then exit 0; fi; \
+		echo "Port $(APP_PORT) is already served by this checkout (pid $$pid)."; \
+		echo "Open http://localhost:$(APP_PORT), or stop that server first."; \
+		exit 1; \
+	fi; \
+	echo "Port $(APP_PORT) is held by pid $$pid, running in $${cwd:-an unknown directory}."; \
+	echo "That is not this checkout ($(CURDIR)) — it is serving a different app."; \
+	echo "Leave it alone and use another port, e.g. APP_PORT=4301 on this target."; \
+	exit 1
+
+run: port-check ## Start dev server
 	npm run dev
 
 dev: run ## Alias for run
@@ -11,7 +52,7 @@ dev: run ## Alias for run
 build: ## Production build
 	npm run build
 
-start: ## Start production server
+start: port-check ## Start production server
 	npm run start
 
 lint: ## Run ESLint
@@ -74,10 +115,15 @@ confirm-live-e2e:
 		case "$$ans" in [yY]*) ;; *) echo "Aborted."; exit 1 ;; esac; \
 	fi
 
-test-e2e: confirm-live-e2e ## Run OPTIONAL Playwright e2e (LIVE API — needs PIPELEX_API_KEY, costs an LLM call; auto-skips without a key)
+# ALLOW_OWN is a target-specific variable, so it reaches the port-check
+# prerequisite: Playwright reusing THIS checkout's dev server is the point,
+# reusing another one silently is the bug.
+test-e2e test-e2e-ui: ALLOW_OWN = 1
+
+test-e2e: confirm-live-e2e port-check ## Run OPTIONAL Playwright e2e (LIVE API — needs PIPELEX_API_KEY, costs an LLM call; auto-skips without a key)
 	npm run test:e2e
 
-test-e2e-ui: confirm-live-e2e ## Same as test-e2e, with the Playwright UI runner
+test-e2e-ui: confirm-live-e2e port-check ## Same as test-e2e, with the Playwright UI runner
 	npm run test:e2e:ui
 
 agent-test: ## Run tests, silent on success (for agents)

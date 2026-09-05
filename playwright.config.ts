@@ -8,9 +8,12 @@ loadEnvConfig(process.cwd(), false, { info: () => {}, error: console.error });
 
 const isCI = !!process.env.CI;
 
-// The dev-server port, declared once. It must match the `-p` flag in
-// package.json's `dev` and `start` scripts, which is what actually starts the
-// server below.
+// The dev-server port. `APP_PORT` is the single declaration — the Makefile
+// exports it, package.json's `dev` and `start` scripts default to the same
+// 4300, and this reads it so `make test-e2e APP_PORT=4301` stays coherent with
+// the server it starts. The variable is deliberately not the ambient `PORT`,
+// which hosts and other tools set for their own reasons and would silently
+// move this server.
 //
 // Deliberately NOT 4100: the pipelex-server local stack publishes its sandbox
 // container (the MTHDS build chatbot) on 127.0.0.1:4100, and that collision is
@@ -19,7 +22,7 @@ const isCI = !!process.env.CI;
 // to IPv4 and reaches the container's 404 instead — until `timeout` below
 // expires with "Timed out waiting 120000ms from config.webServer". If that ever
 // happens again, the first thing to run is `lsof -nP -iTCP:4300 -sTCP:LISTEN`.
-const PORT = 4300;
+const PORT = Number(process.env.APP_PORT ?? 4300);
 const BASE_URL = `http://localhost:${PORT}`;
 
 export default defineConfig({

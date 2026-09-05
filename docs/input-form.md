@@ -156,14 +156,20 @@ The kernel's controls are Tailwind classes over the standard shadcn semantic tok
 
 There is no `tailwind.config.ts` any more; v4 is configured in CSS, and everything below is in `src/app/globals.css`:
 
-1. `@source "../../node_modules/@pipelex/mthds-form/dist"`. The controls ship compiled, so their class strings live in the package bundle, outside every tree Tailwind scans on its own. **The directive must sit after the whole run of `@import`s** — an `@source` between two imports makes the bundler drop the imports that follow, with a warning rather than an error, and the stylesheet arrives with no tokens.
+1. `@source "../../node_modules/@pipelex/mthds-form/dist/**/*.js"`. The controls ship compiled, so their class strings live in the package bundle, outside every tree Tailwind scans on its own. **Keep the `/**/\*.js`glob**:`dist`also carries sourcemaps, and Tailwind reads a`.map`as a source like any other file, so the bare directory quietly makes your stylesheet depend on a dependency's sourcemaps — comments inside`sourcesContent`and all. The directive sits after the whole run of`@import`s by convention; an `@source`between two imports was once seen to drop the imports that follow, but that did not reproduce on Tailwind 4.3.3 under Next/Turbopack,`@tailwindcss/cli` or raw PostCSS.
 2. An `@theme inline` block mapping the shadcn token names, key for key with the kernel's own `src/styles/tailwind-entry.css` — that file is not a stylesheet to import, it is the token contract in executable form. Without the mapping, `bg-background`, `text-muted-foreground`, `border-input` and `rounded-md` are simply not utilities Tailwind knows. Two details there are load-bearing: `inline`, without which a token redefined lower in the tree (a `.dark` pane, a brand scope) would never move the utility; and the **bare `var()`** — since kernel 0.8.0 each token holds a whole colour, so the `hsl(var(--border))` wrapper of the v3 arrangement now yields `hsl(hsl(…))`, which the browser discards, leaving the element transparent.
 3. `@import "tw-animate-css"`, for the select popover's and the tooltip's enter/exit utilities. It replaces the `tailwindcss-animate` plugin the JS config used to load, and the class names are the same.
 4. A `@layer base` rule restoring `cursor: pointer` on enabled buttons. v4's preflight makes a button `cursor: default`; the kernel's own buttons carry no cursor class because under v3 a button was a pointer already.
 
 The token _values_ come from `@pipelex/mthds-form/theme.css` (stock neutral shadcn variables, no preflight), imported in `src/app/layout.tsx` **before** `globals.css` so a host-level override wins on ordering. Restyling the forms is then a matter of overriding CSS variables. A host that already runs shadcn/ui under v4 has all of this except the `@source` line.
 
-**The purge trap, because it is silent.** A missing `@source` does not fail the build. It produces a _mostly_-styled form — only the classes unique to the controls vanish (focus ring, placeholder color, textarea height, dropzone drag state), which reads as a broken design system rather than a missing line. The deterministic check is diffing the built stylesheet with and without the directive, not eyeballing the form:
+**The purge trap, because it is silent.** A missing `@source` does not fail the build. It produces a _mostly_-styled form — only the classes unique to the controls vanish (focus ring, placeholder color, textarea height, dropzone drag state), which reads as a broken design system rather than a missing line.
+
+`src/app/globals.test.ts` is the gate, and it runs in `make test` like any other unit test. It compiles this stylesheet with the same plugin the app builds with, once as written and once with the `@source` lines stripped, and requires the first to carry a hundred-odd selectors the second does not. It also pins the two hazards that have no other check: that no token is re-wrapped in `hsl()`, and that every semantic token the controls use still resolves to a utility.
+
+**Do not check this by grepping the bundle for a class name.** Tailwind v4 scans the whole repo, Markdown included, so every class name quoted in `CLAUDE.md`, `CHANGELOG.md` or this file — while explaining it — is minted into the bundle whether or not the kernel's own bundle was ever scanned. Measured on this repo: dropping the `@source` line takes the production stylesheet from 42,543 bytes to 23,222, and `grep -c 'field-sizing:content' .next/static/chunks/*.css` still answers `1` in both. The `(--radix-…)` variable form is no safer; this file quotes that too. Only the size of the difference is beyond prose's reach, which is what the test asserts.
+
+To see the bytes by hand — the version the test automates:
 
 ```bash
 # The temp entry must live beside the real one: `@import "tailwindcss"` and the
@@ -175,11 +181,7 @@ rm src/app/_nosource.css
 wc -l /tmp/without.css /tmp/with.css
 ```
 
-The with-`@source` build must be strictly larger, and the classes only it carries are the controls' own — `field-sizing-content`, `outline-hidden`, `aria-invalid:border-destructive`, `data-placeholder:text-muted-foreground`, `max-h-(--radix-select-content-available-height)` among them. Grepping the built bundle for those five names is the quickest version of the same question:
-
-```bash
-grep -c 'field-sizing:content' .next/static/chunks/*.css
-```
+`@tailwindcss/cli` is a devDependency for exactly this reason: it is a different package from the `@tailwindcss/postcss` plugin that builds the app, so without the entry those two lines would be an unpinned `npx` fetch off the network — grading the stylesheet with a compiler the app never runs.
 
 `@custom-variant dark` is declared even though this app never sets a dark class: it costs nothing, and it is what a consumer who adds a dark theme would otherwise have to discover. Dark token values come with `theme.css` already.
 

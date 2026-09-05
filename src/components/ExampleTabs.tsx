@@ -40,7 +40,12 @@ export function ExampleTabs() {
   const [active, setActive] = useState<string>(TABS[0]!.id);
 
   return (
-    <div className="space-y-6">
+    // A column with `gap` rather than `space-y-*`: a `hidden` panel is out of the
+    // flow entirely, so the gap does not depend on which tab is open. Under
+    // Tailwind v4 `space-y-*` is `:where(& > :not(:last-child))`, which drops v3's
+    // `:not([hidden])` guard and would give the active panel a trailing margin on
+    // every tab but the last.
+    <div className="flex flex-col gap-6">
       <div
         role="tablist"
         aria-label="Pipelex examples"

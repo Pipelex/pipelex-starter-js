@@ -12,11 +12,21 @@
  * unique to the controls are purged, which reads as a broken design system
  * rather than a missing line. `docs/input-form.md` has the deterministic check.
  *
- * `@source` MUST sit after the whole run of `@import`s, never between two of
- * them: an `@source` in the middle makes the bundler drop the imports that
- * follow with a warning rather than an error, and the stylesheet arrives with
- * no tokens at all. */
-@source "../../node_modules/@pipelex/mthds-form/dist";
+ * The directive names the compiled JS specifically, never the bare `dist`
+ * directory. `dist` also carries the package's sourcemaps, and Tailwind reads a
+ * .map as a source like any other file — including the TypeScript comments
+ * inside its sourcesContent — so pointing at the directory makes this app's
+ * stylesheet a function of a dependency's sourcemaps, which a routine repack
+ * could drop. (The glob cannot be written in this comment: the star-slash it
+ * contains would close the comment early.)
+ *
+ * By convention the directive sits after the whole run of `@import`s. An
+ * `@source` placed between two imports was once seen to make the bundler drop
+ * the imports that follow, with a warning rather than an error; that did not
+ * reproduce here on Tailwind 4.3.3 — Next/Turbopack, `@tailwindcss/cli` and
+ * raw PostCSS each produced an identical bundle either way — so treat the
+ * placement as a convention worth keeping, not a rule to rely on. */
+@source "../../node_modules/@pipelex/mthds-form/dist/**/*.js";
 
 /* Dark mode is the `.dark` class convention, matching the kernel's theme.css.
  * The starter's own chrome is light-only today; this is here so a consumer who
@@ -26,8 +36,8 @@
 /*
  * The shadcn semantic token contract the kernel's controls are written
  * against, mapped onto the token names Tailwind v4 resolves. This is the
- * `theme.extend.colors` block of the retired `tailwind.config.ts`, restated
- * in CSS — key for key with the kernel's own `src/styles/tailwind-entry.css`,
+ * `theme.extend.colors` and `theme.extend.borderRadius` blocks of the retired
+ * `tailwind.config.ts`, restated in CSS — key for key with the kernel's own `src/styles/tailwind-entry.css`,
  * which is the reference for this mapping. The values come from
  * `@pipelex/mthds-form/theme.css`, imported in `src/app/layout.tsx`.
  *
