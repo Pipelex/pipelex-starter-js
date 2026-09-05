@@ -16,11 +16,15 @@ import {
   assertSecureBaseUrl,
   compareSidecar,
   CONTRACTS_FILENAME,
+  describeSelector,
   discoverMethods,
   findOrphanTrees,
   hashSource,
   isContainedPath,
+  ManifestError,
+  MANIFEST_FILENAME,
   NonUtf8FileError,
+  parseManifest,
   readGeneratedTree,
   readTextFile,
   renderContracts,
@@ -185,6 +189,7 @@ describe("compareSidecar", () => {
           multiplicity: "single",
           item_count: null,
           optional: false,
+          json_schema: {},
         },
       },
     },
@@ -222,7 +227,7 @@ describe("compareSidecar", () => {
     await writeSidecar({});
     const stale = await compareSidecar(fixtureDir, { "methods/m/new.mthds": HASH_A });
     expect(stale).toHaveLength(1);
-    expect(stale[0]).toContain("a new bundle the generated types do not cover");
+    expect(stale[0]).toContain("a new source the generated types do not cover");
   });
 
   it("reports a recorded source no longer on disk", async () => {
@@ -317,6 +322,7 @@ describe("renderContracts", () => {
           multiplicity: "single",
           item_count: null,
           optional: false,
+          json_schema: {},
         },
       },
     } as const;
@@ -400,6 +406,145 @@ describe("entry policy at the scanned roots", () => {
     const error = await findOrphanTrees(fixtureDir, new Set()).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(SymlinkRefusedError);
     expect((error as SymlinkRefusedError).message).toContain("link-tree");
+  });
+});
+
+// The manifest is the only file in this repo whose *content* decides which
+// method a whole generated tree comes from, so every way of getting it slightly
+// wrong has to be a refusal rather than a tolerated shape: each tolerance is a
+// way to generate a tree from a selector nobody meant.
+describe("parseManifest", () => {
+  it("reads an address manifest as a method_ref selector", () => {
+    expect(
+      parseManifest('{"method_ref": "github.com/Pipelex/methods/text_stats@v0.1.1"}', "m"),
+    ).toEqual({ method_ref: "github.com/Pipelex/methods/text_stats@v0.1.1" });
+  });
+
+  it("reads a catalog manifest as a method_id selector", () => {
+    expect(parseManifest('{"method_id": "mt_abc"}', "m")).toEqual({ method_id: "mt_abc" });
+  });
+
+  it.each([
+    ["not JSON at all", "{oops", "is not valid JSON"],
+    ["a JSON array", '["method_ref"]', "must be a JSON object"],
+    ["JSON null", "null", "must be a JSON object"],
+    ["a bare string", '"github.com/x/y"', "must be a JSON object"],
+    ["no selector", "{}", "names no method"],
+    ["both selectors", '{"method_ref": "a", "method_id": "b"}', "sets both"],
+    ["an unknown key", '{"method_ref": "a", "pipe": "p"}', "has unknown key(s) pipe"],
+    ["a misspelled key", '{"methodRef": "a"}', "has unknown key(s) methodRef"],
+    ["a non-string selector", '{"method_id": 7}', "not a non-empty string"],
+    ["an empty selector", '{"method_id": "   "}', "not a non-empty string"],
+  ])("refuses %s", (_label, body, expected) => {
+    const error = (() => {
+      try {
+        parseManifest(body, "methods/m/method.json");
+        return null;
+      } catch (e: unknown) {
+        return e;
+      }
+    })();
+    expect(error).toBeInstanceOf(ManifestError);
+    expect((error as ManifestError).message).toContain("methods/m/method.json");
+    expect((error as ManifestError).message).toContain(expected);
+  });
+});
+
+describe("describeSelector", () => {
+  it("names the kind and the value, for a ref", () => {
+    expect(describeSelector({ method_ref: "github.com/o/r" })).toBe("method_ref github.com/o/r");
+  });
+
+  it("names the kind and the value, for an id", () => {
+    expect(describeSelector({ method_id: "mt_abc" })).toBe("method_id mt_abc");
+  });
+});
+
+// A generated tree is derived from exactly one source, and `discoverMethods` is
+// where that source is decided. Getting the arm wrong is a wrong verdict, not an
+// error: a tree hashed against the wrong file passes `codegen:check` forever.
+describe("discoverMethods over the two source kinds", () => {
+  async function method(name: string, files: Record<string, string>): Promise<void> {
+    await mkdir(path.join(fixtureDir, name), { recursive: true });
+    for (const [file, content] of Object.entries(files)) {
+      await writeFile(path.join(fixtureDir, name, file), content);
+    }
+  }
+
+  it("reads a manifest directory as a selector source hashing the manifest", async () => {
+    const body = '{"method_ref": "github.com/Pipelex/methods/text_stats@v0.1.1"}\n';
+    await method("text-stats", { [MANIFEST_FILENAME]: body });
+
+    const methods = await discoverMethods(fixtureDir);
+    expect(methods).toEqual([
+      {
+        name: "text-stats",
+        kind: "selector",
+        selector: { method_ref: "github.com/Pipelex/methods/text_stats@v0.1.1" },
+        sourceHashes: { "methods/text-stats/method.json": hashSource(body) },
+      },
+    ]);
+  });
+
+  it("reads a bundle directory as a files source, unchanged", async () => {
+    await method("local", { "main.mthds": "a = 1\n" });
+
+    const methods = await discoverMethods(fixtureDir);
+    expect(methods).toEqual([
+      {
+        name: "local",
+        kind: "files",
+        files: [{ content: "a = 1\n", source: "methods/local/main.mthds" }],
+        sourceHashes: { "methods/local/main.mthds": hashSource("a = 1\n") },
+      },
+    ]);
+  });
+
+  it("refuses a directory holding both, naming the manifest and the bundles", async () => {
+    await method("mixed", {
+      [MANIFEST_FILENAME]: '{"method_id": "mt_abc"}',
+      "main.mthds": "a = 1\n",
+    });
+
+    const error = await discoverMethods(fixtureDir).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ManifestError);
+    expect((error as ManifestError).message).toContain("methods/mixed/method.json");
+    expect((error as ManifestError).message).toContain("main.mthds");
+    expect((error as ManifestError).message).toContain("never both");
+  });
+
+  it("propagates a malformed manifest as a refusal", async () => {
+    await method("broken", { [MANIFEST_FILENAME]: "{}" });
+
+    const error = await discoverMethods(fixtureDir).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ManifestError);
+    expect((error as ManifestError).message).toContain("names no method");
+  });
+
+  it("ignores a method.json nested below the directory root", async () => {
+    await mkdir(path.join(fixtureDir, "nested", "sub"), { recursive: true });
+    await writeFile(path.join(fixtureDir, "nested", "main.mthds"), "a = 1\n");
+    await writeFile(path.join(fixtureDir, "nested", "sub", MANIFEST_FILENAME), "{}");
+
+    const methods = await discoverMethods(fixtureDir);
+    expect(methods[0]!.kind).toBe("files");
+  });
+
+  it("still skips a directory holding neither", async () => {
+    await method("empty", { "README.md": "# nothing here\n" });
+    await method("local", { "main.mthds": "a = 1\n" });
+
+    expect((await discoverMethods(fixtureDir)).map((m) => m.name)).toEqual(["local"]);
+  });
+
+  it("sorts the two kinds together, by directory name", async () => {
+    await method("b-local", { "main.mthds": "a = 1\n" });
+    await method("a-remote", { [MANIFEST_FILENAME]: '{"method_id": "mt_abc"}' });
+
+    expect((await discoverMethods(fixtureDir)).map((m) => `${m.name}:${m.kind}`)).toEqual([
+      "a-remote:selector",
+      "b-local:files",
+    ]);
   });
 });
 

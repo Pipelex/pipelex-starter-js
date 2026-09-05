@@ -7,8 +7,9 @@ import { BadImageOutputError } from "@/types/pipelineError";
 /**
  * The generated `Image` concept, under the name the app already uses. Aliased
  * rather than re-exported as `Image` because that name is a DOM global in a
- * `.tsx` file. Optional fields are `| undefined` (zod's `.optional()`), not
- * `| null` — `??` at the render sites covers both.
+ * `.tsx` file. A non-required field is `| null | undefined` (zod's
+ * `.nullish()`), because the runtime serializes an unset one as an explicit
+ * `null` — `??` at the render sites covers both.
  */
 export type GeneratedImage = Image;
 
@@ -84,7 +85,7 @@ export function parseGeneratedImage(results: RunResults): GeneratedImage {
     throw new BadImageOutputError(describeSchemaFailure(err, "Image"));
   }
 
-  // `||`, not `??`: `public_url` is `.optional()`, so the schema accepts `""` —
+  // `||`, not `??`: `public_url` is `.nullish()`, so the schema accepts `""` —
   // and an empty string is not nullish, so `??` would let it win over a perfectly
   // good `url` and fail the run on a scheme-less URL. The narrower this replaced
   // ran optional strings through a helper that mapped `""` to null; this is that

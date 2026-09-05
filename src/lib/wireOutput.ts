@@ -163,6 +163,41 @@ export function wireOutput(results: RunResults, schema: z.ZodType): unknown {
 }
 
 /**
+ * The wire payload a narrower for a **plural** output should hand to
+ * `z.array(<Code>Schema)`: the run's main output as the array it is, with the
+ * wire's `null`s normalized away per `elementSchema` for every item.
+ *
+ * A plural output is one `ListContent` in the runtime, and the runtime renders
+ * it two ways — **which one depends on the execution path and on whether the
+ * deliverer could hydrate the concept's class, not on the method** (measured
+ * live against api-dev, engine 0.56.0, on 2026-09-05):
+ *
+ * - `{ "items": [ … ] }` — the pydantic dump of `ListContent`. The blocking
+ *   `execute` response carries it (its working memory is hydrated before it
+ *   is serialized), and so does the durable `main_stuff.json` when the worker
+ *   knows the concept's class — a native concept such as `native.Page`.
+ * - `[ … ]` — the transport dump, which serializes a `ListContent` as a plain
+ *   list. The durable `main_stuff.json` carries it when the worker could NOT
+ *   hydrate the concept's class and fell back to the raw working memory —
+ *   which is every concept a method declares itself (`CandidateMatch`, …).
+ *
+ * So one method answers `{ items }` in Blocking mode and a bare array in
+ * Durable mode. Reported upstream to pipelex as L-260905-403fb6 (the fork is
+ * the delivery executor's hydrated-vs-raw render); this accepts both until the
+ * runtime settles on one. The unwrap is confined to the top level and to this
+ * function, which only a plural output's narrower calls: at that position the
+ * value is a `ListContent`, and `{ items }` cannot be anything else. It
+ * normalizes values, never names — no field is re-declared here — and it
+ * validates nothing: a payload that is neither shape passes through untouched
+ * for `z.array(...)` to reject with a message naming what it got.
+ */
+export function wireListOutput(results: RunResults, elementSchema: z.ZodType): unknown {
+  const wire = results.main_stuff;
+  const list = isPlainObject(wire) && Array.isArray(wire.items) ? wire.items : wire;
+  return dropWireNulls(list, z.array(elementSchema));
+}
+
+/**
  * Render a binder failure as a message for `BadPipelineOutputError` /
  * `BadImageOutputError`. A `ZodError`'s own `.message` is a JSON dump of its
  * issue array; `z.prettifyError` turns it into the field-by-field list a

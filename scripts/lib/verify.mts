@@ -33,10 +33,12 @@ import {
   runCodegenCheck,
 } from "@pipelex/sdk";
 
+import { assertSelectorSupport, explainSelectorFailure, selectorKindsOf } from "./api.mts";
 import {
   assertSecureBaseUrl,
   CONTRACTS_FILENAME,
   discoverMethods,
+  ManifestError,
   refuseSymlinkRoot,
   GENERATED_ROOT,
   LOCK_FILENAME,
@@ -45,6 +47,7 @@ import {
   readTextFile,
   renderContracts,
   REPO_ROOT,
+  type MethodSource,
 } from "./shared.mts";
 
 const { loadEnvConfig } = nextEnv;
@@ -56,8 +59,16 @@ export const EXIT_FAILED = 1;
  * How a failed call to `route` reads in the console. Both routes this script
  * calls report the same way, and the status plus the server's own message is
  * the part that tells a stale commit apart from an expired key.
+ *
+ * A selector method takes the selector-resolution reading of a 404 first: on a
+ * committed tree that used to resolve, "no package at this address any more" is
+ * the whole story, and the server spells it out.
  */
-function requestDetail(error: unknown, route: string): string {
+function requestDetail(error: unknown, route: string, source: MethodSource): string {
+  if (source.kind === "selector") {
+    const selectorFailure = explainSelectorFailure(error, source.selector);
+    if (selectorFailure !== null) return selectorFailure;
+  }
   if (error instanceof ApiResponseError) {
     return `HTTP ${error.status} from ${route} — ${error.serverMessage ?? error.message}`;
   }
@@ -79,7 +90,16 @@ async function runVerifyInner(): Promise<number> {
     return EXIT_FAILED;
   }
 
-  const methods = await discoverMethods();
+  let methods: MethodSource[];
+  try {
+    methods = await discoverMethods();
+  } catch (error) {
+    if (error instanceof ManifestError) {
+      console.error(`codegen:verify: ${error.message}`);
+      return EXIT_FAILED;
+    }
+    throw error;
+  }
   if (methods.length === 0) {
     console.error(
       `codegen:verify: no methods found under ${path.relative(REPO_ROOT, METHODS_DIR)}/.`,
@@ -92,6 +112,22 @@ async function runVerifyInner(): Promise<number> {
   await refuseSymlinkRoot(GENERATED_ROOT);
 
   const client = new PipelexApiClient();
+
+  // Same handshake as the writer's, for the same reason: an origin that does not
+  // forward selectors cannot answer the question this script asks about a
+  // selector method, and it should say that once rather than per method.
+  const unsupported = await assertSelectorSupport(
+    client,
+    baseUrl,
+    selectorKindsOf(
+      methods.filter((method) => method.kind === "selector").map((method) => method.selector),
+    ),
+  );
+  if (unsupported !== null) {
+    console.error(`codegen:verify: ${unsupported}`);
+    return EXIT_FAILED;
+  }
+
   console.log(`codegen:verify: ${methods.length} method(s), against ${baseUrl}`);
 
   let failed = false;
@@ -131,11 +167,11 @@ async function runVerifyInner(): Promise<number> {
     let liveFingerprint: string;
     let liveEngine: string;
     try {
-      const response = await client.codegen({
-        files: method.files,
-        kind: "types",
-        target: "ts-zod",
-      });
+      const response = await client.codegen(
+        method.kind === "files"
+          ? { files: method.files, kind: "types", target: "ts-zod" }
+          : { ...method.selector, kind: "types", target: "ts-zod" },
+      );
       if (!response.is_valid) {
         console.error(`\n✗ ${method.name} — the closure does not resolve:`);
         for (const item of response.validation_errors) {
@@ -147,7 +183,7 @@ async function runVerifyInner(): Promise<number> {
       liveFingerprint = response.crate_fingerprint;
       liveEngine = response.engine_version;
     } catch (error) {
-      console.error(`\n✗ ${method.name} — ${requestDetail(error, "POST /v1/codegen")}`);
+      console.error(`\n✗ ${method.name} — ${requestDetail(error, "POST /v1/codegen", method)}`);
       failed = true;
       continue;
     }
@@ -166,12 +202,15 @@ async function runVerifyInner(): Promise<number> {
     // with the same `views` opt-in the writer sends, or the render differs on
     // every tree by the descriptor's absence alone.
     try {
-      const response = await client.validateFiles(
-        method.files.map((file) => ({ content: file.content, uri: file.source })),
-        { views: ["input_form"] },
-      );
+      const response =
+        method.kind === "files"
+          ? await client.validateFiles(
+              method.files.map((file) => ({ content: file.content, uri: file.source })),
+              { views: ["input_form"] },
+            )
+          : await client.validate(method.selector, false, undefined, undefined, ["input_form"]);
       if (!response.is_valid) {
-        console.error(`\n✗ ${method.name} — the bundle no longer validates:`);
+        console.error(`\n✗ ${method.name} — the method no longer validates:`);
         for (const item of response.validation_errors) {
           console.error(`    ${item.source ?? "?"}: ${item.message}`);
         }
@@ -198,7 +237,7 @@ async function runVerifyInner(): Promise<number> {
         continue;
       }
     } catch (error) {
-      console.error(`\n✗ ${method.name} — ${requestDetail(error, "POST /v1/validate")}`);
+      console.error(`\n✗ ${method.name} — ${requestDetail(error, "POST /v1/validate", method)}`);
       failed = true;
       continue;
     }

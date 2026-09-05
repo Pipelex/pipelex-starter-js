@@ -40,11 +40,12 @@ import {
   GENERATED_ROOT,
   LOCK_FILENAME,
   METHODS_DIR,
+  ManifestError,
   NonUtf8FileError,
   readGeneratedTree,
   REPO_ROOT,
   SymlinkRefusedError,
-  type MethodClosure,
+  type MethodSource,
 } from "./shared.mts";
 
 export const EXIT_CURRENT = 0;
@@ -81,7 +82,7 @@ export function summarizeVerdicts(codes: readonly number[]): VerdictSummary {
 
 /** Check one method's generated tree; print its report and return its exit code. */
 export async function checkMethod(
-  method: MethodClosure,
+  method: MethodSource,
   generatedRoot: string = GENERATED_ROOT,
 ): Promise<number> {
   const outDir = path.join(generatedRoot, method.name);
@@ -160,14 +161,19 @@ export async function checkMethod(
 }
 
 async function runCheckInner(): Promise<number> {
-  let methods: MethodClosure[];
+  let methods: MethodSource[];
   try {
     methods = await discoverMethods();
   } catch (error) {
-    if (error instanceof SymlinkRefusedError || error instanceof NonUtf8FileError) {
+    if (
+      error instanceof SymlinkRefusedError ||
+      error instanceof NonUtf8FileError ||
+      error instanceof ManifestError
+    ) {
       // A refusal on the source side: regenerating would ship garbage to the
-      // API (or follow a link out of the closure), so there is no verdict and
-      // no remedy to print beyond the message itself.
+      // API (or follow a link out of the closure), and a manifest that names no
+      // method names nothing to regenerate from. No verdict, and no remedy to
+      // print beyond the message itself.
       console.error(`codegen:check: ${error.message}`);
       return EXIT_NO_VERDICT;
     }

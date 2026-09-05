@@ -9,6 +9,7 @@ vi.mock("./EntityForm", () => ({ EntityForm: () => <div>TEXT PANEL</div> }));
 vi.mock("./PdfForm", () => ({ PdfForm: () => <div>PDF PANEL</div> }));
 vi.mock("./ImageForm", () => ({ ImageForm: () => <div>IMAGE PANEL</div> }));
 vi.mock("./ComplexForm", () => ({ ComplexForm: () => <div>COMPLEX PANEL</div> }));
+vi.mock("./TextStatsForm", () => ({ TextStatsForm: () => <div>TEXT STATS PANEL</div> }));
 
 describe("ExampleTabs", () => {
   it("shows the text example by default", () => {
@@ -46,6 +47,16 @@ describe("ExampleTabs", () => {
     fireEvent.click(screen.getByRole("tab", { name: /complex inputs/i }));
 
     expect(screen.getByText("COMPLEX PANEL")).toBeVisible();
+    expect(screen.getByText("TEXT PANEL")).not.toBeVisible();
+  });
+
+  // The scaffolded tab is registered exactly like the four hand-written ones —
+  // one entry in `TABS`, which is what `make add-method` inserted at the anchor.
+  it("switches to the scaffolded text-stats example when its tab is clicked", () => {
+    render(<ExampleTabs />);
+    fireEvent.click(screen.getByRole("tab", { name: /text stats/i }));
+
+    expect(screen.getByText("TEXT STATS PANEL")).toBeVisible();
     expect(screen.getByText("TEXT PANEL")).not.toBeVisible();
   });
 });

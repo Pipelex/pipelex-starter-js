@@ -4,8 +4,17 @@ import { readClassifyEnv } from "@/lib/serverEnv";
 import { buildUsageReport, type UsageReport } from "@/lib/usageReport";
 // StartOptions ≡ RunOptions structurally (both `RunRequest & ExtensionOptions`),
 // so the same `buildOptions` closure drives `execute` (blocking) and `start`
-// (durable).
-import type { DictPipeOutput, RunResults, StartOptions, TokensUsageRecord } from "@pipelex/sdk";
+// (durable). `PipelexStartOptions` is that pure protocol shape plus the run
+// extensions — `method_ref` and `method_id`, how a scaffolded action names a
+// method that lives on the platform or in a published package rather than
+// shipping its bundle inline. Every extension is optional, so an action that
+// sends `mthds_contents` satisfies this type unchanged.
+import type {
+  DictPipeOutput,
+  PipelexStartOptions,
+  RunResults,
+  TokensUsageRecord,
+} from "@pipelex/sdk";
 
 export type BlockingOutcome<T> =
   | { ok: true; output: T; usage: UsageReport }
@@ -34,7 +43,7 @@ export type BlockingOutcome<T> =
  * the same way for both modes.
  */
 export async function executeBlockingRun<T>(
-  buildOptions: () => Promise<StartOptions>,
+  buildOptions: () => Promise<PipelexStartOptions>,
   parse: (results: RunResults) => T,
 ): Promise<BlockingOutcome<T>> {
   try {

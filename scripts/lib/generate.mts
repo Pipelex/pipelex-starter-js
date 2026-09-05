@@ -35,12 +35,14 @@ import {
   type PipeIOContracts,
 } from "@pipelex/sdk";
 
+import { assertSelectorSupport, explainSelectorFailure, selectorKindsOf } from "./api.mts";
 import {
   assertSecureBaseUrl,
   CONTRACTS_FILENAME,
   discoverMethods,
   hashSource,
   isContainedPath,
+  ManifestError,
   refuseSymlinkRoot,
   GENERATED_ROOT,
   LOCK_FILENAME,
@@ -50,7 +52,7 @@ import {
   REPO_ROOT,
   SIDECAR_COMMENT,
   SOURCES_SIDECAR,
-  type MethodClosure,
+  type MethodSource,
   type SourcesSidecar,
   walk,
 } from "./shared.mts";
@@ -179,8 +181,24 @@ export async function writeTree(
   return changed;
 }
 
-/** Turn a thrown value into an actionable line, naming the fix where we know it. */
-function explain(error: unknown, baseUrl: string, route = "POST /v1/codegen"): string {
+/**
+ * Turn a thrown value into an actionable line, naming the fix where we know it.
+ *
+ * `source` is passed for a selector method so a 404 can be read the right way
+ * round: on a files method a 404 means the route is missing, while on a selector
+ * method the route answered and the *method* is missing — two failures with
+ * nothing in common but their status code.
+ */
+function explain(
+  error: unknown,
+  baseUrl: string,
+  route = "POST /v1/codegen",
+  source?: MethodSource,
+): string {
+  if (source?.kind === "selector") {
+    const selectorFailure = explainSelectorFailure(error, source.selector);
+    if (selectorFailure !== null) return selectorFailure;
+  }
   if (error instanceof ApiResponseError && (error.status === 403 || error.status === 404)) {
     return [
       `this base URL does not serve ${route} (HTTP ${error.status}).`,
@@ -199,6 +217,16 @@ function explain(error: unknown, baseUrl: string, route = "POST /v1/codegen"): s
 export interface ValidateArtifacts {
   pipeIoContracts: PipeIOContracts;
   inputForm: InputForm;
+  /**
+   * The report's own entry pipe, carried through for the scaffold's pipe rule
+   * (`make add-method`) and written into no artifact.
+   *
+   * It is read in preference to `bundle_blueprint.main_pipe` because it is
+   * typed and because it is the field a published package's manifest fills:
+   * `github.com/Pipelex/methods/documents` has no bundle-level `main_pipe` and
+   * still names an entry pipe here.
+   */
+  defaultPipeRef: string | null;
 }
 
 /**
@@ -207,12 +235,14 @@ export interface ValidateArtifacts {
  * `views: ["input_form"]` — the descriptor is absent from any verdict that did
  * not ask for it.
  *
- * `validateFiles` rather than the lower-level `validate`: the closure is already
- * `MthdsFileItem[]` (`{content, source}`) and this adapter takes `MthdsFile[]`
- * (`{content, uri}`), so one field rename buys per-file attribution in the
- * diagnostics — and the adapter, not this script, is what guarantees the
- * `mthds_contents` / `mthds_sources` arrays it builds are the same length. Doing
- * it by hand is a 422 waiting for the first method with two bundles.
+ * A `files` method goes through `validateFiles` rather than the lower-level
+ * `validate`: the closure is already `MthdsFileItem[]` (`{content, source}`) and
+ * that adapter takes `MthdsFile[]` (`{content, uri}`), so one field rename buys
+ * per-file attribution in the diagnostics — and the adapter, not this script, is
+ * what guarantees the `mthds_contents` / `mthds_sources` arrays it builds are the
+ * same length. Doing it by hand is a 422 waiting for the first method with two
+ * bundles. A `selector` method has no local files to attribute, so it goes to
+ * `validate` with the selector itself and the same `views` opt-in.
  *
  * Returns `null` after reporting; the caller fails the method and writes nothing.
  * An invalid bundle is a produced verdict on a 200, not a thrown error, so it is
@@ -223,18 +253,21 @@ export interface ValidateArtifacts {
  * view, and writing a contracts file without the descriptor would leave every
  * form rendering empty — the kernel derives its fields from the descriptor.
  */
-async function fetchValidateArtifacts(
-  client: PipelexApiClient,
-  method: MethodClosure,
+export async function fetchValidateArtifacts(
+  client: Pick<PipelexApiClient, "validate" | "validateFiles">,
+  source: MethodSource,
   baseUrl: string,
 ): Promise<ValidateArtifacts | null> {
   try {
-    const response = await client.validateFiles(
-      method.files.map((file) => ({ content: file.content, uri: file.source })),
-      { views: ["input_form"] },
-    );
+    const response =
+      source.kind === "files"
+        ? await client.validateFiles(
+            source.files.map((file) => ({ content: file.content, uri: file.source })),
+            { views: ["input_form"] },
+          )
+        : await client.validate(source.selector, false, undefined, undefined, ["input_form"]);
     if (!response.is_valid) {
-      console.error(`\n✗ ${method.name} — the bundle does not validate:`);
+      console.error(`\n✗ ${source.name} — the method does not validate:`);
       for (const item of response.validation_errors) {
         console.error(`    ${item.source ?? "?"}: ${item.message}`);
       }
@@ -242,17 +275,189 @@ async function fetchValidateArtifacts(
     }
     if (!response.input_form) {
       console.error(
-        `\n✗ ${method.name} — /v1/validate returned no input_form view despite the ` +
+        `\n✗ ${source.name} — /v1/validate returned no input_form view despite the ` +
           `views: ["input_form"] opt-in. This base URL serves an API too old for the ` +
           `wire descriptor — check PIPELEX_BASE_URL (the hosted API serves it), or report upstream.`,
       );
       return null;
     }
-    return { pipeIoContracts: response.pipe_io_contracts, inputForm: response.input_form };
+    return {
+      pipeIoContracts: response.pipe_io_contracts,
+      inputForm: response.input_form,
+      defaultPipeRef: response.default_pipe_ref ?? null,
+    };
   } catch (error) {
-    console.error(`\n✗ ${method.name} — ${explain(error, baseUrl, "POST /v1/validate")}`);
+    console.error(`\n✗ ${source.name} — ${explain(error, baseUrl, "POST /v1/validate", source)}`);
     return null;
   }
+}
+
+/** Everything one method needs written, once every guard has passed. */
+export interface FetchedMethod {
+  report: CodegenValidReport;
+  contracts: ValidateArtifacts;
+}
+
+/**
+ * The read-and-guard half of generating one method: both API calls, and every
+ * refusal that must happen before a byte is written.
+ *
+ * Split from the writing half so the scaffold can run the same guards without
+ * committing to a write — `--dry-run` is exactly this function and nothing else.
+ * The ordering inside is load-bearing and unchanged: by the time the validate
+ * call is made, every codegen guard has passed, so a failure there leaves the
+ * tree untouched rather than half-updated.
+ *
+ * Returns `null` after reporting the reason; the caller fails the method.
+ */
+export async function fetchGenerated(
+  client: Pick<PipelexApiClient, "codegen" | "validate" | "validateFiles">,
+  source: MethodSource,
+  outDir: string,
+  baseUrl: string,
+): Promise<FetchedMethod | null> {
+  let report: CodegenValidReport;
+  try {
+    // No `pipe_ref`: `kind: "types"` is concept-set-wide and rejects it with a 422.
+    const response = await client.codegen(
+      source.kind === "files"
+        ? { files: source.files, kind: "types", target: "ts-zod" }
+        : { ...source.selector, kind: "types", target: "ts-zod" },
+    );
+    if (!response.is_valid) {
+      console.error(`\n✗ ${source.name} — the closure does not resolve:`);
+      for (const item of response.validation_errors) {
+        console.error(`    ${item.source ?? "?"}: ${item.message}`);
+      }
+      return null;
+    }
+    report = response;
+  } catch (error) {
+    console.error(`\n✗ ${source.name} — ${explain(error, baseUrl, "POST /v1/codegen", source)}`);
+    return null;
+  }
+
+  // Self-verify BEFORE writing: `GeneratedArtifact` and `CodegenTreeFile` are
+  // structurally identical on purpose, so the response feeds in with no mapping.
+  // A tree that fails its own check would fail `make check` after being committed.
+  const artifacts: GeneratedArtifact[] = report.artifacts;
+  const selfCheck = await runCodegenCheck({ lockContent: report.lock, files: artifacts });
+  if (!selfCheck.isCurrent) {
+    console.error(`\n✗ ${source.name} — the server's own artifacts fail the offline check:`);
+    for (const drift of selfCheck.drifts) {
+      console.error(`    ${drift.category}: ${drift.path} — ${drift.detail}`);
+    }
+    console.error("    Nothing was written. This is an upstream bug — report it.");
+    return null;
+  }
+
+  // The offline check opens the lock by name, so the writer must not put it
+  // anywhere else. Following a rename silently would leave the old lock in
+  // place — it is not stampable, so the tree cleanup keeps it — and the check
+  // would keep validating that obsolete file and stay green. A rename is
+  // upstream news; surface it here rather than writing a tree nothing guards.
+  if (report.lock_filename !== LOCK_FILENAME) {
+    console.error(
+      `\n✗ ${source.name} — the server returned lock_filename '${report.lock_filename}', ` +
+        `not '${LOCK_FILENAME}'. Nothing was written; bump @pipelex/sdk or report it upstream.`,
+    );
+    return null;
+  }
+
+  // The server names each artifact's path too, and `path.join` would resolve a
+  // `..` in one into a write outside the tree — somewhere no stamp guards the
+  // file and the offline check never looks, while `writeIfChanged`'s recursive
+  // `mkdir` creates whatever directory the path asks for. Refuse the method
+  // whole rather than write the containable ones, so the promise above holds.
+  const escaping = artifacts.filter((artifact) => !isContainedPath(outDir, artifact.path));
+  if (escaping.length > 0) {
+    console.error(
+      `\n✗ ${source.name} — the server returned artifact path(s) that escape ` +
+        `${path.relative(REPO_ROOT, outDir)}/: ${escaping.map((artifact) => artifact.path).join(", ")}. ` +
+        `Nothing was written; report it upstream.`,
+    );
+    return null;
+  }
+
+  // The derived artifacts are written last, so a server artifact sharing one
+  // of their names would be silently overwritten by ours: `writeTree` returns
+  // normally, the sidecar records our content, and the lock still expects the
+  // server's — leaving `codegen:check` reporting `hand-edited` forever, with a
+  // remedy ("run npm run codegen") that reproduces the same tree. Same class
+  // as the `lock_filename` guard above, and not hypothetical: the roadmap has
+  // the API serving an input-form descriptor at exactly this seam.
+  const colliding = artifacts.filter((artifact) => artifact.path === CONTRACTS_FILENAME);
+  if (colliding.length > 0) {
+    console.error(
+      `\n✗ ${source.name} — the server now returns an artifact named '${CONTRACTS_FILENAME}', ` +
+        `which this script also emits. Nothing was written; stop emitting it locally ` +
+        `and take the server's, or report it upstream.`,
+    );
+    return null;
+  }
+
+  // The form's half of the tree, and the last thing that can fail this method:
+  // by here every codegen guard has passed, so a failure now leaves the whole
+  // tree untouched rather than half-updated.
+  const contracts = await fetchValidateArtifacts(client, source, baseUrl);
+  if (contracts === null) return null;
+
+  return { report, contracts };
+}
+
+/** The writing half: the artifact set, the lock, `contracts.ts`, and the sidecar. */
+export async function writeGenerated(
+  outDir: string,
+  fetched: FetchedMethod,
+  source: MethodSource,
+): Promise<string[]> {
+  return writeTree(outDir, fetched.report, source.sourceHashes, {
+    [CONTRACTS_FILENAME]: renderContracts(
+      fetched.contracts.pipeIoContracts,
+      fetched.contracts.inputForm,
+    ),
+  });
+}
+
+/**
+ * Generate one method end to end — fetch, guard, write, report.
+ *
+ * This is the unit `npm run codegen` loops over and the scaffold calls once, so
+ * a scaffolded tree is the tree a regeneration would write: the same function
+ * wrote it. Never throws; a failure is reported and returned as `"failed"`, so
+ * one bad method neither aborts the loop nor skips every method after it.
+ */
+export async function generateMethod(
+  client: Pick<PipelexApiClient, "codegen" | "validate" | "validateFiles">,
+  source: MethodSource,
+  outDir: string,
+  baseUrl: string,
+): Promise<"ok" | "failed"> {
+  const fetched = await fetchGenerated(client, source, outDir, baseUrl);
+  if (fetched === null) return "failed";
+
+  let changed: string[];
+  try {
+    changed = await writeGenerated(outDir, fetched, source);
+  } catch (error) {
+    console.error(
+      `\n✗ ${source.name} — writing the tree failed: ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
+    return "failed";
+  }
+
+  const { report } = fetched;
+  console.log(
+    `\n✓ ${source.name} → ${path.relative(REPO_ROOT, outDir)}/  ` +
+      `(crate ${report.crate_fingerprint.slice(0, 12)}, engine ${report.engine_version})`,
+  );
+  if (changed.length === 0) {
+    console.log("    no changes");
+  } else {
+    for (const entry of changed) console.log(`    wrote ${entry}`);
+  }
+  return "ok";
 }
 
 async function runGenerateInner(): Promise<number> {
@@ -270,7 +475,18 @@ async function runGenerateInner(): Promise<number> {
     return EXIT_FAILED;
   }
 
-  const methods = await discoverMethods();
+  let methods: MethodSource[];
+  try {
+    methods = await discoverMethods();
+  } catch (error) {
+    if (error instanceof ManifestError) {
+      // A manifest that cannot be read names no method, so there is nothing to
+      // regenerate and no remedy beyond the message itself.
+      console.error(`codegen: ${error.message}`);
+      return EXIT_FAILED;
+    }
+    throw error;
+  }
   if (methods.length === 0) {
     console.error(`codegen: no methods found under ${path.relative(REPO_ROOT, METHODS_DIR)}/.`);
     return EXIT_FAILED;
@@ -284,139 +500,31 @@ async function runGenerateInner(): Promise<number> {
   // path mapping that Node's runtime resolver never reads. The client picks up the
   // same PIPELEX_API_KEY / PIPELEX_BASE_URL natively, so this IS the same client.
   const client = new PipelexApiClient();
+
+  // Asked once, before the loop, and only when a selector method is in play: an
+  // origin that does not forward selectors fails every one of them for the same
+  // reason, and saying so once — before anything is fetched or written — beats
+  // one opaque 403 per method.
+  const selectorKinds = selectorKindsOf(
+    methods.filter((method) => method.kind === "selector").map((method) => method.selector),
+  );
+  const unsupported = await assertSelectorSupport(client, baseUrl, selectorKinds);
+  if (unsupported !== null) {
+    console.error(`codegen: ${unsupported}`);
+    return EXIT_FAILED;
+  }
+
   console.log(`codegen: ${methods.length} method(s), via ${baseUrl}`);
 
   let failed = false;
-
   for (const method of methods) {
-    const outDir = path.join(GENERATED_ROOT, method.name);
-    let report: CodegenValidReport;
-
-    try {
-      // No `pipe_ref`: `kind: "types"` is concept-set-wide and rejects it with a 422.
-      const response = await client.codegen({
-        files: method.files,
-        kind: "types",
-        target: "ts-zod",
-      });
-      if (!response.is_valid) {
-        console.error(`\n✗ ${method.name} — the closure does not resolve:`);
-        for (const item of response.validation_errors) {
-          console.error(`    ${item.source ?? "?"}: ${item.message}`);
-        }
-        failed = true;
-        continue;
-      }
-      report = response;
-    } catch (error) {
-      console.error(`\n✗ ${method.name} — ${explain(error, baseUrl)}`);
-      failed = true;
-      continue;
-    }
-
-    // Self-verify BEFORE writing: `GeneratedArtifact` and `CodegenTreeFile` are
-    // structurally identical on purpose, so the response feeds in with no mapping.
-    // A tree that fails its own check would fail `make check` after being committed.
-    const artifacts: GeneratedArtifact[] = report.artifacts;
-    const selfCheck = await runCodegenCheck({ lockContent: report.lock, files: artifacts });
-    if (!selfCheck.isCurrent) {
-      console.error(`\n✗ ${method.name} — the server's own artifacts fail the offline check:`);
-      for (const drift of selfCheck.drifts) {
-        console.error(`    ${drift.category}: ${drift.path} — ${drift.detail}`);
-      }
-      console.error("    Nothing was written. This is an upstream bug — report it.");
-      failed = true;
-      continue;
-    }
-
-    // The offline check opens the lock by name, so the writer must not put it
-    // anywhere else. Following a rename silently would leave the old lock in
-    // place — it is not stampable, so the tree cleanup keeps it — and the check
-    // would keep validating that obsolete file and stay green. A rename is
-    // upstream news; surface it here rather than writing a tree nothing guards.
-    if (report.lock_filename !== LOCK_FILENAME) {
-      console.error(
-        `\n✗ ${method.name} — the server returned lock_filename '${report.lock_filename}', ` +
-          `not '${LOCK_FILENAME}'. Nothing was written; bump @pipelex/sdk or report it upstream.`,
-      );
-      failed = true;
-      continue;
-    }
-
-    // The server names each artifact's path too, and `path.join` would resolve a
-    // `..` in one into a write outside the tree — somewhere no stamp guards the
-    // file and the offline check never looks, while `writeIfChanged`'s recursive
-    // `mkdir` creates whatever directory the path asks for. Refuse the method
-    // whole rather than write the containable ones, so the promise above holds.
-    const escaping = artifacts.filter((artifact) => !isContainedPath(outDir, artifact.path));
-    if (escaping.length > 0) {
-      console.error(
-        `\n✗ ${method.name} — the server returned artifact path(s) that escape ` +
-          `${path.relative(REPO_ROOT, outDir)}/: ${escaping.map((artifact) => artifact.path).join(", ")}. ` +
-          `Nothing was written; report it upstream.`,
-      );
-      failed = true;
-      continue;
-    }
-
-    // The derived artifacts are written last, so a server artifact sharing one
-    // of their names would be silently overwritten by ours: `writeTree` returns
-    // normally, the sidecar records our content, and the lock still expects the
-    // server's — leaving `codegen:check` reporting `hand-edited` forever, with a
-    // remedy ("run npm run codegen") that reproduces the same tree. Same class
-    // as the `lock_filename` guard above, and not hypothetical: the roadmap has
-    // the API serving an input-form descriptor at exactly this seam.
-    const colliding = artifacts.filter((artifact) => artifact.path === CONTRACTS_FILENAME);
-    if (colliding.length > 0) {
-      console.error(
-        `\n✗ ${method.name} — the server now returns an artifact named '${CONTRACTS_FILENAME}', ` +
-          `which this script also emits. Nothing was written; stop emitting it locally ` +
-          `and take the server's, or report it upstream.`,
-      );
-      failed = true;
-      continue;
-    }
-
-    // The form's half of the tree, and the last thing that can fail this method:
-    // by here every codegen guard has passed, so a failure now leaves the whole
-    // tree untouched rather than half-updated.
-    const validateArtifacts = await fetchValidateArtifacts(client, method, baseUrl);
-    if (validateArtifacts === null) {
-      failed = true;
-      continue;
-    }
-
-    // The only per-method step that can throw rather than return a verdict, so
-    // it needs the same treatment as every other failure in this loop: report
-    // the method and keep going. Escaping here would print a bare stack and
-    // skip every method after this one, leaving their trees untouched for no
-    // reason connected to them.
-    let changed: string[];
-    try {
-      changed = await writeTree(outDir, report, method.sourceHashes, {
-        [CONTRACTS_FILENAME]: renderContracts(
-          validateArtifacts.pipeIoContracts,
-          validateArtifacts.inputForm,
-        ),
-      });
-    } catch (error) {
-      console.error(
-        `\n✗ ${method.name} — writing the tree failed: ` +
-          `${error instanceof Error ? error.message : String(error)}`,
-      );
-      failed = true;
-      continue;
-    }
-    const fingerprint = report.crate_fingerprint.slice(0, 12);
-    const where = path.relative(REPO_ROOT, outDir);
-    console.log(
-      `\n✓ ${method.name} → ${where}/  (crate ${fingerprint}, engine ${report.engine_version})`,
+    const outcome = await generateMethod(
+      client,
+      method,
+      path.join(GENERATED_ROOT, method.name),
+      baseUrl,
     );
-    if (changed.length === 0) {
-      console.log("    no changes");
-    } else {
-      for (const entry of changed) console.log(`    wrote ${entry}`);
-    }
+    if (outcome === "failed") failed = true;
   }
 
   return failed ? EXIT_FAILED : EXIT_OK;

@@ -30,8 +30,10 @@ describe("parseGeneratedImage", () => {
     // Captured live from api-dev: `url` is a non-web pipelex-storage URI,
     // `public_url` a signed S3 URL, and every unset optional field arrives as
     // an explicit `null` (pydantic serializes `None`, it does not omit the
-    // key). The generated schema models those as `.optional()`, so this case is
-    // the one that proves `dropWireNulls` is load-bearing rather than cosmetic.
+    // key). Since the trees were regenerated on engine 0.56.0 the schema models
+    // those as `.nullish()`, so the null now survives the narrower as a null
+    // rather than being stripped to absence — both read as "unset", and the
+    // narrower's job is that neither one fails the parse.
     const result = parseGeneratedImage(
       mainStuff({
         url: "pipelex-storage://org/runs/run_1/generated/abc.png",
@@ -49,9 +51,9 @@ describe("parseGeneratedImage", () => {
     expect(result.public_url).toContain("https://s3");
     expect(result.mime_type).toBe("image/png");
     expect(result.width).toBe(1024);
-    // A dropped null reads as absent, which is what `.optional()` means.
-    expect(result.caption).toBeUndefined();
-    expect(result.filename).toBeUndefined();
+    // A `.nullish()` field keeps the wire's null; the point is that it parses.
+    expect(result.caption).toBeNull();
+    expect(result.filename).toBeNull();
   });
 
   it("treats an empty public_url as absent and falls back to url", () => {

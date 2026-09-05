@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import type { PipeInputFormDescriptor } from "@pipelex/sdk";
 import {
   MAX_PDF_BYTES,
   checkFileInputs,
@@ -110,14 +111,31 @@ describe("validateDataUrl", () => {
 
 describe("checkFileInputs", () => {
   const opts = { allowedMimes: ["application/pdf"], maxBytes: MAX_PDF_BYTES };
+
+  // Descriptor nodes in the wire shape `POST /v1/validate` returns — the same
+  // artifact `INPUT_FORM` in a generated `contracts.ts` carries. The gate is
+  // typed on the standard's closed shapes, so the fixtures cast to it.
+  const DOCUMENT = { kind: "document", concept_ref: "native.Document", required: true } as const;
+  const top = (name: string, node: Record<string, unknown>): Record<string, unknown> => ({
+    ...node,
+    name,
+    required: true,
+    presence: "plain",
+    gating: true,
+  });
+  const descriptor = (...fields: unknown[]): PipeInputFormDescriptor =>
+    ({ fields }) as PipeInputFormDescriptor;
+
+  /** One top-level `document` input named `document` — the PDF example's shape. */
+  const SINGLE = descriptor(top("document", DOCUMENT));
   const enveloped = (url: string, filename?: string) => ({
     document: { concept: "native.Document", content: { url, ...(filename && { filename }) } },
   });
 
   it("accepts the schemes a file input may legitimately carry", () => {
-    expect(checkFileInputs(enveloped(PDF_DATA_URL), opts)).toBeNull();
-    expect(checkFileInputs(enveloped("https://example.com/a.pdf"), opts)).toBeNull();
-    expect(checkFileInputs(enveloped("pipelex-storage://abc"), opts)).toBeNull();
+    expect(checkFileInputs(SINGLE, enveloped(PDF_DATA_URL), opts)).toBeNull();
+    expect(checkFileInputs(SINGLE, enveloped("https://example.com/a.pdf"), opts)).toBeNull();
+    expect(checkFileInputs(SINGLE, enveloped("pipelex-storage://abc"), opts)).toBeNull();
   });
 
   it("reads the compact form the SDK also accepts", () => {
@@ -128,8 +146,17 @@ describe("checkFileInputs", () => {
     const compact = (content: string) => ({
       document: { concept: "native.Document", content },
     });
-    expect(checkFileInputs(compact(PDF_DATA_URL), opts)).toBeNull();
-    expect(checkFileInputs(compact("/etc/passwd"), opts)?.details).toBe(
+    expect(checkFileInputs(SINGLE, compact(PDF_DATA_URL), opts)).toBeNull();
+    expect(checkFileInputs(SINGLE, compact("/etc/passwd"), opts)?.details).toBe(
+      "unsupported_scheme: document",
+    );
+  });
+
+  it("reads a bare value as readily as the kernel's envelope", () => {
+    // The SDK reads a top-level input either way — the explicit `{concept,
+    // content}` envelope or the compact value — and so must this, or a caller
+    // that skips the envelope skips the gate.
+    expect(checkFileInputs(SINGLE, { document: { url: "/etc/passwd" } }, opts)?.details).toBe(
       "unsupported_scheme: document",
     );
   });
@@ -144,17 +171,18 @@ describe("checkFileInputs", () => {
     // Anything outside the accepted set reaches `prepareInputs` as a *local
     // filesystem path*, which it reads and uploads. Refusing by default is the
     // whole design; see the ALLOWED_FILE_SCHEMES docstring.
-    const error = checkFileInputs(enveloped(url), opts);
+    const error = checkFileInputs(SINGLE, enveloped(url), opts);
     expect(error?.kind).toBe("bad_request");
     expect(error?.title).toBe("Unsupported file reference");
   });
 
   it("gates a file input whatever the bundle calls it", () => {
     // The rename case the old `inputs.document` lookup failed open on. Codegen
-    // carries a rename into the form, the readiness rules and the wire envelope;
-    // a gate keyed on the literal name would just stop applying.
+    // carries a rename into the form, the readiness rules, the wire envelope —
+    // and the descriptor this gate walks, so the gate moves with it.
+    const RENAMED = descriptor(top("attachment", DOCUMENT));
     const renamed = { attachment: { concept: "native.Document", content: { url: "/etc/passwd" } } };
-    expect(checkFileInputs(renamed, opts)?.kind).toBe("bad_request");
+    expect(checkFileInputs(RENAMED, renamed, opts)?.details).toBe("unsupported_scheme: attachment");
 
     const oversized = {
       attachment: {
@@ -162,92 +190,175 @@ describe("checkFileInputs", () => {
         content: { url: `data:application/pdf;base64,${"A".repeat(16 * 1024 * 1024)}` },
       },
     };
-    expect(checkFileInputs(oversized, opts)?.kind).toBe("file_too_large");
+    expect(checkFileInputs(RENAMED, oversized, opts)?.kind).toBe("file_too_large");
   });
 
-  it("ignores inputs that carry no url, and checks every one that does", () => {
+  it("ignores inputs the descriptor declares as something else, and checks every file", () => {
+    const MIXED = descriptor(
+      top("text", { kind: "prose", concept_ref: "native.Text" }),
+      top("first", DOCUMENT),
+      top("second", DOCUMENT),
+    );
     const mixed = {
       text: { concept: "native.Text", content: { text: "not a file" } },
       first: { concept: "native.Document", content: { url: "https://example.com/a.pdf" } },
       second: { concept: "native.Document", content: { url: "/etc/passwd" } },
     };
-    expect(checkFileInputs(mixed, opts)?.details).toBe("unsupported_scheme: second");
+    expect(checkFileInputs(MIXED, mixed, opts)?.details).toBe("unsupported_scheme: second");
   });
 
   it("rejects a data URL of the wrong type, naming the file", () => {
-    const error = checkFileInputs(enveloped("data:image/png;base64,AAAA", "logo.png"), opts);
+    const error = checkFileInputs(
+      SINGLE,
+      enveloped("data:image/png;base64,AAAA", "logo.png"),
+      opts,
+    );
     expect(error?.kind).toBe("unsupported_file_type");
     expect(error?.details).toContain("logo.png");
   });
 
-  // The gate reads `content.url`, one level down. `prepareInputs` walks the
-  // method's whole signature, so it resolves a file inside a list or nested in a
-  // structured concept — positions this never sees. Both shapes below reached
-  // `readLocalPath` with the path intact when an unreachable `url` was a pass.
-  // Refusing keeps the "keyed on values, not names" property true through a
-  // routine bundle edit, instead of quietly reopening the local-file read.
-  describe("a file position it cannot reach", () => {
-    it("refuses a file inside a list", () => {
-      const plural = {
-        documents: {
-          concept: "native.Document",
-          content: [{ url: "/etc/passwd", filename: "x.pdf" }],
-        },
-      };
-      expect(checkFileInputs(plural, opts)?.details).toBe("unverifiable_file_position: documents");
+  // `prepareInputs` walks the method's wire descriptor, so it resolves a file
+  // inside a list or nested in a structured concept. This gate walks the same
+  // descriptor, so it reaches exactly those positions — the earlier shape of it
+  // read one level down and refused anything deeper, which is how a
+  // `cvs: list[Document]` input was refused at run time.
+  describe("a file position below the top level", () => {
+    /** `cvs: Document[]` beside a single `job_offer_pdf` — the CV-screening shape. */
+    const CVS = descriptor(
+      {
+        ...top("cvs", { kind: "list", concept_ref: "native.Document", item: DOCUMENT }),
+        gating: false,
+      },
+      top("job_offer_pdf", DOCUMENT),
+    );
+    const cvs = (...urls: string[]) => ({
+      cvs: {
+        concept: "native.Document",
+        content: urls.map((url, index) => ({ url, filename: `cv-${index}.pdf` })),
+      },
+      job_offer_pdf: { concept: "native.Document", content: { url: PDF_DATA_URL } },
     });
 
-    it("refuses a file nested in a structured concept", () => {
+    it("accepts every file in a list", () => {
+      expect(checkFileInputs(CVS, cvs(PDF_DATA_URL, "https://example.com/b.pdf"), opts)).toBeNull();
+    });
+
+    it("refuses one bad reference in a list, naming its position", () => {
+      const error = checkFileInputs(CVS, cvs(PDF_DATA_URL, "/etc/passwd"), opts);
+      expect(error?.title).toBe("Unsupported file reference");
+      expect(error?.details).toBe("unsupported_scheme: cvs.1");
+    });
+
+    it("applies the MIME and size checks to a list item, naming its file", () => {
+      const error = checkFileInputs(CVS, cvs("data:image/png;base64,AAAA"), opts);
+      expect(error?.kind).toBe("unsupported_file_type");
+      expect(error?.details).toBe("unsupported_file_type: cv-0.pdf");
+    });
+
+    it("accepts an empty list — a variable list needs no items", () => {
+      expect(checkFileInputs(CVS, cvs(), opts)).toBeNull();
+    });
+
+    it("reaches a file nested in a structured concept", () => {
+      const PACKET = descriptor(
+        top("packet", {
+          kind: "object",
+          concept_ref: "d.Packet",
+          fields: [
+            { kind: "text", name: "note", required: true },
+            { ...DOCUMENT, name: "attachment" },
+          ],
+        }),
+      );
       const nested = {
         packet: {
           concept: "d.Packet",
           content: { note: "hi", attachment: { url: "/etc/passwd", filename: "x.pdf" } },
         },
       };
-      expect(checkFileInputs(nested, opts)?.details).toBe("unverifiable_file_position: packet");
+      expect(checkFileInputs(PACKET, nested, opts)?.details).toBe(
+        "unsupported_scheme: packet.attachment",
+      );
     });
 
-    it("refuses a nested file hiding beside an outer url it can read", () => {
-      // The refusal must not be reachable only when `content.url` is missing:
-      // `url` is a key the caller supplies, so guarding on it lets an attacker
-      // switch the check off by pasting a perfectly good https:// URL beside
-      // the nested one. `prepareInputs` still walks to `attachment`.
-      const decoy = {
-        packet: {
-          concept: "d.Packet",
-          content: {
-            url: "https://example.com/metadata",
-            attachment: { url: "/etc/passwd", filename: "x.pdf" },
-          },
-        },
-      };
-      expect(checkFileInputs(decoy, opts)?.details).toBe("unverifiable_file_position: packet");
+    it("leaves an empty optional file position alone", () => {
+      // `null` is how an optional nested file is left unset, and nothing reads
+      // a file for it. Only what is present is verified.
+      const PACKET = descriptor(
+        top("packet", {
+          kind: "object",
+          concept_ref: "d.Packet",
+          fields: [{ ...DOCUMENT, name: "scan", required: false }],
+        }),
+      );
+      const empty = { packet: { concept: "d.Packet", content: { scan: null } } };
+      expect(checkFileInputs(PACKET, empty, opts)).toBeNull();
+    });
+  });
+
+  // The descriptor is the classifier, never the value's shape — which cuts both
+  // ways. A `url` the descriptor does not declare as a file is not one, and a
+  // value the SDK will not read cannot be made to look like one.
+  describe("what the descriptor does not declare", () => {
+    it("does not mistake a text field named `url` for a file", () => {
+      // The false positive a value walk cannot avoid: a structured concept with
+      // a `url` field of its own. `prepareInputs` copies it through untouched,
+      // so there is nothing to verify and refusing it would refuse the method.
+      const LINK = descriptor(
+        top("link", {
+          kind: "object",
+          concept_ref: "d.Link",
+          fields: [{ kind: "text", name: "url", required: true }],
+        }),
+      );
+      const link = { link: { concept: "d.Link", content: { url: "/not/a/file" } } };
+      expect(checkFileInputs(LINK, link, opts)).toBeNull();
     });
 
-    it("refuses a file hiding under a `url` key that is not itself a reference", () => {
-      // The `url` key is skipped because the scheme check below reads it — but
-      // that only holds when it *is* the string being read. A non-string there
-      // is a subtree this gate never looks at, so it must not be waved through
-      // on the strength of its name.
-      const decoy = {
-        packet: {
-          concept: "d.Packet",
-          content: { url: { url: "/etc/passwd", filename: "x.pdf" } },
-        },
-      };
-      expect(checkFileInputs(decoy, opts)?.details).toBe("unverifiable_file_position: packet");
-    });
-
-    it("still lets a plural text input through — an array is not by itself a file", () => {
+    it("lets a plural text input through — an array is not by itself a file", () => {
+      const PAGES = descriptor({
+        ...top("pages", {
+          kind: "list",
+          concept_ref: "native.Text",
+          item: { kind: "prose", concept_ref: "native.Text", required: true },
+        }),
+        gating: false,
+      });
       const pages = { pages: { concept: "native.Text", content: [{ text: "first" }] } };
-      expect(checkFileInputs(pages, opts)).toBeNull();
+      expect(checkFileInputs(PAGES, pages, opts)).toBeNull();
     });
 
-    it("refuses rather than recurses forever on a self-referential payload", () => {
+    it("does not walk a value whose shape disagrees with its node", () => {
+      // A self-referential payload under a `prose` node is never descended (the
+      // walk follows the descriptor, which is finite), and an array where the
+      // descriptor declares an object is left to the shape gate.
       const loop: Record<string, unknown> = { note: "hi" };
       loop.self = loop;
-      const cyclic = { packet: { concept: "d.Packet", content: loop } };
-      expect(checkFileInputs(cyclic, opts)?.details).toBe("unverifiable_file_position: packet");
+      const PROSE = descriptor(top("text", { kind: "prose", concept_ref: "native.Text" }));
+      expect(
+        checkFileInputs(PROSE, { text: { concept: "native.Text", content: loop } }, opts),
+      ).toBeNull();
+    });
+
+    it("refuses a present file position that holds neither a string nor {url}", () => {
+      // Bytes or a shapeless object at a file position would either bypass the
+      // size cap (the SDK uploads bytes as-is) or fail in the SDK with a typed
+      // error; either way the verdict is this gate's, not the schema's in front.
+      const blob = { document: { concept: "native.Document", content: new Uint8Array(4) } };
+      expect(checkFileInputs(SINGLE, blob, opts)?.details).toBe("unsupported_scheme: document");
+      const shapeless = {
+        document: { concept: "native.Document", content: { filename: "x.pdf" } },
+      };
+      expect(checkFileInputs(SINGLE, shapeless, opts)?.details).toBe(
+        "unsupported_scheme: document",
+      );
+    });
+
+    it("passes an input the descriptor does not name through untouched", () => {
+      // The shape gate in front drops undeclared inputs before this runs, and
+      // the SDK copies one through without reading it; neither is a file.
+      const stray = { stray: { concept: "native.Document", content: { url: "/etc/passwd" } } };
+      expect(checkFileInputs(SINGLE, stray, opts)).toBeNull();
     });
   });
 });
