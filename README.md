@@ -28,7 +28,7 @@ Prefer to do it by hand? The manual equivalent:
 ## Stack
 
 - **Next.js 16** (App Router) + **React 19** + **TypeScript 5** (strict)
-- **Tailwind CSS 3**
+- **Tailwind CSS 4** (configured in CSS — there is no `tailwind.config.ts`)
 - **Vitest 4** + Testing Library (happy-dom)
 - **ESLint 9** + **Prettier 3**, **Husky** + **lint-staged**
 - **`@pipelex/sdk`** SDK for Pipelex API calls
