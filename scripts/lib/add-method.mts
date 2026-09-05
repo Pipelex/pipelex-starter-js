@@ -363,7 +363,11 @@ export function descriptorFor(inputForm: InputForm, pipe: ChosenPipe): PipeInput
 export interface OutputBinding {
   /** The concept's code — `Text` for `native.Text`. `<Code>Schema` and `parse<Code>`. */
   conceptCode: string;
-  /** A plural output arrives as a `{ items: [...] }` envelope, not a bare array. */
+  /**
+   * A plural output is a list of the concept. The runtime renders one as a
+   * `{ items: [...] }` envelope on some paths and as a bare array on others, so
+   * the narrower reads it through `wireListOutput`, which accepts both.
+   */
   plural: boolean;
 }
 
@@ -404,8 +408,8 @@ export function bindOutput(
         `concept "${conceptRef}". Nothing was written; report it upstream.`,
     );
   }
-  // The plural arm parses through the list envelope it declares itself, so it
-  // needs the schema and not the single-value binder.
+  // The plural arm parses through `z.array(<Code>Schema)`, so it needs the
+  // schema and not the single-value binder.
   if (!plural && !bodyOf("binder.ts").includes(`export function parse${conceptCode}(`)) {
     throw new AddMethodError(
       `the generated binder.ts exports no parse${conceptCode} for the pipe's output ` +
@@ -573,11 +577,13 @@ function selectorConstant(selector: ValidateMethodSelector): { name: string; val
  * `src/types/<camel>Pipeline.ts` — the adapter over the method's own generated
  * binder, written exactly like the four hand-written ones.
  *
- * The single arm hands `wireOutput` to the binder. The plural arm declares the
- * list envelope the runtime actually returns (`{ items: [...] }`, measured, not
- * assumed) around the generated element schema and parses with that: the
- * envelope is the transport's shape rather than a concept, so declaring it here
- * is not the duplicated surface codegen removes.
+ * The single arm hands `wireOutput` to the binder. The plural arm parses
+ * `z.array(<Code>Schema)` over `wireListOutput`, which is what knows that the
+ * runtime renders a list output two ways — `{ items: [...] }` on the blocking
+ * path, a bare array on the durable path for a method-declared concept — and
+ * hands back the array either way. Neither arm declares a field: the element
+ * schema is the generated one, and the list around it is the contract's
+ * `multiplicity`, not a shape.
  */
 export function renderAdapter(plan: ScaffoldPlan): string {
   const { names, binding } = plan;
@@ -622,33 +628,31 @@ export function renderAdapter(plan: ScaffoldPlan): string {
     ].join("\n");
   }
 
-  const envelope = `${names.pascal}OutputSchema`;
+  const listSchema = `${names.pascal}OutputSchema`;
   return [
     ...header,
     'import type { RunResults } from "@pipelex/sdk";',
     'import { z } from "zod";',
-    `import { ${binding.conceptCode}Schema } from "@/generated/${names.slug}/types";`,
-    'import { describeSchemaFailure, wireOutput } from "@/lib/wireOutput";',
+    `import { ${binding.conceptCode}Schema, type ${binding.conceptCode} } from "@/generated/${names.slug}/types";`,
+    'import { describeSchemaFailure, wireListOutput } from "@/lib/wireOutput";',
     'import { BadPipelineOutputError } from "@/types/pipelineError";',
     "",
-    "/**",
-    " * This pipe produces several items, and a plural output arrives as a list",
-    " * envelope — `{ items: [...] }` — not a bare array. The envelope is the",
-    " * runtime's transport shape rather than a concept, so it is declared here",
-    " * around the generated element schema instead of being generated.",
-    " */",
-    `const ${envelope} = z.object({ items: z.array(${binding.conceptCode}Schema) });`,
+    `/** This pipe produces several items: its output is a list of the concept. */`,
+    `export type ${outputType} = ${binding.conceptCode}[];`,
     "",
-    `export type ${names.pascal}Output = z.infer<typeof ${envelope}>;`,
+    `const ${listSchema} = z.array(${binding.conceptCode}Schema);`,
     "",
     "/**",
-    " * Narrow a run's output through the envelope schema. Throws",
-    " * `BadPipelineOutputError` on a shape mismatch — a system boundary, so a",
-    " * failure is a real bug we want surfaced.",
+    ` * Narrow a run's output into \`${outputType}\`. The runtime renders a list output`,
+    " * two ways — a `{ items: [...] }` envelope on the blocking path, a bare array on",
+    " * the durable path — and `wireListOutput` hands back the array either way, so",
+    " * the generated element schema owns the verdict. Throws `BadPipelineOutputError`",
+    " * on a shape mismatch — a system boundary, so a failure is a real bug we want",
+    " * surfaced; the blocking/poll catch classifies it.",
     " */",
     `export function ${parseName}(results: RunResults): ${outputType} {`,
     "  try {",
-    `    return ${envelope}.parse(wireOutput(results, ${envelope}));`,
+    `    return ${listSchema}.parse(wireListOutput(results, ${binding.conceptCode}Schema));`,
     "  } catch (err) {",
     `    throw new BadPipelineOutputError(describeSchemaFailure(err, ${JSON.stringify(`${binding.conceptCode}[]`)}));`,
     "  }",
@@ -1332,7 +1336,7 @@ async function runAddMethodInner(argv: readonly string[], deps?: AddMethodDeps):
   console.log(`  pipe:   ${pipe.ref}`);
   console.log(
     `  output: ${contract.output.concept_ref}` +
-      `${plan.binding.plural ? " (plural — a { items: [...] } envelope)" : ""}`,
+      `${plan.binding.plural ? " (plural — a list of the concept)" : ""}`,
   );
   if (plan.files.length > 0) {
     console.log(`  files:  ${plan.files.map((file) => file.path).join(", ")}`);

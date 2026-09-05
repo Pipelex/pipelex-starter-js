@@ -44,9 +44,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 /**
  * Every renderable image URL in the value, in order.
  *
- * Looks one level down and no further: the value itself, and — for a plural
- * output, which arrives as a `{ items: [...] }` envelope — each item. Deeper
- * than that a `url` key is somebody else's data, and guessing which one is the
+ * Looks one level down and no further: the value itself, or — for a plural
+ * output, which the narrower hands over as an array — each item. Deeper than
+ * that a `url` key is somebody else's data, and guessing which one is the
  * picture is the design decision this component is defined not to make.
  *
  * `public_url ?? url` is the same preference `parseGeneratedImage` applies:
@@ -54,7 +54,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * `public_url`, so the second is the one to show when it is there.
  */
 export function imageUrlsOf(value: unknown): string[] {
-  const candidates = isPlainObject(value) && Array.isArray(value.items) ? value.items : [value];
+  const candidates = Array.isArray(value) ? value : [value];
   return candidates
     .filter(isPlainObject)
     .map((candidate) => candidate.public_url ?? candidate.url)

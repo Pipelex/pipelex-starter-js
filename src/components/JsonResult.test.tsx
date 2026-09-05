@@ -38,11 +38,9 @@ describe("imageUrlsOf", () => {
     ).toEqual(["https://s3.example/abc.png?sig=1"]);
   });
 
-  it("finds every image of a plural output's items envelope", () => {
+  it("finds every image of a plural output, which the narrower hands over as an array", () => {
     expect(
-      imageUrlsOf({
-        items: [{ url: "https://a.example/1.png" }, { url: "https://a.example/2.png" }],
-      }),
+      imageUrlsOf([{ url: "https://a.example/1.png" }, { url: "https://a.example/2.png" }]),
     ).toEqual(["https://a.example/1.png", "https://a.example/2.png"]);
   });
 
@@ -56,6 +54,9 @@ describe("imageUrlsOf", () => {
     // A `url` nested inside a field is somebody else's data, and picking it as
     // "the picture" is exactly the design decision this component avoids.
     expect(imageUrlsOf({ nested: { url: "https://deep.example/x.png" } })).toEqual([]);
+    // Nor inside a field that happens to be called `items`: the wire envelope
+    // is unwrapped by the narrower, so here it is just a field.
+    expect(imageUrlsOf({ items: [{ url: "https://deep.example/y.png" }] })).toEqual([]);
   });
 });
 

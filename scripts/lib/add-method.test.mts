@@ -254,7 +254,7 @@ describe("bindOutput", () => {
     });
   });
 
-  it("flags a plural output — it arrives as a { items: [...] } envelope", () => {
+  it("flags a plural output — the narrower reads it as a list of the concept", () => {
     const plural = contractFor(DOCUMENTS_CONTRACTS, {
       ref: "documents.extract_text_pages",
       domain: "documents",
@@ -480,15 +480,15 @@ describe("renderAdapter", () => {
     expect(source).not.toMatch(/z\.object\(\{\s*\w+:/);
   });
 
-  it("wraps a plural output in the list envelope the runtime actually returns", () => {
+  it("types a plural output as a list of the concept, read through wireListOutput", () => {
     const source = renderAdapter(DOCUMENTS_PLAN);
-    expect(source).toContain(
-      "const DocumentsOutputSchema = z.object({ items: z.array(PageSchema) });",
-    );
-    expect(source).toContain(
-      "DocumentsOutputSchema.parse(wireOutput(results, DocumentsOutputSchema))",
-    );
-    // The single-value binder is deliberately not used on this arm.
+    expect(source).toContain("export type DocumentsOutput = Page[];");
+    expect(source).toContain("const DocumentsOutputSchema = z.array(PageSchema);");
+    // `wireListOutput` is what accepts both renderings of a list output — the
+    // `{ items: [...] }` envelope and the bare array — so no envelope is
+    // declared here, and the single-value binder is deliberately not used.
+    expect(source).toContain("DocumentsOutputSchema.parse(wireListOutput(results, PageSchema))");
+    expect(source).not.toContain("z.object(");
     expect(source).not.toContain("parsePage(");
   });
 });

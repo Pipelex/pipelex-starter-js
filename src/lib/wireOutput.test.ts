@@ -1,7 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import type { RunResults } from "@pipelex/sdk";
-import { describeSchemaFailure, dropWireNulls, MAX_WIRE_DEPTH, wireOutput } from "./wireOutput";
+import {
+  describeSchemaFailure,
+  dropWireNulls,
+  MAX_WIRE_DEPTH,
+  wireListOutput,
+  wireOutput,
+} from "./wireOutput";
 import { ImageSchema } from "@/generated/generate-image/types";
 
 /**
@@ -141,6 +147,60 @@ describe("wireOutput", () => {
     const results = { pipeline_run_id: "run-1", main_stuff } as unknown as RunResults;
     expect(wireOutput(results, ImageSchema)).toBe(main_stuff);
     expect(ImageSchema.safeParse(wireOutput(results, ImageSchema)).success).toBe(false);
+  });
+});
+
+describe("wireListOutput", () => {
+  // The two renderings of one ListContent the runtime sends, measured live on
+  // 2026-09-05: `{ items }` from the blocking response and from a durable run
+  // whose concept class the worker could hydrate; a bare array from a durable
+  // run of a method-declared concept, which falls back to the transport dump.
+  it("unwraps the { items: [...] } envelope and normalizes each item", () => {
+    const results = {
+      pipeline_run_id: "run-1",
+      main_stuff: { items: [{ url: "https://a", caption: null }, { url: "https://b" }] },
+    } as unknown as RunResults;
+    expect(wireListOutput(results, LEGACY_IMAGE)).toEqual([
+      { url: "https://a" },
+      { url: "https://b" },
+    ]);
+  });
+
+  it("passes a bare array through, normalizing each item the same way", () => {
+    const results = {
+      pipeline_run_id: "run-1",
+      main_stuff: [{ url: "https://a", caption: null }, { url: "https://b" }],
+    } as unknown as RunResults;
+    expect(wireListOutput(results, LEGACY_IMAGE)).toEqual([
+      { url: "https://a" },
+      { url: "https://b" },
+    ]);
+  });
+
+  it("hands both shapes to the same array schema with the same verdict", () => {
+    const schema = z.array(ImageSchema);
+    const items = [{ url: "https://a" }];
+    const enveloped = { pipeline_run_id: "r", main_stuff: { items } } as unknown as RunResults;
+    const bare = { pipeline_run_id: "r", main_stuff: items } as unknown as RunResults;
+    expect(schema.parse(wireListOutput(enveloped, ImageSchema))).toEqual(
+      schema.parse(wireListOutput(bare, ImageSchema)),
+    );
+  });
+
+  it("leaves anything else untouched so z.array() names what it got", () => {
+    const single = {
+      pipeline_run_id: "r",
+      main_stuff: { url: "https://a" },
+    } as unknown as RunResults;
+    expect(wireListOutput(single, ImageSchema)).toEqual({ url: "https://a" });
+    expect(z.array(ImageSchema).safeParse(wireListOutput(single, ImageSchema)).success).toBe(false);
+
+    // An `items` key that is not an array is a field, not the envelope.
+    const notEnvelope = {
+      pipeline_run_id: "r",
+      main_stuff: { items: "x" },
+    } as unknown as RunResults;
+    expect(wireListOutput(notEnvelope, ImageSchema)).toEqual({ items: "x" });
   });
 });
 
