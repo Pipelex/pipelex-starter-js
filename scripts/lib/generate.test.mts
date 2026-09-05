@@ -19,15 +19,22 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
-import { runCodegenCheck, type CodegenValidReport } from "@pipelex/sdk";
+import {
+  ApiResponseError,
+  runCodegenCheck,
+  type CodegenValidReport,
+  type PipelexApiClient,
+} from "@pipelex/sdk";
 
-import { writeTree } from "./generate.mts";
+import { generateMethod, writeTree } from "./generate.mts";
 import {
   CONTRACTS_FILENAME,
   hashSource,
+  LOCK_FILENAME,
   renderContracts,
   SOURCES_SIDECAR,
   SymlinkRefusedError,
+  type MethodSource,
 } from "./shared.mts";
 
 vi.mock("@pipelex/sdk", async (importOriginal) => {
@@ -61,6 +68,7 @@ const CONTRACTS = renderContracts(
         multiplicity: "single",
         item_count: null,
         optional: false,
+        json_schema: {},
       },
     },
   },
@@ -241,5 +249,173 @@ describe("writeTree", () => {
     // still holds only the symlink that caused the refusal.
     expect(await readdir(outDir)).toEqual(["nested"]);
     expect(checkMock).not.toHaveBeenCalled();
+  });
+});
+
+// `generateMethod` is the unit `npm run codegen` loops over AND the unit the
+// scaffold calls once, which is the whole reason it exists as a function: a
+// scaffolded tree has to be the tree a regeneration would write. What is worth
+// pinning is therefore not the writing (that is `writeTree` above) but the
+// branch — which SDK call each source kind makes, and that a refusal writes
+// nothing at all.
+describe("generateMethod", () => {
+  const FILES_SOURCE: MethodSource = {
+    name: "demo",
+    kind: "files",
+    files: [{ content: "a = 1\n", source: "methods/demo/main.mthds" }],
+    sourceHashes: SOURCES,
+  };
+  const SELECTOR_SOURCE: MethodSource = {
+    name: "demo",
+    kind: "selector",
+    selector: { method_ref: "github.com/Pipelex/methods/text_stats@v0.1.1" },
+    sourceHashes: { "methods/demo/method.json": "abc123" },
+  };
+
+  const VALID_REPORT = {
+    is_valid: true,
+    artifacts: [{ path: "types.ts", content: "export {};\n" }],
+    lock: "lock_version = 1\n",
+    lock_filename: LOCK_FILENAME,
+    crate_fingerprint: "f".repeat(64),
+    engine_version: "0.56.0",
+  };
+
+  const VALID_VALIDATE = {
+    is_valid: true,
+    pipe_io_contracts: {
+      "demo.demo": {
+        inputs: {},
+        output: {
+          concept_ref: "native.Text",
+          multiplicity: "single",
+          item_count: null,
+          optional: false,
+          json_schema: {},
+        },
+      },
+    },
+    input_form: { "demo.demo": { fields: [] } },
+  };
+
+  /** A client that answers both calls with the fixtures above, unless overridden. */
+  function fakeClient(overrides: Record<string, unknown> = {}) {
+    return {
+      codegen: vi.fn().mockResolvedValue(VALID_REPORT),
+      validate: vi.fn().mockResolvedValue(VALID_VALIDATE),
+      validateFiles: vi.fn().mockResolvedValue(VALID_VALIDATE),
+      ...overrides,
+    } as unknown as Pick<PipelexApiClient, "codegen" | "validate" | "validateFiles"> & {
+      codegen: Mock;
+      validate: Mock;
+      validateFiles: Mock;
+    };
+  }
+
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("sends a files source inline, and validates it with per-file attribution", async () => {
+    noDrifts();
+    const client = fakeClient();
+
+    expect(await generateMethod(client, FILES_SOURCE, outDir, "https://api.example")).toBe("ok");
+    expect(client.codegen).toHaveBeenCalledWith({
+      files: FILES_SOURCE.kind === "files" ? FILES_SOURCE.files : [],
+      kind: "types",
+      target: "ts-zod",
+    });
+    expect(client.validateFiles).toHaveBeenCalledWith(
+      [{ content: "a = 1\n", uri: "methods/demo/main.mthds" }],
+      { views: ["input_form"] },
+    );
+    expect(client.validate).not.toHaveBeenCalled();
+    expect((await readdir(outDir)).sort()).toEqual(
+      [CONTRACTS_FILENAME, LOCK_FILENAME, SOURCES_SIDECAR, "types.ts"].sort(),
+    );
+  });
+
+  it("sends a selector source as the selector, on both routes", async () => {
+    noDrifts();
+    const client = fakeClient();
+
+    expect(await generateMethod(client, SELECTOR_SOURCE, outDir, "https://api.example")).toBe("ok");
+    expect(client.codegen).toHaveBeenCalledWith({
+      method_ref: "github.com/Pipelex/methods/text_stats@v0.1.1",
+      kind: "types",
+      target: "ts-zod",
+    });
+    expect(client.validate).toHaveBeenCalledWith(
+      { method_ref: "github.com/Pipelex/methods/text_stats@v0.1.1" },
+      false,
+      undefined,
+      undefined,
+      ["input_form"],
+    );
+    expect(client.validateFiles).not.toHaveBeenCalled();
+  });
+
+  it("records the manifest hash in the sidecar of a selector-sourced tree", async () => {
+    noDrifts();
+
+    await generateMethod(fakeClient(), SELECTOR_SOURCE, outDir, "https://api.example");
+
+    const sidecar: unknown = JSON.parse(
+      await readFile(path.join(outDir, SOURCES_SIDECAR), "utf-8"),
+    );
+    expect(sidecar).toMatchObject({ sources: { "methods/demo/method.json": "abc123" } });
+  });
+
+  it("fails a selector the API cannot resolve, writing nothing", async () => {
+    noDrifts();
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line: unknown) => {
+      errors.push(String(line));
+    });
+    const client = fakeClient({
+      codegen: vi
+        .fn()
+        .mockRejectedValue(
+          new ApiResponseError(
+            "API POST /v1/codegen failed (404)",
+            "https://api.example/v1/codegen",
+            404,
+            "Not Found",
+            "{}",
+            "MethodPackageNotFoundError",
+            "No package at address 'github.com/Pipelex/methods/text_stats'.",
+            undefined,
+            undefined,
+          ),
+        ),
+    });
+
+    expect(await generateMethod(client, SELECTOR_SOURCE, outDir, "https://api.example")).toBe(
+      "failed",
+    );
+    // The server's own message is the useful half, and the line names the
+    // selector rather than blaming PIPELEX_BASE_URL for a route that answered.
+    expect(errors.join("\n")).toContain("could not resolve method_ref");
+    expect(errors.join("\n")).toContain("No package at address");
+    expect(errors.join("\n")).not.toContain("does not serve");
+    await expect(readdir(outDir)).rejects.toThrow();
+  });
+
+  it("fails before writing when the validate view is missing", async () => {
+    noDrifts();
+    const client = fakeClient({
+      validate: vi.fn().mockResolvedValue({ ...VALID_VALIDATE, input_form: undefined }),
+    });
+
+    expect(await generateMethod(client, SELECTOR_SOURCE, outDir, "https://api.example")).toBe(
+      "failed",
+    );
+    await expect(readdir(outDir)).rejects.toThrow();
   });
 });

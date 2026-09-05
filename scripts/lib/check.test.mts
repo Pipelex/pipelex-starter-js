@@ -30,16 +30,25 @@ import {
   renderContracts,
   SIDECAR_COMMENT,
   SOURCES_SIDECAR,
-  type MethodClosure,
+  type MethodSource,
 } from "./shared.mts";
 
 // Invalid UTF-8: a lone continuation byte, the same fixture the shared layer uses.
 const INVALID_UTF8 = Buffer.from([0x68, 0x69, 0x80, 0x0a]);
 
-const METHOD: MethodClosure = {
+const METHOD: MethodSource = {
   name: "demo",
+  kind: "files",
   files: [{ content: "", source: "methods/demo/main.mthds" }],
   sourceHashes: { "methods/demo/main.mthds": "abc123" },
+};
+
+/** The same method named by a manifest instead of carrying its own bundles. */
+const SELECTOR_METHOD: MethodSource = {
+  name: "demo",
+  kind: "selector",
+  selector: { method_ref: "github.com/Pipelex/methods/demo@v1.0.0" },
+  sourceHashes: { "methods/demo/method.json": "abc123" },
 };
 
 let generatedRoot: string;
@@ -156,6 +165,7 @@ describe("checkMethod over a tree carrying contracts.ts", () => {
           multiplicity: "single",
           item_count: null,
           optional: false,
+          json_schema: {},
         },
       },
     },
@@ -210,12 +220,13 @@ describe("checkMethod over a tree carrying contracts.ts", () => {
   async function currentTree(
     contracts: string | null = CONTRACTS,
     derived: Record<string, string> = { [CONTRACTS_FILENAME]: hashSource(CONTRACTS) },
+    sources: Record<string, string> = METHOD.sourceHashes,
   ): Promise<string> {
     const files: Record<string, string> = {
       [LOCK_FILENAME]: lock(),
       "types.ts": stamped(TYPES_BODY),
       [SOURCES_SIDECAR]: `${JSON.stringify(
-        { comment: SIDECAR_COMMENT, sources: METHOD.sourceHashes, derived },
+        { comment: SIDECAR_COMMENT, sources, derived },
         null,
         2,
       )}\n`,
@@ -246,5 +257,46 @@ describe("checkMethod over a tree carrying contracts.ts", () => {
     await currentTree(CONTRACTS, {});
 
     expect(await checkMethod(METHOD, generatedRoot)).toBe(EXIT_DRIFT);
+  });
+
+  // A selector-sourced tree is checked by exactly the same code — the point of
+  // hashing the manifest the way a bundle is hashed rather than recording the
+  // selector somewhere the check would have to learn about. These three pin that
+  // it really is the same code, so the gesture inherits the gate rather than
+  // getting a weaker one.
+  describe("over a selector-sourced tree", () => {
+    const SELECTOR_SOURCES = SELECTOR_METHOD.sourceHashes;
+
+    it("is current when the manifest still hashes to what the tree recorded", async () => {
+      await currentTree(
+        CONTRACTS,
+        { [CONTRACTS_FILENAME]: hashSource(CONTRACTS) },
+        SELECTOR_SOURCES,
+      );
+
+      expect(await checkMethod(SELECTOR_METHOD, generatedRoot)).toBe(EXIT_CURRENT);
+    });
+
+    it("reports drift after the manifest changes — a bumped tag, not regenerated", async () => {
+      await currentTree(
+        CONTRACTS,
+        { [CONTRACTS_FILENAME]: hashSource(CONTRACTS) },
+        {
+          "methods/demo/method.json": "an-older-hash",
+        },
+      );
+
+      expect(await checkMethod(SELECTOR_METHOD, generatedRoot)).toBe(EXIT_DRIFT);
+    });
+
+    it("reports drift when contracts.ts is hand-edited, same as a files method", async () => {
+      await currentTree(
+        `${CONTRACTS}// tampered\n`,
+        { [CONTRACTS_FILENAME]: hashSource(CONTRACTS) },
+        SELECTOR_SOURCES,
+      );
+
+      expect(await checkMethod(SELECTOR_METHOD, generatedRoot)).toBe(EXIT_DRIFT);
+    });
   });
 });
