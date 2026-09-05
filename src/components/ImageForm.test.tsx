@@ -66,7 +66,10 @@ describe("ImageForm", () => {
     submitForm();
 
     await flush();
-    expect(screen.getByRole("img", { name: /generated image/i })).toBeInTheDocument();
+    // The kernel's image arm paints the file with no storage resolver configured,
+    // preferring `public_url` when the runtime sends one — which is why this
+    // template renders a hosted image without wiring `<ResultEnvProvider>`.
+    expect(screen.getByRole("img")).toHaveAttribute("src", IMAGE.url);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     // The action receives the schema-shaped dict, keyed by the contract's own
     // input name. Two slips this catches and nothing else does: sending the

@@ -7,25 +7,28 @@ import {
   startTextStatsRun,
 } from "@/actions/runTextStatsPipeline";
 import { DEFAULT_EXECUTION_MODE, type ExecutionMode } from "@/config";
-import { INPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/text-stats/contracts";
+import { INPUT_FORM, OUTPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/text-stats/contracts";
 import { useRun } from "@/hooks/useRun";
 import { useRunInputs } from "@/hooks/useRunInputs";
+import { requireResultField } from "@/lib/resultField";
 import { requireContract, requireInputForm } from "@/lib/runInputs";
 import { CostReport } from "./CostReport";
 import { ErrorDisplay } from "./ErrorDisplay";
-import { JsonResult } from "./JsonResult";
 import { ModeToggle } from "./ModeToggle";
 import { RunInputsForm } from "./RunInputsForm";
+import { RunResult } from "./RunResult";
 import { RunStatus } from "./RunStatus";
 
 // Scaffolded by `make add-method` — yours to edit from here on.
 //
-// The form is derived from the method's own wire descriptor and contract,
-// committed by `npm run codegen` beside the generated output types. There are no
-// hand-written fields to keep in step: change what the method takes, regenerate,
-// and the form follows.
+// Both halves are derived from the method's own contract, committed by
+// `npm run codegen`: the form from the input-form descriptor, the result view
+// from the output-form descriptor paired with the payload schema. There is
+// nothing hand-written to keep in step — change what the method takes or
+// produces, regenerate, and both follow.
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "text_stats", "analyze_text");
 const DESCRIPTOR = requireInputForm(INPUT_FORM, "text_stats", "analyze_text");
+const RESULT_FIELD = requireResultField(OUTPUT_FORM, CONTRACT, "text_stats", "analyze_text");
 
 export function TextStatsForm() {
   const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR);
@@ -73,11 +76,12 @@ export function TextStatsForm() {
       {state.phase === "error" && <ErrorDisplay error={state.error} />}
       {state.phase === "done" && (
         <>
-          {/* The honest view for a shape nobody designed a component for. Replace
-              <JsonResult> with one of your own once you know the output —
-              `EntityResult` and `PdfSummaryResult` are what that looks like. The
-              value is already typed by the narrower. */}
-          <JsonResult value={state.output} label="Text stats output" />
+          {/* The result, rendered from the method's own output contract — the
+              scaffold has no design decision to make about a shape it has never
+              seen, because there is none left to make. Swap it for a component
+              of your own if this output deserves a bespoke view; the value is
+              already typed by the narrower. */}
+          <RunResult field={RESULT_FIELD} value={state.output} name="text_stats" />
           <CostReport usage={state.usage} />
         </>
       )}

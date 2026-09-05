@@ -52,9 +52,11 @@ import { MANIFEST_FILENAME, REPO_ROOT } from "./shared.mts";
 import {
   DOCUMENTS_CONTRACTS,
   DOCUMENTS_INPUT_FORM,
+  DOCUMENTS_OUTPUT_FORM,
   TEXT_STATS_ARTIFACTS,
   TEXT_STATS_CONTRACTS,
   TEXT_STATS_INPUT_FORM,
+  TEXT_STATS_OUTPUT_FORM,
   TEXT_STATS_LOCK,
 } from "./fixtures/add-method-fixtures.mts";
 
@@ -567,8 +569,24 @@ describe("renderForm", () => {
     const source = renderForm(TEXT_STATS_PLAN);
     expect(source).toContain("useRunInputs(CONTRACT, DESCRIPTOR)");
     expect(source).toContain("<RunInputsForm");
-    expect(source).toContain("<JsonResult value={state.output}");
     for (const tag of ["<textarea", "<input", "<select"]) expect(source).not.toContain(tag);
+  });
+
+  it("renders the result from the output contract, not from a hand-written view", () => {
+    // The half the scaffold could not project before the output-form descriptor
+    // existed: a result component is a design decision about a shape, and the
+    // shape is now declared. The stuff name is the slug in the wire's
+    // snake_case, so the kernel's `app` presentation humanizes it for the header.
+    const source = renderForm(TEXT_STATS_PLAN);
+    expect(source).toContain(
+      'const RESULT_FIELD = requireResultField(OUTPUT_FORM, CONTRACT, "text_stats", "analyze_text");',
+    );
+    expect(source).toContain(
+      '<RunResult field={RESULT_FIELD} value={state.output} name="text_stats" />',
+    );
+    expect(source).toContain(
+      'import { INPUT_FORM, OUTPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/text-stats/contracts";',
+    );
   });
 
   it("wires the kernel's file seam through useFileInputs when the method takes a file", () => {
@@ -634,6 +652,7 @@ describe("runAddMethod", () => {
         is_valid: true,
         pipe_io_contracts: TEXT_STATS_CONTRACTS,
         input_form: TEXT_STATS_INPUT_FORM,
+        output_form: TEXT_STATS_OUTPUT_FORM,
         default_pipe_ref: "text_stats.analyze_text",
       }),
       validateFiles: vi.fn(),
@@ -812,6 +831,7 @@ describe("runAddMethod", () => {
         is_valid: true,
         pipe_io_contracts: DOCUMENTS_CONTRACTS,
         input_form: DOCUMENTS_INPUT_FORM,
+        output_form: DOCUMENTS_OUTPUT_FORM,
         default_pipe_ref: null,
       }),
     });
@@ -859,6 +879,7 @@ describe("runAddMethod", () => {
             ],
           },
         },
+        output_form: TEXT_STATS_OUTPUT_FORM,
         default_pipe_ref: "text_stats.analyze_text",
       }),
     });

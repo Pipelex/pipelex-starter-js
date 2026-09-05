@@ -1,6 +1,6 @@
 # Input forms: rendered from the method, not written by hand
 
-This is the reference for how the demo forms are built — why none of them names its own inputs, how the browser and the server share one set of validation rules, and what the styling setup is doing. The day-to-day rules live in [`CLAUDE.md`](../CLAUDE.md); this document is the "why" behind them, and its companion is [`docs/codegen.md`](codegen.md), which owns the artifact these forms read.
+This is the reference for how the demo forms are built — why none of them names its own inputs, how the browser and the server share one set of validation rules, and what the styling setup is doing. The last section covers the mirror image, [the result view](#the-result-view-the-same-idea-on-the-way-out), which is the same argument applied to the other side of the same contract. The day-to-day rules live in [`CLAUDE.md`](../CLAUDE.md); this document is the "why" behind them, and its companion is [`docs/codegen.md`](codegen.md), which owns the artifact these forms read.
 
 ## Why
 
@@ -65,6 +65,8 @@ Drift is covered the same way the rest of the tree is: `contracts.ts` carries no
 | `src/hooks/useRunInputs.ts`        | Form values, the derived `fields`, readiness, and the wire shape. The companion to `useRun`: this one owns what goes **in**, `useRun` owns the run and what comes **out**.           |
 | `src/components/RunInputsForm.tsx` | The kernel composition, purely presentational — `FieldRenderer` per field, empty optionals folded behind `OptionalToggle`, all under `FieldPresentationProvider presentation="app"`. |
 | `src/lib/runInputs.ts`             | `requireContract`, `requireInputForm` and `gateRunInputs` — the server-side gate, and the mapping from an invalid verdict to a `PipelineError`.                                      |
+| `src/lib/resultField.ts`           | `requireResultField` — the output half's one lookup, pairing the output-form descriptor with the payload schema into a `RunField`.                                                   |
+| `src/components/RunResult.tsx`     | The kernel composition on the output side — `<StuffViewer>` under the same `presentation="app"`, inside a labelled `<section>`.                                                      |
 
 A form is then two lines of wiring plus its own chrome:
 
@@ -197,10 +199,37 @@ The check that would catch a readiness-versus-gate regression is the agreement t
 
 **When the method lives elsewhere, the shape of this is identical.** A slice written by [`make add-method`](add-method.md) — one whose source is a `methods/<name>/method.json` selector rather than a bundle in this repo — renders through exactly the same composition: `useRunInputs(CONTRACT, DESCRIPTOR)`, `<RunInputsForm>`, and `gateRunInputs` on the server, all reading the same committed `contracts.ts`. `src/components/TextStatsForm.tsx` is the scaffolded example, and reading it beside `EntityForm.tsx` is the point — the scaffold could write it precisely because there was nothing method-specific to write. The one difference is where you go to add an input: the method is not yours to edit here, so you change it where it lives (its repository, or [app.pipelex.com](https://app.pipelex.com) for a catalog method), point the manifest at the new version, and run `npm run codegen`.
 
+## The result view: the same idea on the way out
+
+A method's contract has two sides, and until recently only one of them was read. Each example hand-wrote a result component — three columns of entities, a title and a bulleted summary, an `<img>` with a download link — and a scaffolded slice got `<JsonResult>`, an honest JSON dump, because a component is a design decision about a shape and `make add-method` had never seen the shape. Both halves of that were the same gap: the method **declares** what it produces, and nothing was reading the declaration.
+
+`POST /v1/validate` now answers with an `output_form` beside `input_form`, and the output contract carries a `json_schema`. `npm run codegen` asks for both views and commits `OUTPUT_FORM` in the same `contracts.ts`, so the result side needs no new artifact, no new gate and no new staleness check — `sources.json`'s `derived` hash already covered that file.
+
+```tsx
+const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "summarize_pdf", "summarize_pdf");
+const DESCRIPTOR = requireInputForm(INPUT_FORM, "summarize_pdf", "summarize_pdf");
+const RESULT_FIELD = requireResultField(OUTPUT_FORM, CONTRACT, "summarize_pdf", "summarize_pdf");
+// …
+<RunResult field={RESULT_FIELD} value={state.output} name="document_summary" />;
+```
+
+**Both artifacts are required, and they answer different questions.** The descriptor says what the result IS — its kind, its nesting, whether it is plural, the authored order of a structure's fields. The contract's `output.json_schema` says what shape the payload arrives in and names the property it sits under: `TextContent {text}` for a `native.Text` result, the concept's own object for a structured one. A renderer holding one but not the other is back to inferring the missing half from the value, which is the guessing this whole pattern exists to remove. `requireResultField` reads the schema off the contract it is handed rather than looking it up again, so the pair cannot be mismatched.
+
+Three consequences worth knowing:
+
+- **Plurality is on the descriptor, never on the concept.** A `Concept[]` output is a `list` node whose `item` is the element; a renderer reads that and never touches the contract's `multiplicity`.
+- **An `object` output is its own content model**, so nothing is unwrapped; every other kind's payload is a wrapper whose single property the schema names. The kernel gates that on the node's stated `kind`, never on the value's shape — otherwise a structured concept that happens to declare one field would be mistaken for a wrapper.
+- **The narrowers in `src/types/` stay.** They are the trust boundary: the generated binder validates what came back, and the viewer renders what the binder validated. The result view deliberately does not re-validate — a runtime produced the output, and re-checking it client-side asserts distrust of the engine and buys nothing.
+
+The `name` is app chrome, like the tab label. A result descriptor's root node is named `output` by the engine for every pipe there has ever been — correct in the artifact, since a pipe's output slot has no authored name, and wrong on screen, where the reader is looking at one data item. Written in the wire's snake_case, `presentation="app"` humanizes it exactly as it humanizes a field label, and it also names the file the viewer's download control writes.
+
+**A `pipelex-storage://` reference resolves nowhere in a browser**, and the kernel's seam for exchanging one is a `<ResultEnvProvider resolveUrl>` mounted above the result. This template mounts none, and that is not an oversight: the hosted runtime returns a signed `public_url` beside the storage URI and the kernel's file arms prefer it, so every file these examples produce paints unaided. A host whose runs return bare storage references adds one provider high in the tree — not a prop threaded through `<RunResult>`.
+
 ## What is deliberately not built
 
 - **No client-side pre-validation with inline field errors.** The kernel supports it (`validateRunInputs` plus `describeValidationError` render per-field messages), and every demo method here has exactly one _required_ input, so readiness is the whole story. A form with several structured inputs would want it.
 - **No custom URL resolution.** The kernel previews `http(s):`, `data:` and `blob:` URLs directly — the sample PDF's `data:` URL included — and asks the host's `resolveUrl` only for a value it cannot paint, which in this template is a `pipelex-storage://…/x.pdf` pasted through the control's own "paste a URL instead". `PdfForm` passes a resolver that hands the URI straight back: the kernel then renders its `<object>`, whose "Preview unavailable" child is what a browser shows for a scheme it cannot fetch, which beats no preview at all. Genuine resolution — exchanging that reference for a signed web URL — is not built, and a form seeded from a previous run would want it. Pinned by a regression test.
 
+- **No storage-URL resolver on the result side.** `<ResultEnvProvider resolveUrl>` is the kernel's seam and nothing mounts it, because the hosted runtime sends a signed `public_url` beside every storage URI and the file arms prefer it. A host serving its own storage, or one restoring an old run whose signed URLs have expired, would want one — over the SDK's `resolveStorageUrl`, mounted once rather than per result.
 - **No custom `FieldStrings`.** The kernel's English defaults are used verbatim. A localized host injects its own through `FieldStringsProvider`.
 - **No eject.** Generating per-method form wiring the way `binder.ts` is generated is a real option later; the kernel adoption is what would make it cheap.

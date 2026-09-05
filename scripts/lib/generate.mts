@@ -32,6 +32,7 @@ import {
   type CodegenValidReport,
   type GeneratedArtifact,
   type InputForm,
+  type OutputForm,
   type PipeIOContracts,
 } from "@pipelex/sdk";
 
@@ -52,6 +53,7 @@ import {
   REPO_ROOT,
   SIDECAR_COMMENT,
   SOURCES_SIDECAR,
+  VALIDATE_VIEWS,
   type MethodSource,
   type SourcesSidecar,
   walk,
@@ -213,10 +215,11 @@ function explain(
   return error instanceof Error ? error.message : String(error);
 }
 
-/** The two `/v1/validate` payloads `contracts.ts` is rendered from. */
+/** The three `/v1/validate` payloads `contracts.ts` is rendered from. */
 export interface ValidateArtifacts {
   pipeIoContracts: PipeIOContracts;
   inputForm: InputForm;
+  outputForm: OutputForm;
   /**
    * The report's own entry pipe, carried through for the scaffold's pipe rule
    * (`make add-method`) and written into no artifact.
@@ -230,10 +233,10 @@ export interface ValidateArtifacts {
 }
 
 /**
- * Fetch one method's pipe IO contracts and wire input-form descriptor from
- * `POST /v1/validate`, opting into the structured view with
- * `views: ["input_form"]` — the descriptor is absent from any verdict that did
- * not ask for it.
+ * Fetch one method's pipe IO contracts and both wire form descriptors from
+ * `POST /v1/validate`, opting into the structured views with
+ * `views: ["input_form", "output_form"]` (`VALIDATE_VIEWS`) — a descriptor is
+ * absent from any verdict that did not ask for it.
  *
  * A `files` method goes through `validateFiles` rather than the lower-level
  * `validate`: the closure is already `MthdsFileItem[]` (`{content, source}`) and
@@ -248,10 +251,11 @@ export interface ValidateArtifacts {
  * An invalid bundle is a produced verdict on a 200, not a thrown error, so it is
  * pattern-matched rather than caught — and it must never yield a contracts file:
  * contracts projected from a bundle that does not resolve would describe a form
- * for a method that cannot run. A valid verdict with no `input_form` is refused
- * the same way: the token is lenient-ignored by an API too old to serve the
- * view, and writing a contracts file without the descriptor would leave every
- * form rendering empty — the kernel derives its fields from the descriptor.
+ * for a method that cannot run. A valid verdict missing either view is refused
+ * the same way: the tokens are lenient-ignored by an API too old to serve them,
+ * and a contracts file without them renders an empty form (the kernel derives
+ * its input fields from `input_form`) or an empty result (it derives the result
+ * field from `output_form`).
  */
 export async function fetchValidateArtifacts(
   client: Pick<PipelexApiClient, "validate" | "validateFiles">,
@@ -263,9 +267,9 @@ export async function fetchValidateArtifacts(
       source.kind === "files"
         ? await client.validateFiles(
             source.files.map((file) => ({ content: file.content, uri: file.source })),
-            { views: ["input_form"] },
+            { views: VALIDATE_VIEWS },
           )
-        : await client.validate(source.selector, false, undefined, undefined, ["input_form"]);
+        : await client.validate(source.selector, false, undefined, undefined, VALIDATE_VIEWS);
     if (!response.is_valid) {
       console.error(`\n✗ ${source.name} — the method does not validate:`);
       for (const item of response.validation_errors) {
@@ -273,17 +277,19 @@ export async function fetchValidateArtifacts(
       }
       return null;
     }
-    if (!response.input_form) {
+    if (!response.input_form || !response.output_form) {
       console.error(
-        `\n✗ ${source.name} — /v1/validate returned no input_form view despite the ` +
-          `views: ["input_form"] opt-in. This base URL serves an API too old for the ` +
-          `wire descriptor — check PIPELEX_BASE_URL (the hosted API serves it), or report upstream.`,
+        `\n✗ ${source.name} — /v1/validate returned no ` +
+          `${response.input_form ? "output_form" : "input_form"} view despite the ` +
+          `views: ${JSON.stringify(VALIDATE_VIEWS)} opt-in. This base URL serves an API too old ` +
+          `for the wire descriptors — check PIPELEX_BASE_URL, or report upstream.`,
       );
       return null;
     }
     return {
       pipeIoContracts: response.pipe_io_contracts,
       inputForm: response.input_form,
+      outputForm: response.output_form,
       defaultPipeRef: response.default_pipe_ref ?? null,
     };
   } catch (error) {
@@ -415,6 +421,7 @@ export async function writeGenerated(
     [CONTRACTS_FILENAME]: renderContracts(
       fetched.contracts.pipeIoContracts,
       fetched.contracts.inputForm,
+      fetched.contracts.outputForm,
     ),
   });
 }

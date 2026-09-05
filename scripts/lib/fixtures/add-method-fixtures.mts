@@ -19,7 +19,7 @@
  * their job here is to be a projection whose exports can be looked up, not to
  * be a faithful copy of a generated file.
  */
-import type { GeneratedArtifact, InputForm, PipeIOContracts } from "@pipelex/sdk";
+import type { GeneratedArtifact, InputForm, OutputForm, PipeIOContracts } from "@pipelex/sdk";
 
 /** `native.Text`'s content model, the schema both text_stats slots carry. */
 const NATIVE_TEXT_SCHEMA = {
@@ -84,6 +84,24 @@ export const TEXT_STATS_INPUT_FORM = {
     ],
   },
 } as InputForm;
+
+/**
+ * The other half of the same contract: one node saying what the pipe resolves
+ * to. No `presence` and no `gating` — those are input-slot facts an output has
+ * none of — and the `name` is the engine's own `"output"`, an address rather
+ * than a label.
+ */
+export const TEXT_STATS_OUTPUT_FORM = {
+  "text_stats.analyze_text": {
+    field: {
+      kind: "prose",
+      name: "output",
+      concept_ref: "native.Text",
+      description: "A text",
+      required: true,
+    },
+  },
+} as OutputForm;
 
 /**
  * The lock the codegen route returned for `text_stats@v0.1.1`, verbatim.
@@ -176,3 +194,32 @@ export const DOCUMENTS_INPUT_FORM = Object.fromEntries(
     },
   ]),
 ) as InputForm;
+
+/**
+ * The output half, keyed off the same contracts so the two artifacts cannot
+ * disagree about which pipes are plural.
+ *
+ * Plurality is on the DESCRIPTOR, never on the concept: a `native.Page[]` pipe
+ * gets a `list` node whose `item` is the element with its name stripped, which
+ * is the one place a producer of this artifact does real work — and the shape a
+ * renderer reads to lay a plural result out as a list rather than as one record.
+ */
+export const DOCUMENTS_OUTPUT_FORM = Object.fromEntries(
+  Object.entries(DOCUMENTS_CONTRACTS).map(([ref, contract]) => {
+    const plural = contract.output.multiplicity !== "single";
+    const element = {
+      kind: plural ? "object" : "prose",
+      concept_ref: contract.output.concept_ref,
+      required: true,
+      ...(plural ? { fields: [] } : {}),
+    };
+    return [
+      ref,
+      {
+        field: plural
+          ? { kind: "list", name: "output", required: true, item: element }
+          : { ...element, name: "output" },
+      },
+    ];
+  }),
+) as OutputForm;

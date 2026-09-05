@@ -47,7 +47,7 @@ src/generated/text-stats/               # types.ts, binder.ts, contracts.ts, cod
 src/types/textStatsPipeline.ts          # the narrower over the generated binder
 src/actions/runTextStatsPipeline.ts     # the blocking + start + poll trio
 src/actions/runTextStatsPipeline.test.ts
-src/components/TextStatsForm.tsx        # useRunInputs + RunInputsForm + useRun + JsonResult
+src/components/TextStatsForm.tsx        # useRunInputs + RunInputsForm + useRun + RunResult
 src/components/ExampleTabs.tsx          # one import line, one tab entry
 ```
 
@@ -102,7 +102,7 @@ The chosen ref is split at its last dot: the domain and the code are what `requi
 
 A **plural** output (a `multiplicity` other than `single`) is typed as a list of the concept — `export type <Pascal>Output = <Code>[]` — and parsed with `z.array(<Code>Schema)` over `wireListOutput(results, <Code>Schema)` rather than `wireOutput`. The runtime renders one `ListContent` two ways, and which one you get depends on the execution path, not on the method (measured live on 2026-09-05): the blocking `execute` response carries the pydantic dump, a `{ items: [ … ] }` envelope, and so does a durable run's `main_stuff.json` when the worker can hydrate the concept's class (a native concept such as `native.Page`); a durable run of a concept the method declares itself falls back to the transport dump, which is a bare array. The first scaffolded plural slice hit exactly that: `{ items }` in Blocking mode, an array in Durable mode, and an adapter that had declared the envelope failed the default mode with `expected object, received array`. `wireListOutput` (`src/lib/wireOutput.ts`) accepts both and hands back the array, so the generated element schema owns the verdict and no shape is declared in the adapter. It is a workaround with an expiry — the fork is reported upstream to pipelex — and it is confined to the one function a plural narrower calls.
 
-**The result component cannot be projected**, because a component is a design decision about a shape and the scaffold has no design — it would be inventing headings for fields it has never seen. So every scaffolded form renders `<JsonResult value={state.output} />` (`src/components/JsonResult.tsx`): the typed value as formatted JSON, plus an `<img>` for any web-renderable image URL it carries (`public_url ?? url`, one level down, the same preference `parseGeneratedImage` applies). The scaffold's closing message names that line as the one to replace, and `EntityResult` / `PdfSummaryResult` are what replacing it looks like.
+**The result view is projected too, and it used to be the one thing that could not be.** A component was a design decision about a shape the scaffold had never seen, so a scaffolded slice got a JSON dump and a comment naming the line to replace. The output-form descriptor removed the gap: `codegen` commits `OUTPUT_FORM` beside `INPUT_FORM`, the scaffold writes a module-level `RESULT_FIELD = requireResultField(OUTPUT_FORM, CONTRACT, …)` and one `<RunResult field={RESULT_FIELD} value={state.output} name="<slug_in_snake_case>" />`, and the result renders from what the method declares — a structured concept as a labelled record, a plural one as a table, a `native.Text` as its typeset markdown, an image as the picture. A bespoke view is now a choice a consumer makes for a specific output, not a hole the scaffold leaves behind.
 
 ## The form, and file inputs
 
@@ -155,7 +155,7 @@ Then `make all`. `tsc` names most dangling references itself; the ones it cannot
 ## What this deliberately does not do
 
 - **No local `.mthds` path.** That story already exists, and serving it here would be a second way to do one thing.
-- **No result component per output shape.** `JsonResult` is the honest view; the closing message names the line to replace.
+- **No result component per output shape.** `<RunResult>` renders the method's own output contract, so there is nothing per-shape left to write.
 - **No prose edits.** `src/app/page.tsx` describes the examples in a sentence, and the scaffold leaves prose to people.
 - **No `--force`, no refresh mode.** `npm run codegen` is the refresh.
 - **No skill.** A Make target and an npm script is what the gesture is; a slash command would wrap a one-line command.

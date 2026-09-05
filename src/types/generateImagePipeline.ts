@@ -57,7 +57,7 @@ function dataUrlMediaType(url: URL): string {
  *
  * Throws `BadImageOutputError` — distinct from `BadPipelineOutputError` so the
  * error UI can speak to image generation specifically — both when the payload
- * fails the schema and when it carries a URL `<ImageResult>` should not be handed:
+ * fails the schema and when it carries a URL the result view should not be handed:
  * a non-web scheme (`file://`, `pipelex-storage://`, …), which it would otherwise
  * drop straight into an `<img>` and produce a silently-broken image, or a `data:`
  * URL whose media type is not one of the image formats a run returns. On the
@@ -67,7 +67,7 @@ function dataUrlMediaType(url: URL): string {
  * can't save a broken `public_url` and vice-versa.
  *
  * The `data:` rule guards the download link rather than the `<img>`, which is why
- * an *image* type can be refused: `<ImageResult>` renders the same validated
+ * an *image* type can be refused: the result view paints the same validated
  * string in an `<a href={src} download>`, so a payload the browser saves as a
  * file — a `data:text/html`, or an SVG carrying a `<script>` — runs with the
  * privileges of a `file://` origin once opened, where an `<img>` would either

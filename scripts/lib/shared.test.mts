@@ -194,6 +194,11 @@ describe("compareSidecar", () => {
       },
     },
     { "d.p": { fields: [] } },
+    {
+      "d.p": {
+        field: { kind: "prose", name: "output", concept_ref: "native.Text", required: true },
+      },
+    },
   );
 
   /**
@@ -306,11 +311,17 @@ describe("compareSidecar", () => {
 });
 
 describe("renderContracts", () => {
+  const OUTPUT_FORM = {
+    "d.p": {
+      field: { kind: "prose" as const, name: "output", concept_ref: "native.Text", required: true },
+    },
+  };
+
   it("does not open with a codegen stamp, so the tree cleanup leaves it alone", () => {
     // `runCodegenCheck` calls a *stamped* file the lock does not track an orphan,
     // and `writeTree` deletes orphans. An unstamped `.ts` is the supported shape
     // for a consumer-owned file beside the lock — this is what keeps it alive.
-    expect(renderContracts({}, {})).not.toContain("pipelex-codegen-stamp");
+    expect(renderContracts({}, {}, {})).not.toContain("pipelex-codegen-stamp");
   });
 
   it("is deterministic and ends with exactly one newline", () => {
@@ -327,19 +338,33 @@ describe("renderContracts", () => {
       },
     } as const;
     const form = { "d.p": { fields: [] } };
-    expect(renderContracts(payload, form)).toBe(renderContracts(payload, form));
-    expect(renderContracts(payload, form).endsWith(";\n")).toBe(true);
+    expect(renderContracts(payload, form, OUTPUT_FORM)).toBe(
+      renderContracts(payload, form, OUTPUT_FORM),
+    );
+    expect(renderContracts(payload, form, OUTPUT_FORM).endsWith(";\n")).toBe(true);
   });
 
   it("types the literals against the kernel's mirrors, so tsc gates contract drift", () => {
-    const rendered = renderContracts({}, {});
+    const rendered = renderContracts({}, {}, {});
     expect(rendered).toContain(
-      'import type { InputForm, PipeIOContracts } from "@pipelex/mthds-form";',
+      'import type { InputForm, OutputForm, PipeIOContracts } from "@pipelex/mthds-form";',
     );
     expect(rendered).toContain("export const PIPE_IO_CONTRACTS: PipeIOContracts =");
-    // `as` rather than `:` on this one — a documented workaround for the
+    // `as` rather than `:` on these two — a documented workaround for the
     // deployed engine's extra `name` on list items; see `renderContracts`.
     expect(rendered).toContain("as InputForm;");
+    expect(rendered).toContain("as OutputForm;");
+  });
+
+  it("emits the output form beside the input form, so the result view has a descriptor", () => {
+    // The two halves of one contract, written by one call: a `contracts.ts`
+    // carrying only the input side is what every tab rendered from before this,
+    // and it is what makes a result view guess at a payload instead of reading
+    // what the method declares.
+    const rendered = renderContracts({}, { "d.p": { fields: [] } }, OUTPUT_FORM);
+    expect(rendered).toContain("export const OUTPUT_FORM = ");
+    expect(rendered).toContain('"kind": "prose"');
+    expect(rendered.indexOf("INPUT_FORM")).toBeLessThan(rendered.indexOf("OUTPUT_FORM"));
   });
 });
 
