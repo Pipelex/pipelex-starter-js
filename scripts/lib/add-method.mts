@@ -930,25 +930,39 @@ export function renderActionTest(plan: ScaffoldPlan): string {
 }
 
 /**
- * `src/components/<Pascal>Form.tsx` — the one kernel composition, plus the
- * chrome the four examples share.
+ * `src/components/<Pascal>Form.tsx` — the two kernel compositions, plus the
+ * chrome the shipped examples share.
  *
- * Nothing about the method's IO is written by hand, on either side: the input
- * fields come from its committed input-form descriptor through `useRunInputs`
- * and are rendered by `<RunInputsForm>`, and the result comes from its
- * output-form descriptor paired with the payload schema and is rendered by
- * `<RunResult>`. A result component used to be the one thing the scaffold could
- * not project — it would have been inventing headings for fields it had never
- * seen — and the descriptor is what removed that gap.
+ * Nothing about the method's IO is written by hand, on either side or in either
+ * view: the input fields come from its committed input-form descriptor through
+ * `useRunInputs` and are rendered by `<RunInputsForm>`, the result comes from
+ * its output-form descriptor paired with the payload schema and is rendered by
+ * `<RunResult>`, and the designed page comes from the layout `make design`
+ * committed and is rendered by `<DesignedPage>`. A result component used to be
+ * the one thing the scaffold could not project — it would have been inventing
+ * headings for fields it had never seen — and the descriptor is what removed
+ * that gap; the page is the same move one level out.
+ *
+ * The design import is unconditional, and that is why `npm run codegen` writes
+ * a `design.ts` for every method whether one has been produced or not: a
+ * scaffold runs before any design exists, and a module that is sometimes there
+ * is a module a scaffold cannot import at the top of the file.
  */
 export function renderForm(plan: ScaffoldPlan): string {
   const { names, pipe, files } = plan;
   const hasFiles = files.length > 0;
+  const resultName = names.slug.replace(/-/g, "_");
 
   const imports = [
     '"use client";',
     "",
     'import { useState } from "react";',
+    ...(hasFiles
+      ? [
+          'import { INPUTS_ROOT, pathFromDomId, segmentsUnder } from "@pipelex/mthds-form/generative";',
+        ]
+      : []),
+    'import { humanizeFieldName } from "@pipelex/mthds-form/react";',
     "import {",
     `  poll${names.pascal}Run,`,
     `  run${names.pascal}Blocking,`,
@@ -956,32 +970,76 @@ export function renderForm(plan: ScaffoldPlan): string {
     `} from "@/actions/run${names.pascal}Pipeline";`,
     'import { DEFAULT_EXECUTION_MODE, type ExecutionMode } from "@/config";',
     `import { INPUT_FORM, OUTPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/${names.slug}/contracts";`,
+    `import { DESIGN } from "@/generated/${names.slug}/design";`,
     ...(hasFiles ? ['import { useFileInputs } from "@/hooks/useFileInputs";'] : []),
     'import { useRun } from "@/hooks/useRun";',
     'import { useRunInputs } from "@/hooks/useRunInputs";',
+    'import type { DesignFallback } from "@/lib/design";',
     'import { requireResultField } from "@/lib/resultField";',
     'import { requireContract, requireInputForm } from "@/lib/runInputs";',
     'import { CostReport } from "./CostReport";',
+    'import { DesignedPage } from "./DesignedPage";',
+    'import { DesignFallbackNote } from "./DesignFallbackNote";',
     'import { ErrorDisplay } from "./ErrorDisplay";',
     'import { ModeToggle } from "./ModeToggle";',
     'import { RunInputsForm } from "./RunInputsForm";',
     'import { RunResult } from "./RunResult";',
     'import { RunStatus } from "./RunStatus";',
+    'import { ViewToggle, type InputView } from "./ViewToggle";',
     "",
     "// Scaffolded by `make add-method` — yours to edit from here on.",
     "//",
-    "// Both halves are derived from the method's own contract, committed by",
+    "// The three things this component knows about its method are all committed by",
     "// `npm run codegen`: the form from the input-form descriptor, the result view",
-    "// from the output-form descriptor paired with the payload schema. There is",
-    "// nothing hand-written to keep in step — change what the method takes or",
-    "// produces, regenerate, and both follow.",
+    "// from the output-form descriptor paired with the payload schema, and the page",
+    "// from the layout a model designed. There is nothing hand-written to keep in",
+    "// step — change what the method takes or produces, regenerate, and all three",
+    "// follow.",
+    "//",
+    "// `DESIGN` is `null` until you take the second gesture, `make design NAME=" +
+      names.slug +
+      "`,",
+    "// and until then the kernel's plain form renders — which is the fallback rule's",
+    "// first case, not a gap.",
     `const CONTRACT = requireContract(PIPE_IO_CONTRACTS, ${JSON.stringify(pipe.domain)}, ${JSON.stringify(pipe.code)});`,
     `const DESCRIPTOR = requireInputForm(INPUT_FORM, ${JSON.stringify(pipe.domain)}, ${JSON.stringify(pipe.code)});`,
     `const RESULT_FIELD = requireResultField(OUTPUT_FORM, CONTRACT, ${JSON.stringify(pipe.domain)}, ${JSON.stringify(pipe.code)});`,
+    `const RESULT_NAME = ${JSON.stringify(resultName)};`,
+    "/** Prefixes the DOM ids the designed page's escape hatches mint. */",
+    `const ID_PREFIX = ${JSON.stringify(names.slug)};`,
     "",
+  ];
+
+  if (hasFiles) {
+    imports.push(
+      "/**",
+      " * The id inverse the designed view needs.",
+      " *",
+      " * On the plain form the kernel's id IS the dotted value path. On a designed",
+      " * page the file control was reached through the layout's `MthdsField` hatch,",
+      " * which mints its id from the store pointer, so the host maps it back before",
+      " * it writes. One hook serves both views, so this answers for both spellings.",
+      " */",
+      "function inputPathOf(id: string): string[] | undefined {",
+      "  const pointer = pathFromDomId(ID_PREFIX, id);",
+      '  if (pointer === undefined) return id.split(".");',
+      "  return segmentsUnder(INPUTS_ROOT, pointer);",
+      "}",
+      "",
+    );
+  }
+
+  imports.push(
     `export function ${names.pascal}Form() {`,
-    "  const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR);",
+    "  const { fields, values, setValues, ready, toData, design, store } = useRunInputs(",
+    "    CONTRACT,",
+    "    DESCRIPTOR,",
+    "    undefined,",
+    "    DESIGN,",
+    "  );",
     "  const [mode, setMode] = useState<ExecutionMode>(DEFAULT_EXECUTION_MODE);",
+    '  const [view, setView] = useState<InputView>("designed");',
+    "  const [renderError, setRenderError] = useState<string | null>(null);",
     "  // `useRun` presents one state machine and dispatches to the blocking or",
     "  // durable Server Actions by `mode`. The form never branches on mode itself.",
     `  const { state, run${hasFiles ? ", reset" : ""} } = useRun({`,
@@ -991,22 +1049,38 @@ export function renderForm(plan: ScaffoldPlan): string {
     `    poll: poll${names.pascal}Run,`,
     "  });",
     "",
-  ];
+  );
 
   if (hasFiles) {
     imports.push(
       "  // The host side of the form kernel's file seam — the encode, the busy set the",
-      "  // kernel reads as `uploadingIds`, the clear-before-await discipline. The kernel",
-      "  // never uploads: it hands the host a `File` and waits for a `FileValue` back.",
+      "  // kernel reads as `uploadingIds`, the clear-before-await discipline, and on a",
+      "  // designed page the id inverse above. The kernel never uploads: it hands the",
+      "  // host a `File` and waits for a `FileValue` back.",
       "  const { dropFile, encodingIds, fileError, clearError } = useFileInputs({",
       "    setValues,",
       "    onSelectionStart: reset,",
+      "    pathOf: inputPathOf,",
       "  });",
       "",
     );
   }
 
-  imports.push('  const running = state.phase === "running";', "");
+  imports.push(
+    '  const running = state.phase === "running";',
+    ...(hasFiles ? ["  const resolving = encodingIds.size > 0;"] : []),
+    "",
+    "  // The form kernel's fallback rule, with the render error the boundary reports",
+    "  // folded in as its fifth cause. `null` means a designed page is renderable.",
+    "  const fallback: DesignFallback | null =",
+    "    renderError !== null",
+    '      ? { cause: "render_error", message: renderError }',
+    "      : design.ok",
+    "        ? null",
+    "        : design.fallback;",
+    "  const designed = fallback === null && design.ok && store !== null;",
+    "",
+  );
 
   const submit = [
     "  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {",
@@ -1017,65 +1091,106 @@ export function renderForm(plan: ScaffoldPlan): string {
     "    run(toData());",
     "  }",
     "",
+    "  // Built once and placed in one of two places: under the plain form, or into",
+    "  // the designed page's result slot. The same fragment either way, because what",
+    "  // a run yields is not a property of how its inputs were laid out.",
+    "  const outcome =",
+    `    state.phase === "idle"${hasFiles ? " && !fileError" : ""} ? null : (`,
+    "      <>",
+    "        {running && (",
+    "          <RunStatus status={state.status} elapsedMs={state.elapsedMs} health={state.health} />",
+    "        )}",
+    ...(hasFiles
+      ? [
+          "        {fileError && <ErrorDisplay error={fileError} />}",
+          '        {!fileError && state.phase === "error" && <ErrorDisplay error={state.error} />}',
+        ]
+      : ['        {state.phase === "error" && <ErrorDisplay error={state.error} />}']),
+    '        {state.phase === "done" && (',
+    "          <>",
+    "            {/* The result, rendered from the method's own output contract — the",
+    "                scaffold has no design decision to make about a shape it has never",
+    "                seen, because there is none left to make. */}",
+    "            <RunResult field={RESULT_FIELD} value={state.output} name={RESULT_NAME} />",
+    "            <CostReport usage={state.usage} />",
+    "          </>",
+    "        )}",
+    "      </>",
+    "    );",
+    "",
   ];
 
   const formProps = hasFiles
     ? [
-        "        <RunInputsForm",
-        "          fields={fields}",
-        "          values={values}",
-        "          onValuesChange={(next) => {",
-        "            // A rejection belongs to the value that caused it: the kernel's",
-        '            // "paste a URL instead" writes straight through this setter.',
-        "            clearError();",
-        "            setValues(next);",
-        "          }}",
-        "          disabled={running}",
-        "          env={{ onDropFile: dropFile, uploadingIds: encodingIds }}",
-        "        />",
+        "            <RunInputsForm",
+        "              fields={fields}",
+        "              values={values}",
+        "              onValuesChange={(next) => {",
+        "                // A rejection belongs to the value that caused it: the kernel's",
+        '                // "paste a URL instead" writes straight through this setter.',
+        "                clearError();",
+        "                setValues(next);",
+        "              }}",
+        "              disabled={running}",
+        "              env={{ onDropFile: dropFile, uploadingIds: encodingIds }}",
+        "            />",
       ]
     : [
-        "        <RunInputsForm",
-        "          fields={fields}",
-        "          values={values}",
-        "          onValuesChange={setValues}",
-        "          disabled={running}",
-        "        />",
+        "            <RunInputsForm",
+        "              fields={fields}",
+        "              values={values}",
+        "              onValuesChange={setValues}",
+        "              disabled={running}",
+        "            />",
       ];
 
   const jsx = [
     "  return (",
     '    <div className="space-y-6">',
-    '      <form onSubmit={handleSubmit} className="space-y-4">',
-    ...formProps,
+    "      {/* App chrome, above whichever view is on screen — the two toggles are",
+    "          this app's, not the layout's. */}",
+    '      <div className="flex flex-wrap items-start gap-4">',
     "        <ModeToggle value={mode} onChange={setMode} disabled={running} />",
-    "        <button",
-    '          type="submit"',
-    "          disabled={running || !ready}",
-    '          className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"',
-    "        >",
-    `          {running ? "Running…" : ${JSON.stringify(`Run ${names.label.toLowerCase()}`)}}`,
-    "        </button>",
-    "      </form>",
+    "        {design.ok && renderError === null && (",
+    "          <ViewToggle value={view} onChange={setView} disabled={running} />",
+    "        )}",
+    "      </div>",
     "",
-    "      {running && (",
-    "        <RunStatus status={state.status} elapsedMs={state.elapsedMs} health={state.health} />",
-    "      )}",
+    '      {designed && view === "designed" ? (',
+    "        <DesignedPage",
+    "          design={design.design}",
+    "          spec={design.spec}",
+    "          store={store}",
+    "          fields={fields}",
+    "          idPrefix={ID_PREFIX}",
     ...(hasFiles
       ? [
-          "      {fileError && <ErrorDisplay error={fileError} />}",
-          '      {!fileError && state.phase === "error" && <ErrorDisplay error={state.error} />}',
+          "          env={{",
+          "            onDropFile: dropFile,",
+          "            uploadingIds: encodingIds,",
+          "            disabled: running || resolving,",
+          "          }}",
         ]
-      : ['      {state.phase === "error" && <ErrorDisplay error={state.error} />}']),
-    '      {state.phase === "done" && (',
+      : ["          env={{ disabled: running }}"]),
+    "          onRun={() => run(toData())}",
+    "          result={outcome}",
+    "          resultTitle={humanizeFieldName(RESULT_NAME)}",
+    "          onRenderError={setRenderError}",
+    "        />",
+    "      ) : (",
     "        <>",
-    "          {/* The result, rendered from the method's own output contract — the",
-    "              scaffold has no design decision to make about a shape it has never",
-    "              seen, because there is none left to make. Swap it for a component",
-    "              of your own if this output deserves a bespoke view; the value is",
-    "              already typed by the narrower. */}",
-    `          <RunResult field={RESULT_FIELD} value={state.output} name=${JSON.stringify(names.slug.replace(/-/g, "_"))} />`,
-    "          <CostReport usage={state.usage} />",
+    '          <form onSubmit={handleSubmit} className="space-y-4">',
+    ...formProps,
+    "            <button",
+    '              type="submit"',
+    "              disabled={running || !ready}",
+    '              className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"',
+    "            >",
+    `              {running ? "Running…" : ${JSON.stringify(`Run ${names.label.toLowerCase()}`)}}`,
+    "            </button>",
+    "          </form>",
+    "          <DesignFallbackNote fallback={fallback} />",
+    "          {outcome}",
     "        </>",
     "      )}",
     "    </div>",
@@ -1367,7 +1482,7 @@ async function runAddMethodInner(argv: readonly string[], deps?: AddMethodDeps):
   // ── Write half ──
   await mkdir(inRepo(paths.manifestDir), { recursive: true });
   await writeFile(inRepo(paths.manifest), manifestContent, "utf-8");
-  await writeGenerated(outDir, fetched, source);
+  await writeGenerated(outDir, fetched, source, inRepo("methods"));
   for (const file of emitted) {
     await mkdir(path.dirname(inRepo(file.relative)), { recursive: true });
     await writeFile(

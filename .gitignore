@@ -43,3 +43,7 @@ test-results/
 # internal planning notes — never shipped to template consumers (see v0.1.1,
 # which already removed wip/ once before open-sourcing; the files stay local)
 /wip/
+
+# A refused design, kept beside its method for reading. Evidence, not an artifact:
+# the repair is a re-run of `make design`, never a hand edit.
+methods/*/design.rejected.jsonl

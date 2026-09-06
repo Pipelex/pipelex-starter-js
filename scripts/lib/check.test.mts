@@ -25,9 +25,11 @@ import {
 } from "./check.mts";
 import {
   CONTRACTS_FILENAME,
+  DESIGN_MODULE_FILENAME,
   hashSource,
   LOCK_FILENAME,
   renderContracts,
+  renderDesignModule,
   SIDECAR_COMMENT,
   SOURCES_SIDECAR,
   type MethodSource,
@@ -221,15 +223,25 @@ describe("checkMethod over a tree carrying contracts.ts", () => {
     ].join("\n");
   }
 
-  /** A complete, genuinely current tree: locked artifact, contracts, sidecar. */
+  /** An undesigned method's projection — the second derived artifact, in its ordinary state. */
+  const DESIGN_MODULE = renderDesignModule(null);
+
+  /** Every derived artifact this repo emits, hashed as a current tree records them. */
+  const CURRENT_DERIVED = {
+    [CONTRACTS_FILENAME]: hashSource(CONTRACTS),
+    [DESIGN_MODULE_FILENAME]: hashSource(DESIGN_MODULE),
+  };
+
+  /** A complete, genuinely current tree: locked artifact, the two derived modules, sidecar. */
   async function currentTree(
     contracts: string | null = CONTRACTS,
-    derived: Record<string, string> = { [CONTRACTS_FILENAME]: hashSource(CONTRACTS) },
+    derived: Record<string, string> = CURRENT_DERIVED,
     sources: Record<string, string> = METHOD.sourceHashes,
   ): Promise<string> {
     const files: Record<string, string> = {
       [LOCK_FILENAME]: lock(),
       "types.ts": stamped(TYPES_BODY),
+      [DESIGN_MODULE_FILENAME]: DESIGN_MODULE,
       [SOURCES_SIDECAR]: `${JSON.stringify(
         { comment: SIDECAR_COMMENT, sources, derived },
         null,
@@ -273,33 +285,21 @@ describe("checkMethod over a tree carrying contracts.ts", () => {
     const SELECTOR_SOURCES = SELECTOR_METHOD.sourceHashes;
 
     it("is current when the manifest still hashes to what the tree recorded", async () => {
-      await currentTree(
-        CONTRACTS,
-        { [CONTRACTS_FILENAME]: hashSource(CONTRACTS) },
-        SELECTOR_SOURCES,
-      );
+      await currentTree(CONTRACTS, CURRENT_DERIVED, SELECTOR_SOURCES);
 
       expect(await checkMethod(SELECTOR_METHOD, generatedRoot)).toBe(EXIT_CURRENT);
     });
 
     it("reports drift after the manifest changes — a bumped tag, not regenerated", async () => {
-      await currentTree(
-        CONTRACTS,
-        { [CONTRACTS_FILENAME]: hashSource(CONTRACTS) },
-        {
-          "methods/demo/method.json": "an-older-hash",
-        },
-      );
+      await currentTree(CONTRACTS, CURRENT_DERIVED, {
+        "methods/demo/method.json": "an-older-hash",
+      });
 
       expect(await checkMethod(SELECTOR_METHOD, generatedRoot)).toBe(EXIT_DRIFT);
     });
 
     it("reports drift when contracts.ts is hand-edited, same as a files method", async () => {
-      await currentTree(
-        `${CONTRACTS}// tampered\n`,
-        { [CONTRACTS_FILENAME]: hashSource(CONTRACTS) },
-        SELECTOR_SOURCES,
-      );
+      await currentTree(`${CONTRACTS}// tampered\n`, CURRENT_DERIVED, SELECTOR_SOURCES);
 
       expect(await checkMethod(SELECTOR_METHOD, generatedRoot)).toBe(EXIT_DRIFT);
     });

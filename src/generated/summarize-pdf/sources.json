@@ -4,6 +4,7 @@
     "methods/summarize-pdf/main.mthds": "7455718575e6d3534ecebbde0ab1ed99b54485f8aeb6dc160bbf532623771ed5"
   },
   "derived": {
-    "contracts.ts": "711f68b455eb1f7e7992f8a815f86d94e687c9de46bc9796ac5d65c581343c94"
+    "contracts.ts": "711f68b455eb1f7e7992f8a815f86d94e687c9de46bc9796ac5d65c581343c94",
+    "design.ts": "a63315eb7e22e1c4c9f23b69e485c79b9733440f1b939fa74d1767731d7b4d83"
   }
 }

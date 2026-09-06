@@ -16,6 +16,8 @@ import {
   assertSecureBaseUrl,
   compareSidecar,
   CONTRACTS_FILENAME,
+  DERIVED_ARTIFACTS,
+  DESIGN_MODULE_FILENAME,
   describeSelector,
   discoverMethods,
   findOrphanTrees,
@@ -28,6 +30,7 @@ import {
   readGeneratedTree,
   readTextFile,
   renderContracts,
+  renderDesignModule,
   SOURCES_SIDECAR,
   SymlinkRefusedError,
   walk,
@@ -201,15 +204,23 @@ describe("compareSidecar", () => {
     },
   );
 
+  /** An undesigned method's projection — the ordinary state of the second derived artifact. */
+  const DESIGN_MODULE = renderDesignModule(null);
+
   /**
-   * Write a sidecar plus a matching `contracts.ts`, so a test that is about the
-   * `sources` half is not tripped by the `derived` half it does not care about.
+   * Write a sidecar plus a matching set of derived artifacts, so a test that is
+   * about the `sources` half is not tripped by the `derived` half it does not
+   * care about.
    */
   async function writeSidecar(
     sources: Record<string, string>,
-    derived: Record<string, string> = { [CONTRACTS_FILENAME]: hashSource(CONTRACTS) },
+    derived: Record<string, string> = {
+      [CONTRACTS_FILENAME]: hashSource(CONTRACTS),
+      [DESIGN_MODULE_FILENAME]: hashSource(DESIGN_MODULE),
+    },
   ): Promise<void> {
     await writeFile(path.join(fixtureDir, CONTRACTS_FILENAME), CONTRACTS);
+    await writeFile(path.join(fixtureDir, DESIGN_MODULE_FILENAME), DESIGN_MODULE);
     await writeFile(
       path.join(fixtureDir, SOURCES_SIDECAR),
       JSON.stringify({ comment: "test", sources, derived }, null, 2),
@@ -289,13 +300,19 @@ describe("compareSidecar", () => {
     // off the file under test would let an empty `derived` map certify itself.
     await writeSidecar({}, {});
     const stale = await compareSidecar(fixtureDir, {});
-    expect(stale).toEqual([`derived: ${CONTRACTS_FILENAME} — not recorded in ${SOURCES_SIDECAR}`]);
+    expect(stale).toEqual(
+      DERIVED_ARTIFACTS.map((name) => `derived: ${name} — not recorded in ${SOURCES_SIDECAR}`),
+    );
   });
 
   it("reports a recorded derived artifact that is no longer generated", async () => {
     await writeSidecar(
       {},
-      { [CONTRACTS_FILENAME]: hashSource(CONTRACTS), "retired.ts": hashSource("x") },
+      {
+        [CONTRACTS_FILENAME]: hashSource(CONTRACTS),
+        [DESIGN_MODULE_FILENAME]: hashSource(DESIGN_MODULE),
+        "retired.ts": hashSource("x"),
+      },
     );
     const stale = await compareSidecar(fixtureDir, {});
     expect(stale).toEqual([

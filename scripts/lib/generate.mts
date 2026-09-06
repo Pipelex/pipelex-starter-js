@@ -40,6 +40,9 @@ import { assertSelectorSupport, explainSelectorFailure, selectorKindsOf } from "
 import {
   assertSecureBaseUrl,
   CONTRACTS_FILENAME,
+  DERIVED_ARTIFACTS,
+  DESIGN_MODULE_FILENAME,
+  designOf,
   discoverMethods,
   hashSource,
   isContainedPath,
@@ -49,7 +52,9 @@ import {
   LOCK_FILENAME,
   METHODS_DIR,
   readGeneratedTree,
+  readMethodDesign,
   renderContracts,
+  renderDesignModule,
   REPO_ROOT,
   SIDECAR_COMMENT,
   SOURCES_SIDECAR,
@@ -393,12 +398,13 @@ export async function fetchGenerated(
   // remedy ("run npm run codegen") that reproduces the same tree. Same class
   // as the `lock_filename` guard above, and not hypothetical: the roadmap has
   // the API serving an input-form descriptor at exactly this seam.
-  const colliding = artifacts.filter((artifact) => artifact.path === CONTRACTS_FILENAME);
+  const colliding = artifacts.filter((artifact) => DERIVED_ARTIFACTS.includes(artifact.path));
   if (colliding.length > 0) {
     console.error(
-      `\n✗ ${source.name} — the server now returns an artifact named '${CONTRACTS_FILENAME}', ` +
-        `which this script also emits. Nothing was written; stop emitting it locally ` +
-        `and take the server's, or report it upstream.`,
+      `\n✗ ${source.name} — the server now returns artifact(s) named ` +
+        `${colliding.map((artifact) => `'${artifact.path}'`).join(", ")}, which this script also ` +
+        `emits. Nothing was written; stop emitting them locally and take the server's, ` +
+        `or report it upstream.`,
     );
     return null;
   }
@@ -412,18 +418,34 @@ export async function fetchGenerated(
   return { report, contracts };
 }
 
-/** The writing half: the artifact set, the lock, `contracts.ts`, and the sidecar. */
+/**
+ * The writing half: the artifact set, the lock, the two derived modules, and
+ * the sidecar.
+ *
+ * `design.ts` is projected here rather than by `npm run design`, and always —
+ * as `null` for a method nobody has designed a page for. That is what lets a
+ * form import its design unconditionally at module level, and it is why a
+ * scaffolded tree is the tree a regeneration would write: the same writer wrote
+ * it. Producing a design writes the same bytes through the same renderer and
+ * re-records the one hash, without a network call.
+ *
+ * `methodsDir` is a parameter for `make add-method`'s sake, which scaffolds into
+ * a repo root of its own in the tests.
+ */
 export async function writeGenerated(
   outDir: string,
   fetched: FetchedMethod,
   source: MethodSource,
+  methodsDir = METHODS_DIR,
 ): Promise<string[]> {
+  const design = await readMethodDesign(source.name, methodsDir);
   return writeTree(outDir, fetched.report, source.sourceHashes, {
     [CONTRACTS_FILENAME]: renderContracts(
       fetched.contracts.pipeIoContracts,
       fetched.contracts.inputForm,
       fetched.contracts.outputForm,
     ),
+    [DESIGN_MODULE_FILENAME]: renderDesignModule(design === null ? null : designOf(design)),
   });
 }
 

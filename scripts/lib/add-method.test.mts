@@ -567,9 +567,23 @@ describe("renderActionTest", () => {
 describe("renderForm", () => {
   it("writes no input markup — the descriptor declares the fields", () => {
     const source = renderForm(TEXT_STATS_PLAN);
-    expect(source).toContain("useRunInputs(CONTRACT, DESCRIPTOR)");
+    expect(source).toContain("useRunInputs(");
     expect(source).toContain("<RunInputsForm");
     for (const tag of ["<textarea", "<input", "<select"]) expect(source).not.toContain(tag);
+  });
+
+  it("imports the method's design and renders it when it is renderable", () => {
+    // The scaffold's tree carries a `design.ts` from the moment it is written,
+    // exporting `null`, so this import is unconditional and the second gesture
+    // (`make design NAME=…`) needs no edit to this file to take effect.
+    const source = renderForm(TEXT_STATS_PLAN);
+    expect(source).toContain('import { DESIGN } from "@/generated/text-stats/design";');
+    expect(source).toContain("    DESIGN,");
+    expect(source).toContain("<DesignedPage");
+    expect(source).toContain("<ViewToggle value={view}");
+    expect(source).toContain("<DesignFallbackNote fallback={fallback} />");
+    // One outcome fragment, placed in one of two places — never two copies.
+    expect(source.match(/<RunResult /g)).toHaveLength(1);
   });
 
   it("renders the result from the output contract, not from a hand-written view", () => {
@@ -581,8 +595,9 @@ describe("renderForm", () => {
     expect(source).toContain(
       'const RESULT_FIELD = requireResultField(OUTPUT_FORM, CONTRACT, "text_stats", "analyze_text");',
     );
+    expect(source).toContain('const RESULT_NAME = "text_stats";');
     expect(source).toContain(
-      '<RunResult field={RESULT_FIELD} value={state.output} name="text_stats" />',
+      "<RunResult field={RESULT_FIELD} value={state.output} name={RESULT_NAME} />",
     );
     expect(source).toContain(
       'import { INPUT_FORM, OUTPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/text-stats/contracts";',
@@ -594,6 +609,25 @@ describe("renderForm", () => {
     expect(source).toContain('import { useFileInputs } from "@/hooks/useFileInputs";');
     expect(source).toContain("env={{ onDropFile: dropFile, uploadingIds: encodingIds }}");
     expect(source).toContain("{fileError && <ErrorDisplay error={fileError} />}");
+  });
+
+  it("maps the designed page's minted id back to the value path, for a file input", () => {
+    // The one piece of real host code the designed view needs: `MthdsField`
+    // reports the DOM id it minted from the store pointer, not the dotted value
+    // path a plain form reports, and a file written at a plausible-looking wrong
+    // path is the failure this seam must never have.
+    const source = renderForm(DOCUMENTS_PLAN);
+    expect(source).toContain(
+      'import { INPUTS_ROOT, pathFromDomId, segmentsUnder } from "@pipelex/mthds-form/generative";',
+    );
+    expect(source).toContain("function inputPathOf(id: string): string[] | undefined {");
+    expect(source).toContain("    pathOf: inputPathOf,");
+  });
+
+  it("leaves the id inverse out of a method with no file input", () => {
+    const source = renderForm(TEXT_STATS_PLAN);
+    expect(source).not.toContain("pathFromDomId");
+    expect(source).not.toContain("useFileInputs");
   });
 });
 
@@ -705,6 +739,7 @@ describe("runAddMethod", () => {
       "src/generated/text-stats/binder.ts",
       "src/generated/text-stats/codegen.lock",
       "src/generated/text-stats/contracts.ts",
+      "src/generated/text-stats/design.ts",
       "src/generated/text-stats/sources.json",
       "src/generated/text-stats/types.ts",
       "src/types/textStatsPipeline.ts",

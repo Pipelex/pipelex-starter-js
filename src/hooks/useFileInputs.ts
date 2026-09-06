@@ -61,6 +61,21 @@ export interface UseFileInputsOptions {
   prepareFile?: (file: File) => File;
   /** The size cap, in bytes. Defaults to the Server Action body limit's margin. */
   maxBytes?: number;
+  /**
+   * The value path an id names, when it is not the dotted path itself.
+   *
+   * On a plain form the kernel's id IS the path — `document`, or
+   * `invoice.attachment` for a file nested in a structure — so the default
+   * splits it and nothing else happens. On a designed page the id was minted by
+   * the layout's escape hatch from a store pointer (`gen-inputs-document`), and
+   * the inverse is the kernel's own `pathFromDomId`. The busy set is deliberately
+   * NOT mapped: `uploadingIds` is compared against the id the control reported,
+   * so it must stay the id, whichever page rendered it.
+   *
+   * Returning `undefined` refuses the write and reports it — a file written at a
+   * plausible-looking wrong path is the one failure this seam must never have.
+   */
+  pathOf?: (id: string) => string[] | undefined;
 }
 
 export interface UseFileInputs {
@@ -86,11 +101,15 @@ export interface UseFileInputs {
 
 const NO_UPLOADS: ReadonlySet<string> = new Set<string>();
 
+/** The plain form's id: the dotted value path itself. */
+const DOTTED_PATH = (id: string) => id.split(".");
+
 export function useFileInputs({
   setValues,
   onSelectionStart,
   prepareFile,
   maxBytes = MAX_PDF_BYTES,
+  pathOf = DOTTED_PATH,
 }: UseFileInputsOptions): UseFileInputs {
   const [fileError, setFileError] = useState<PipelineError | null>(null);
   const [encodingIds, setEncodingIds] = useState<ReadonlySet<string>>(NO_UPLOADS);
@@ -98,8 +117,12 @@ export function useFileInputs({
   const clearError = useCallback(() => setFileError(null), []);
 
   const clearFile = useCallback(
-    (id: string) => setValues((current) => setValueAtPath(current, id.split("."), undefined)),
-    [setValues],
+    (id: string) => {
+      const path = pathOf(id);
+      if (!path) return;
+      setValues((current) => setValueAtPath(current, path, undefined));
+    },
+    [pathOf, setValues],
   );
 
   const markBusy = useCallback((id: string, busy: boolean) => {
@@ -116,6 +139,26 @@ export function useFileInputs({
   const dropFile = useCallback(
     async (id: string, file: File) => {
       setFileError(null);
+      const path = pathOf(id);
+      if (!path) {
+        // Built inline rather than classified: nothing was thrown and nothing
+        // was asked of a server. This is a wiring fault in the host — the id
+        // the control reported names no input — and it is reported instead of
+        // guessed at, because a file written at a plausible-looking wrong path
+        // is the one failure this seam must never have.
+        setFileError({
+          kind: "bad_request",
+          title: "That file has nowhere to go",
+          message:
+            "The form could not work out which input the file was dropped on, so nothing " +
+            "was written. Nothing was sent to the Pipelex API.",
+          details:
+            `No input path for the field id '${id}'. On a designed page the id is minted ` +
+            "from the layout's store pointer, so the form must map it back with " +
+            "`pathFromDomId` — see `pathOf` in useFileInputs.",
+        });
+        return;
+      }
       onSelectionStart?.();
       clearFile(id); // before the size check and before the encode
       if (file.size > maxBytes) {
@@ -127,16 +170,14 @@ export function useFileInputs({
       markBusy(id, true);
       try {
         const url = await fileToDataUrl(prepareFile ? prepareFile(file) : file);
-        setValues((current) =>
-          setValueAtPath(current, id.split("."), { url, filename: file.name }),
-        );
+        setValues((current) => setValueAtPath(current, path, { url, filename: file.name }));
       } catch (err) {
         setFileError(classifyTransportError(err));
       } finally {
         markBusy(id, false);
       }
     },
-    [onSelectionStart, clearFile, maxBytes, markBusy, prepareFile, setValues],
+    [pathOf, onSelectionStart, clearFile, maxBytes, markBusy, prepareFile, setValues],
   );
 
   return {

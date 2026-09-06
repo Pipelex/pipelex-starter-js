@@ -29,6 +29,7 @@ import {
 import { generateMethod, writeTree } from "./generate.mts";
 import {
   CONTRACTS_FILENAME,
+  DESIGN_MODULE_FILENAME,
   hashSource,
   LOCK_FILENAME,
   renderContracts,
@@ -347,7 +348,13 @@ describe("generateMethod", () => {
     );
     expect(client.validate).not.toHaveBeenCalled();
     expect((await readdir(outDir)).sort()).toEqual(
-      [CONTRACTS_FILENAME, LOCK_FILENAME, SOURCES_SIDECAR, "types.ts"].sort(),
+      [
+        CONTRACTS_FILENAME,
+        DESIGN_MODULE_FILENAME,
+        LOCK_FILENAME,
+        SOURCES_SIDECAR,
+        "types.ts",
+      ].sort(),
     );
   });
 

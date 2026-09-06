@@ -198,12 +198,18 @@ describe("PdfForm", () => {
     }
   });
 
-  it("resolves a pasted storage URL for preview instead of spinning forever", async () => {
+  it("answers a pasted storage URL instead of spinning forever", async () => {
     // The kernel paints `http(s):`, `data:` and `blob:` URLs directly; a
     // non-web scheme is what it hands to the host's `resolveUrl`, and
     // `pipelex-storage://…` pasted through "paste a URL instead" is the path
     // that reaches it here. The identity resolver is this template's answer —
     // it has nothing to sign the URI with — and this pins what that buys.
+    //
+    // Not a preview: the kernel judges a resolver's answer by the same URL gate
+    // it judges a payload by, so a storage URI comes back refused and the panel
+    // shows "nothing to show". The difference the resolver makes is that this
+    // is an ANSWER — with no resolver the kernel has a reference and nothing
+    // said about it, which is a load in flight, and it spins for good.
     render(<PdfForm />);
     fireEvent.click(screen.getByRole("button", { name: /paste a url instead/i }));
     fireEvent.change(screen.getByPlaceholderText(/pipelex-storage/i), {
@@ -215,16 +221,11 @@ describe("PdfForm", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Preview" }));
 
-    // The identity resolver hands the URI straight back, so the kernel renders
-    // its <object> (whose own "Preview unavailable" child is what a browser
-    // shows for a non-web scheme) rather than spinning on an unanswered resolve.
-    const preview = await waitFor(() => {
-      const el = document.querySelector('object[type="application/pdf"]');
-      if (!el) throw new Error("no pdf preview rendered");
-      return el;
-    });
-    expect(preview.getAttribute("data")).toContain("pipelex-storage://bucket/invoice.pdf");
-    expect(document.querySelector(".animate-spin")).toBeNull();
+    await waitFor(() => expect(document.querySelector(".animate-spin")).toBeNull());
+    expect(document.querySelector('object[type="application/pdf"]')).toBeNull();
+    // And the reference is still the value — refusing to PAINT it is not
+    // refusing to send it, and the run receives what was pasted.
+    expect(screen.getByDisplayValue("pipelex-storage://bucket/invoice.pdf")).toBeInTheDocument();
   });
 
   it("renders the structured error when a poll returns ok:false", async () => {

@@ -1,4 +1,4 @@
-.PHONY: help run dev build start port-check lint format format-check typecheck codegen codegen-check codegen-verify add-method test test-watch test-e2e test-e2e-ui confirm-live-e2e agent-test check clean install lock all use-local use-npm ul un
+.PHONY: help run dev build start port-check lint format format-check typecheck codegen codegen-check codegen-verify design design-check add-method test test-watch test-e2e test-e2e-ui confirm-live-e2e agent-test check clean install lock all use-local use-npm ul un
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -87,6 +87,23 @@ codegen-check: ## Verify src/generated/ is current, offline (no API key needed)
 codegen-verify: ## Ask the engine whether the committed crates are still current (needs PIPELEX_API_KEY)
 	npm run codegen:verify
 
+# Produces a method's designed page: renders the brief from the committed
+# contracts, runs the designer method @pipelex/mthds-form ships as data, and
+# commits methods/<name>/design.{jsonl,json} plus the re-projected design.ts.
+# COSTS INFERENCE — one designer run per method — so it stays out of `make all`
+# for the same reason codegen and test-e2e do. NAME= narrows it to one method,
+# PIPE= names the pipe on a method that declares several, SEED= hands the model
+# a creative seed the record then names.
+design: ## Produce the designed page for methods/ [NAME=<method>] [PIPE=<domain>.<pipe>] [SEED=<text>] (needs PIPELEX_API_KEY, costs inference)
+	npm run design -- $(if $(NAME),--name $(NAME)) $(if $(PIPE),--pipe $(PIPE)) $(if $(SEED),--seed "$(SEED)")
+
+# The offline half: no key, no network, no inference. Proves each committed
+# design is the one its record signed, was produced for the method as it is now
+# and against the catalog prompt the installed kernel ships, and still compiles,
+# validates and fits. Part of `make check`.
+design-check: ## Verify the committed designs are current, offline (no API key needed)
+	npm run design:check
+
 # Scaffolds a method that lives on the platform (a catalog id) or in a published
 # package (an address) into the app: the manifest, the generated tree, the action
 # trio, the narrower, the form and a tab. One-shot — it never overwrites, and
@@ -129,7 +146,7 @@ test-e2e-ui: confirm-live-e2e port-check ## Same as test-e2e, with the Playwrigh
 agent-test: ## Run tests, silent on success (for agents)
 	@OUTPUT=$$(npm run test --silent 2>&1); STATUS=$$?; if [ $$STATUS -ne 0 ]; then echo "$$OUTPUT"; exit $$STATUS; fi
 
-check: lint format-check typecheck codegen-check ## Run lint, format check, type check, and the offline codegen check
+check: lint format-check typecheck codegen-check design-check ## Run lint, format check, type check, and the two offline artifact checks
 
 all: check test build ## Full validation: check + test + build (excludes e2e — see test-e2e)
 
