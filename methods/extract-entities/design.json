@@ -1,0 +1,11 @@
+{
+  "pipeRef": "extract_entities.extract_entities",
+  "producer": "pipelex-method",
+  "model": "claude-5-sonnet",
+  "promptHash": "4dcf6d57cb71",
+  "date": "2026-09-06",
+  "sources": {
+    "methods/extract-entities/main.mthds": "19e5fc76b91d016e7d03437a917c8e73eeb17a07bae02a92c89d30c487f71bd2"
+  },
+  "jsonlSha256": "43a80056a71977ef4723aa9fec8357fc0e83ed99ebcc1e2c986c487829aa48cc"
+}

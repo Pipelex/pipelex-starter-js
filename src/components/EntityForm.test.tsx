@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
+import { specFromJsonl } from "@pipelex/mthds-form/generative";
+import { DESIGN } from "@/generated/extract-entities/design";
 import { EntityForm } from "./EntityForm";
 import {
   pollExtractEntitiesRun,
@@ -57,9 +59,25 @@ const USAGE = {
   assemblyError: null,
 };
 
+/**
+ * Switch to the kernel's plain form.
+ *
+ * This method carries a committed design now, so the tab opens on the page a
+ * model laid out — and every label, button name and section title on that page
+ * is the model's, re-written whenever the design is re-produced. The toggle is
+ * app chrome and its name is this repo's, so one click here is what keeps the
+ * assertions below about the run path rather than about somebody's copy. The
+ * designed view has its own tests, which read what the committed layout
+ * actually says rather than assuming any of it.
+ */
+function showPlainForm() {
+  fireEvent.click(screen.getByRole("radio", { name: "Plain form" }));
+}
+
 describe("EntityForm", () => {
   it("renders the input the method's contract declares, seeded with the sample", () => {
     render(<EntityForm />);
+    showPlainForm();
     // The bundle's `text` input → "Text" through the kernel's `app`
     // presentation. Nothing in this component names the input: the label, the
     // control and the readiness rule all come from the generated contract.
@@ -68,6 +86,7 @@ describe("EntityForm", () => {
 
   it("gates Run on the contract's required inputs, not a hand-written check", () => {
     render(<EntityForm />);
+    showPlainForm();
     const runButton = screen.getByRole("button", { name: /extract entities/i });
     expect(runButton).toBeEnabled();
 
@@ -88,6 +107,8 @@ describe("EntityForm", () => {
       .mockResolvedValueOnce({ ok: true, state: "completed", output: ENTITIES, usage: USAGE });
 
     render(<EntityForm />);
+
+    showPlainForm();
     submitForm();
 
     await flush(); // start + first poll (running)
@@ -111,6 +132,8 @@ describe("EntityForm", () => {
     blocking.mockResolvedValueOnce({ ok: true, output: ENTITIES, usage: USAGE });
 
     render(<EntityForm />);
+
+    showPlainForm();
     fireEvent.click(screen.getByRole("radio", { name: "Blocking" }));
     submitForm();
 
@@ -131,6 +154,8 @@ describe("EntityForm", () => {
     });
 
     render(<EntityForm />);
+
+    showPlainForm();
     submitForm();
 
     await flush();
@@ -144,6 +169,8 @@ describe("EntityForm", () => {
     blocking.mockRejectedValueOnce(new TypeError("Failed to fetch"));
 
     render(<EntityForm />);
+
+    showPlainForm();
     fireEvent.click(screen.getByRole("radio", { name: "Blocking" }));
     submitForm();
 
@@ -151,5 +178,49 @@ describe("EntityForm", () => {
     expect(screen.getByRole("alert")).toBeInTheDocument();
     expect(screen.getByText(/Could not reach the server/i)).toBeInTheDocument();
     expect(screen.getByText(/Failed to fetch/i)).toBeInTheDocument();
+  });
+});
+
+// The designed view, read from the layout this repo actually committed.
+//
+// Every label on that page is the model's, so nothing here is spelled out: the
+// call to action is found by the label the committed JSONL gives it. A
+// re-produced design changes the page and this test follows it — which is the
+// only way a test about a produced artifact can be honest.
+describe("EntityForm's designed page", () => {
+  const spec = specFromJsonl(DESIGN?.jsonl ?? "");
+  const cta = Object.values(spec.elements ?? {}).find(
+    (element) => (element as { type?: string }).type === "Cta",
+  ) as { props?: { label?: string } } | undefined;
+  const ctaLabel = cta?.props?.label ?? "";
+
+  it("has a committed design that this kernel renders", () => {
+    // If this fails, the tab has quietly fallen back to the plain form and
+    // every assertion below would be testing the wrong view.
+    expect(DESIGN).not.toBeNull();
+    expect(ctaLabel).not.toBe("");
+  });
+
+  it("runs the method from the store's inputs when the call to action is pressed", async () => {
+    start.mockResolvedValueOnce({ ok: true, runId: "run-1" });
+    poll.mockResolvedValueOnce({ ok: true, state: "completed", output: ENTITIES, usage: USAGE });
+
+    render(<EntityForm />);
+    fireEvent.click(screen.getByRole("button", { name: ctaLabel }));
+
+    await flush();
+
+    // The seeded sample, deflated through the same contract the plain form
+    // deflates through — one store, one wire, whichever view was on screen.
+    expect(start).toHaveBeenCalledWith({ text: { text: expect.stringContaining("Tim Cook") } });
+    expect(screen.getByText("Tim Cook")).toBeInTheDocument();
+  });
+
+  it("shows the same value on the plain form, because both views read one store", () => {
+    render(<EntityForm />);
+    // Type into the designed page's own control, then flip.
+    fireEvent.change(screen.getByLabelText("Text"), { target: { value: "Ada Lovelace, 1843" } });
+    showPlainForm();
+    expect(screen.getByLabelText("Text")).toHaveDisplayValue("Ada Lovelace, 1843");
   });
 });

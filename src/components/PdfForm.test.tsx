@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { specFromJsonl } from "@pipelex/mthds-form/generative";
+import { DESIGN } from "@/generated/summarize-pdf/design";
 import { PdfForm } from "./PdfForm";
 import {
   pollSummarizePdfRun,
@@ -70,9 +72,36 @@ function durableCompletes(summary: { title: string; doc_type: string; key_points
   poll.mockResolvedValueOnce({ ok: true, state: "completed", output: summary, usage: USAGE });
 }
 
+/**
+ * Switch to the kernel's plain form.
+ *
+ * This method carries a committed design now, so the tab opens on the page a
+ * model laid out — and every label, button name and section title on that page
+ * is the model's, re-written whenever the design is re-produced. The toggle is
+ * app chrome and its name is this repo's, so one click here is what keeps the
+ * assertions below about the run path rather than about somebody's copy. The
+ * designed view has its own tests, which read what the committed layout
+ * actually says rather than assuming any of it.
+ */
+/** The call to action's label, read from the committed layout rather than assumed. */
+function ctaLabelOf(jsonl: string): string {
+  const spec = specFromJsonl(jsonl);
+  const cta = Object.values(spec.elements ?? {}).find(
+    (element) => (element as { type?: string }).type === "Cta",
+  ) as { props?: { label?: string } } | undefined;
+  const label = cta?.props?.label;
+  if (!label) throw new Error("the committed design has no call to action");
+  return label;
+}
+
+function showPlainForm() {
+  fireEvent.click(screen.getByRole("radio", { name: "Plain form" }));
+}
+
 describe("PdfForm", () => {
   it("renders the file input the method's contract declares", () => {
     render(<PdfForm />);
+    showPlainForm();
     // `document` in the bundle → "Document" through the kernel's `app`
     // presentation, rendered as a dropzone because the concept is a file one.
     expect(screen.getByText("Document")).toBeInTheDocument();
@@ -83,6 +112,8 @@ describe("PdfForm", () => {
     durableCompletes({ title: "Invoice", doc_type: "invoice", key_points: ["Total $1,728"] });
 
     render(<PdfForm />);
+
+    showPlainForm();
     await selectFile(pdfFile());
     fireEvent.click(screen.getByRole("button", { name: /summarize pdf/i }));
 
@@ -96,6 +127,7 @@ describe("PdfForm", () => {
 
   it("rejects an oversized file before encoding it", async () => {
     render(<PdfForm />);
+    showPlainForm();
     const huge = pdfFile("huge.pdf");
     // `File.size` is read-only; stand in for a 9 MB file (the cap is 8 MB).
     Object.defineProperty(huge, "size", { value: 9 * 1024 * 1024 });
@@ -109,6 +141,7 @@ describe("PdfForm", () => {
 
   it("clears a rejection once the user fixes the input by pasting a URL", async () => {
     render(<PdfForm />);
+    showPlainForm();
     const huge = pdfFile("huge.pdf");
     Object.defineProperty(huge, "size", { value: 9 * 1024 * 1024 });
     fireEvent.change(fileInput(), { target: { files: [huge] } });
@@ -128,6 +161,7 @@ describe("PdfForm", () => {
 
   it("drops the previous PDF when its replacement is rejected", async () => {
     render(<PdfForm />);
+    showPlainForm();
     await selectFile(pdfFile("first.pdf"));
 
     // Once a file is chosen the kernel renders a file chip and hides the drop
@@ -160,6 +194,7 @@ describe("PdfForm", () => {
     );
     try {
       render(<PdfForm />);
+      showPlainForm();
       fireEvent.click(screen.getByRole("button", { name: /use sample pdf/i }));
 
       // Still downloading: every door into the field is shut, so a PDF picked
@@ -211,6 +246,7 @@ describe("PdfForm", () => {
     // is an ANSWER — with no resolver the kernel has a reference and nothing
     // said about it, which is a load in flight, and it spins for good.
     render(<PdfForm />);
+    showPlainForm();
     fireEvent.click(screen.getByRole("button", { name: /paste a url instead/i }));
     fireEvent.change(screen.getByPlaceholderText(/pipelex-storage/i), {
       target: { value: "pipelex-storage://bucket/invoice.pdf" },
@@ -242,6 +278,8 @@ describe("PdfForm", () => {
     });
 
     render(<PdfForm />);
+
+    showPlainForm();
     await selectFile(pdfFile());
     fireEvent.click(screen.getByRole("button", { name: /summarize pdf/i }));
 
@@ -253,6 +291,8 @@ describe("PdfForm", () => {
     blocking.mockRejectedValueOnce(new TypeError("Failed to fetch"));
 
     render(<PdfForm />);
+
+    showPlainForm();
     await selectFile(pdfFile());
     fireEvent.click(screen.getByRole("radio", { name: "Blocking" }));
     fireEvent.click(screen.getByRole("button", { name: /summarize pdf/i }));
@@ -264,6 +304,8 @@ describe("PdfForm", () => {
     durableCompletes({ title: "Invoice", doc_type: "invoice", key_points: ["Total $1,728"] });
 
     render(<PdfForm />);
+
+    showPlainForm();
     await selectFile(pdfFile());
     fireEvent.click(screen.getByRole("button", { name: /summarize pdf/i }));
     expect(await screen.findByText("Invoice")).toBeInTheDocument();
@@ -287,6 +329,8 @@ describe("PdfForm", () => {
     durableCompletes({ title: "Invoice", doc_type: "invoice", key_points: [] });
 
     render(<PdfForm />);
+
+    showPlainForm();
     await selectFile(pdfFile("report.pdf", ""));
     fireEvent.click(screen.getByRole("button", { name: /summarize pdf/i }));
 
@@ -296,5 +340,55 @@ describe("PdfForm", () => {
     expect(documentArg(start.mock.calls[0]).url?.startsWith("data:application/pdf;base64,")).toBe(
       true,
     );
+  });
+});
+
+// The designed view, and the one piece of real host code it needs.
+//
+// `MthdsField` mints the file control's DOM id from the store pointer it was
+// given, so the id the kernel reports is not the dotted value path a plain form
+// reports. `inputPathOf` is the inverse, and a file written at a
+// plausible-looking wrong path is the failure this seam exists to prevent — so
+// what is asserted is that the encoded value reaches the ACTION, not merely
+// that the drop was accepted.
+describe("PdfForm's designed page", () => {
+  it("has a committed design that this kernel renders", () => {
+    expect(DESIGN).not.toBeNull();
+    render(<PdfForm />);
+    // The kernel's own file control, reached through the layout's escape hatch:
+    // the designed page delegates a document rather than approximating it.
+    expect(screen.getByLabelText("Document")).toBeInTheDocument();
+  });
+
+  it("writes a file dropped on the designed page at the input's value path", async () => {
+    durableCompletes({ title: "Invoice", doc_type: "invoice", key_points: ["Total $1,728"] });
+
+    render(<PdfForm />);
+    const ctaLabel = ctaLabelOf(DESIGN?.jsonl ?? "");
+    fireEvent.change(screen.getByLabelText("Document"), { target: { files: [pdfFile()] } });
+    // Waited on the FILENAME, not on the call to action: a designed page's Cta
+    // is never disabled — the catalog has no readiness prop, and a press with an
+    // input missing is meant to reach the server's gate. So there is nothing to
+    // enable, and the encode is a real `FileReader` that has to be waited out.
+    await waitFor(() => expect(screen.getByText("doc.pdf")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: ctaLabel }));
+
+    await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
+    expect(documentArg(start.mock.calls[0] as [Record<string, unknown>])).toMatchObject({
+      filename: "doc.pdf",
+    });
+    expect(documentArg(start.mock.calls[0] as [Record<string, unknown>]).url).toMatch(
+      /^data:application\/pdf;base64,/,
+    );
+  });
+
+  it("keeps the file across the toggle, because both views read one store", async () => {
+    render(<PdfForm />);
+    fireEvent.change(screen.getByLabelText("Document"), { target: { files: [pdfFile()] } });
+    await waitFor(() => expect(screen.getByText("doc.pdf")).toBeInTheDocument());
+
+    showPlainForm();
+    expect(screen.getByText("doc.pdf")).toBeInTheDocument();
   });
 });

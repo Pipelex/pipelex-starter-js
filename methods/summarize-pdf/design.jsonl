@@ -1,0 +1,12 @@
+{"op":"add","path":"/root","value":"page"}
+{"op":"add","path":"/elements/page","value":{"type":"Stack","props":{"direction":"vertical","gap":"none"},"children":["appbar","workspace","footer"]}}
+{"op":"add","path":"/elements/appbar","value":{"type":"AppBar","props":{"app":"Summarize pdf","tag":"summarize_pdf"}},"children":[]}
+{"op":"add","path":"/elements/workspace","value":{"type":"Workspace","props":{"rail":"right"},"children":["work","rail"]}}
+{"op":"add","path":"/elements/work","value":{"type":"Stack","props":{"direction":"vertical","gap":"none"},"children":["hero","section-document"]}}
+{"op":"add","path":"/elements/hero","value":{"type":"Hero","props":{"headline":"Summarize your PDF","lede":"Upload a document to get a structured summary."}},"children":[]}
+{"op":"add","path":"/elements/section-document","value":{"type":"Section","props":{"number":"01","title":"Document"},"children":["document-field"]}}
+{"op":"add","path":"/elements/document-field","value":{"type":"MthdsField","props":{"path":"/inputs/document"}},"children":[]}
+{"op":"add","path":"/elements/rail","value":{"type":"Rail","props":{"title":"Summary"},"children":["summary-document","cta"]}}
+{"op":"add","path":"/elements/summary-document","value":{"type":"SummaryRow","props":{"label":"Document","value":{"$state":"/inputs/document"},"placeholder":"No file yet"}},"children":[]}
+{"op":"add","path":"/elements/cta","value":{"type":"Cta","props":{"label":"Summarize this document","hint":"Waits for a document"},"on":{"press":[{"action":"validateForm"},{"action":"run"}]}},"children":[]}
+{"op":"add","path":"/elements/footer","value":{"type":"Footer","props":{"text":"Summarize pdf"}},"children":[]}

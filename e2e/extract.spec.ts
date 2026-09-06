@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { showPlainForm } from "./designedPage";
 import { requireLiveApi } from "./liveApi";
 
 // This test hits the live Pipelex API configured by PIPELEX_BASE_URL +
@@ -8,9 +9,15 @@ requireLiveApi();
 
 // Runs in the default execution mode (durable: start + poll). The form is
 // mode-agnostic, so this drives the same UI path a user gets out of the box.
+//
+// On the PLAIN form: this tab carries a committed design, and its page's labels
+// are a model's, re-written whenever the design is re-produced. One click on
+// chrome this repo names keeps the selectors below about the run path.
+// `designed-page.spec.ts` is what exercises the designed view.
 test("extracts entities from sample text", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("tab", { name: /text entities/i }).click();
+  await showPlainForm(page);
 
   const textarea = page.getByRole("textbox", { name: "Text" });
   await textarea.fill(

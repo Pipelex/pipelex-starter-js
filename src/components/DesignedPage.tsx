@@ -4,7 +4,7 @@ import { Component, type ReactNode } from "react";
 import type { Spec, StateModel, StateStore } from "@json-render/core";
 import type { RunField } from "@pipelex/mthds-form";
 import { GenerativePage, ResultSlotProvider, fixtureLabel } from "@pipelex/mthds-form/generative";
-import type { FieldEnv } from "@pipelex/mthds-form/react";
+import { FieldPresentationProvider, type FieldEnv } from "@pipelex/mthds-form/react";
 import { BRAND } from "@/brand";
 import type { MethodDesign } from "@/lib/design";
 
@@ -72,18 +72,41 @@ export function DesignedPage({
 
   return (
     <RenderBoundary onError={onRenderError}>
-      <ResultSlotProvider slot={slot}>
-        <GenerativePage
-          spec={spec}
-          store={store}
-          scope={{ inputs: fields, env, idPrefix }}
-          brand={BRAND}
-          // The state the page hands over is the store's, which the form already
-          // reads — so the run is started from `toData()` exactly as the plain
-          // view starts it, and the two views cannot send different inputs.
-          onRun={(_state: StateModel) => onRun()}
-        />
-      </ResultSlotProvider>
+      {/* A full-width band, and it is app chrome rather than a liberty taken
+          with the layout. What a designer produces is a PRODUCT page — an app
+          bar, a hero, a two-column workspace with a sticky rail — and this
+          template's demo column is 672px wide, which renders that page as if
+          it were on a phone: the headline breaks one word per line and the
+          rail stacks under the work. So the band spans the window and sets its
+          own measure, and the app's column goes back to holding the chrome
+          above and below it. The negative margins are computed from this
+          element's own box, so nothing here assumes how wide the column is. */}
+      <div className="mx-[calc(50%-50vw)] overflow-x-clip px-6">
+        <div className="mx-auto max-w-6xl">
+          {/* The same seam `<RunInputsForm>` and `<RunResult>` use, and it has to
+          stay in step with them: humanized labels and no concept pills. A layout
+          hands a file, a date or a structure back to the kernel through
+          `MthdsField`, and a control rendered there must read the way the same
+          control reads on the plain form — the toggle puts the two side by side,
+          so a difference in presentation would look like a difference in the
+          method. */}
+          <FieldPresentationProvider presentation="app">
+            <ResultSlotProvider slot={slot}>
+              <GenerativePage
+                spec={spec}
+                store={store}
+                scope={{ inputs: fields, env, idPrefix }}
+                brand={BRAND}
+                // The state the page hands over is the store's, which the form
+                // already reads — so the run is started from `toData()` exactly as
+                // the plain view starts it, and the two cannot send different
+                // inputs.
+                onRun={(_state: StateModel) => onRun()}
+              />
+            </ResultSlotProvider>
+          </FieldPresentationProvider>
+        </div>
+      </div>
       <p className="mt-4 text-xs text-slate-500">
         This page was designed by {fixtureLabel(design)}, on {design.date}. The form below the
         toggle is the same inputs, rendered by the kernel from the method&apos;s own descriptor.

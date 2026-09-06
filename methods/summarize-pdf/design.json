@@ -1,0 +1,11 @@
+{
+  "pipeRef": "summarize_pdf.summarize_pdf",
+  "producer": "pipelex-method",
+  "model": "claude-5-sonnet",
+  "promptHash": "4dcf6d57cb71",
+  "date": "2026-09-06",
+  "sources": {
+    "methods/summarize-pdf/main.mthds": "7455718575e6d3534ecebbde0ab1ed99b54485f8aeb6dc160bbf532623771ed5"
+  },
+  "jsonlSha256": "a6fc512385a7d488f94cba6a4f6990751d516c838f0433ed2f41a599ae018e22"
+}

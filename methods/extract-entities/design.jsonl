@@ -1,0 +1,12 @@
+{"op":"add","path":"/root","value":"page"}
+{"op":"add","path":"/elements/page","value":{"type":"Stack","props":{"direction":"vertical","gap":"none"},"children":["appbar","workspace","footer"]}}
+{"op":"add","path":"/elements/appbar","value":{"type":"AppBar","props":{"app":"Extract entities","tag":"extract_entities"},"children":[]}}
+{"op":"add","path":"/elements/workspace","value":{"type":"Workspace","props":{"rail":"right"},"children":["work","rail"]}}
+{"op":"add","path":"/elements/work","value":{"type":"Stack","props":{"direction":"vertical","gap":"none"},"children":["hero","section-01"]}}
+{"op":"add","path":"/elements/hero","value":{"type":"Hero","props":{"eyebrow":"Entity extraction","headline":"Find every name, place and organisation in your text","lede":"Paste what you have and let the method do the reading."},"children":[]}}
+{"op":"add","path":"/elements/section-01","value":{"type":"Section","props":{"number":"01","title":"The text","lede":"Paste or write the passage you want read."},"children":["text-input"]}}
+{"op":"add","path":"/elements/text-input","value":{"type":"Textarea","props":{"label":"Text","name":"text","placeholder":"Drop your passage here…","rows":12,"value":{"$bindState":"/inputs/text"},"checks":[{"type":"required","message":"Text is required to run this."}],"validateOn":"blur"},"children":[]}}
+{"op":"add","path":"/elements/rail","value":{"type":"Rail","props":{"title":"Ready when you are"},"children":["summary-text","cta"]}}
+{"op":"add","path":"/elements/summary-text","value":{"type":"SummaryRow","props":{"label":"Text","value":{"$state":"/inputs/text"},"placeholder":"Nothing yet"},"children":[]}}
+{"op":"add","path":"/elements/cta","value":{"type":"Cta","props":{"label":"Extract entities","hint":"Needs your text first."},"children":[],"on":{"press":[{"action":"validateForm"},{"action":"run"}]}}}
+{"op":"add","path":"/elements/footer","value":{"type":"Footer","props":{"text":"Extract entities","tag":"extract_entities"},"children":[]}}

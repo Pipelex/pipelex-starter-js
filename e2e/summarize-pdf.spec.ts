@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { showPlainForm } from "./designedPage";
 import { requireLiveApi } from "./liveApi";
 
 // This test hits the live Pipelex API configured by PIPELEX_BASE_URL +
@@ -12,6 +13,8 @@ requireLiveApi();
 test("summarizes the sample PDF", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("tab", { name: /pdf summary/i }).click();
+  // On the plain form, for `extract.spec.ts`'s reason: this tab is designed.
+  await showPlainForm(page);
 
   await page.getByRole("button", { name: /use sample pdf/i }).click();
 

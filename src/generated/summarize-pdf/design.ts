@@ -19,4 +19,11 @@
 
 import type { MethodDesign } from "@/lib/design";
 
-export const DESIGN: MethodDesign | null = null;
+export const DESIGN: MethodDesign | null = {
+  "pipeRef": "summarize_pdf.summarize_pdf",
+  "producer": "pipelex-method",
+  "model": "claude-5-sonnet",
+  "promptHash": "4dcf6d57cb71",
+  "date": "2026-09-06",
+  "jsonl": "{\"op\":\"add\",\"path\":\"/root\",\"value\":\"page\"}\n{\"op\":\"add\",\"path\":\"/elements/page\",\"value\":{\"type\":\"Stack\",\"props\":{\"direction\":\"vertical\",\"gap\":\"none\"},\"children\":[\"appbar\",\"workspace\",\"footer\"]}}\n{\"op\":\"add\",\"path\":\"/elements/appbar\",\"value\":{\"type\":\"AppBar\",\"props\":{\"app\":\"Summarize pdf\",\"tag\":\"summarize_pdf\"}},\"children\":[]}\n{\"op\":\"add\",\"path\":\"/elements/workspace\",\"value\":{\"type\":\"Workspace\",\"props\":{\"rail\":\"right\"},\"children\":[\"work\",\"rail\"]}}\n{\"op\":\"add\",\"path\":\"/elements/work\",\"value\":{\"type\":\"Stack\",\"props\":{\"direction\":\"vertical\",\"gap\":\"none\"},\"children\":[\"hero\",\"section-document\"]}}\n{\"op\":\"add\",\"path\":\"/elements/hero\",\"value\":{\"type\":\"Hero\",\"props\":{\"headline\":\"Summarize your PDF\",\"lede\":\"Upload a document to get a structured summary.\"}},\"children\":[]}\n{\"op\":\"add\",\"path\":\"/elements/section-document\",\"value\":{\"type\":\"Section\",\"props\":{\"number\":\"01\",\"title\":\"Document\"},\"children\":[\"document-field\"]}}\n{\"op\":\"add\",\"path\":\"/elements/document-field\",\"value\":{\"type\":\"MthdsField\",\"props\":{\"path\":\"/inputs/document\"}},\"children\":[]}\n{\"op\":\"add\",\"path\":\"/elements/rail\",\"value\":{\"type\":\"Rail\",\"props\":{\"title\":\"Summary\"},\"children\":[\"summary-document\",\"cta\"]}}\n{\"op\":\"add\",\"path\":\"/elements/summary-document\",\"value\":{\"type\":\"SummaryRow\",\"props\":{\"label\":\"Document\",\"value\":{\"$state\":\"/inputs/document\"},\"placeholder\":\"No file yet\"}},\"children\":[]}\n{\"op\":\"add\",\"path\":\"/elements/cta\",\"value\":{\"type\":\"Cta\",\"props\":{\"label\":\"Summarize this document\",\"hint\":\"Waits for a document\"},\"on\":{\"press\":[{\"action\":\"validateForm\"},{\"action\":\"run\"}]}},\"children\":[]}\n{\"op\":\"add\",\"path\":\"/elements/footer\",\"value\":{\"type\":\"Footer\",\"props\":{\"text\":\"Summarize pdf\"}},\"children\":[]}"
+};
