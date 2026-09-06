@@ -108,8 +108,8 @@ export function DesignedPage({
         </div>
       </div>
       <p className="mt-4 text-xs text-slate-500">
-        This page was designed by {fixtureLabel(design)}, on {design.date}. The form below the
-        toggle is the same inputs, rendered by the kernel from the method&apos;s own descriptor.
+        This page was designed by {fixtureLabel(design)}, on {design.date}. Switch to the plain form
+        above for the same inputs with no layout — one method, rendered two ways, over one store.
       </p>
     </RenderBoundary>
   );

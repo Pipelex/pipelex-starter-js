@@ -1495,7 +1495,7 @@ async function runAddMethodInner(argv: readonly string[], deps?: AddMethodDeps):
   console.log("\nWrote:");
   console.log(`  ${paths.manifest}`);
   console.log(
-    `  ${paths.generatedDir}/  (types.ts, binder.ts, contracts.ts, codegen.lock, sources.json)`,
+    `  ${paths.generatedDir}/  (types.ts, binder.ts, contracts.ts, design.ts, codegen.lock, sources.json)`,
   );
   for (const file of emitted) {
     console.log(
@@ -1510,6 +1510,12 @@ async function runAddMethodInner(argv: readonly string[], deps?: AddMethodDeps):
       "  1. `make all` — the slice compiles, lints and tests with the rest of the app.",
       `  2. Open the tab and run it. The form and the result view both come from the`,
       `     method's contract; ${paths.form} is where you replace either with your own.`,
+      "",
+      `  3. \`make design NAME=${names.slug}\` — optional, and it spends a model call.`,
+      `     The tab opens on the kernel's plain form until a method has a design; the`,
+      `     gesture produces one, commits it beside the method, and the same tab opens`,
+      `     on the page instead. Nothing else changes: the toggle still reaches the`,
+      `     plain form, and the run path is the same on both views.`,
     ].join("\n"),
   );
   return EXIT_OK;

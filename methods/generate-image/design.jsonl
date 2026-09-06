@@ -1,0 +1,12 @@
+{"op":"add","path":"/root","value":"page"}
+{"op":"add","path":"/elements/page","value":{"type":"Stack","props":{"direction":"vertical","gap":"none"},"children":["appbar","workspace","footer"]}}
+{"op":"add","path":"/elements/appbar","value":{"type":"AppBar","props":{"app":"Generate image","links":["Describe"],"tag":"generate_image"},"children":[]}}
+{"op":"add","path":"/elements/workspace","value":{"type":"Workspace","props":{"rail":"right"},"children":["work","rail"]}}
+{"op":"add","path":"/elements/work","value":{"type":"Stack","props":{"direction":"vertical","gap":"none"},"children":["hero","section-01"]}}
+{"op":"add","path":"/elements/hero","value":{"type":"Hero","props":{"eyebrow":"Image","headline":"Describe the image you want","lede":"One good sentence is often enough."},"children":[]}}
+{"op":"add","path":"/elements/section-01","value":{"type":"Section","props":{"number":"01","title":"The prompt"},"children":["prompt-input"]}}
+{"op":"add","path":"/elements/prompt-input","value":{"type":"Textarea","props":{"label":"Image prompt","name":"image_prompt","placeholder":"A weathered lighthouse at dusk, storm clouds gathering, cinematic light...","rows":6,"value":{"$bindState":"/inputs/image_prompt"},"checks":[{"type":"required","message":"Describe the image first"}],"validateOn":"submit"},"children":[]}}
+{"op":"add","path":"/elements/rail","value":{"type":"Rail","props":{"title":"Ready"},"children":["summary-prompt","cta"]}}
+{"op":"add","path":"/elements/summary-prompt","value":{"type":"SummaryRow","props":{"label":"Prompt","value":{"$state":"/inputs/image_prompt"},"placeholder":"Not written yet"},"children":[]}}
+{"op":"add","path":"/elements/cta","value":{"type":"Cta","props":{"label":"Generate image","hint":"Needs a prompt to run"},"children":[],"on":{"press":[{"action":"validateForm"},{"action":"run"}]}}}
+{"op":"add","path":"/elements/footer","value":{"type":"Footer","props":{"text":"Generate image","tag":"generate_image.generate_image"},"children":[]}}

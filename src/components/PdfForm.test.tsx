@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { specFromJsonl } from "@pipelex/mthds-form/generative";
 import { DESIGN } from "@/generated/summarize-pdf/design";
+import { ctaLabelOf, showPlainForm } from "./designedView.fixture";
 import { PdfForm } from "./PdfForm";
 import {
   pollSummarizePdfRun,
@@ -70,32 +70,6 @@ function documentArg(call: [Record<string, unknown>]): { url?: string; filename?
 function durableCompletes(summary: { title: string; doc_type: string; key_points: string[] }) {
   start.mockResolvedValueOnce({ ok: true, runId: "run-1" });
   poll.mockResolvedValueOnce({ ok: true, state: "completed", output: summary, usage: USAGE });
-}
-
-/**
- * Switch to the kernel's plain form.
- *
- * This method carries a committed design now, so the tab opens on the page a
- * model laid out — and every label, button name and section title on that page
- * is the model's, re-written whenever the design is re-produced. The toggle is
- * app chrome and its name is this repo's, so one click here is what keeps the
- * assertions below about the run path rather than about somebody's copy. The
- * designed view has its own tests, which read what the committed layout
- * actually says rather than assuming any of it.
- */
-/** The call to action's label, read from the committed layout rather than assumed. */
-function ctaLabelOf(jsonl: string): string {
-  const spec = specFromJsonl(jsonl);
-  const cta = Object.values(spec.elements ?? {}).find(
-    (element) => (element as { type?: string }).type === "Cta",
-  ) as { props?: { label?: string } } | undefined;
-  const label = cta?.props?.label;
-  if (!label) throw new Error("the committed design has no call to action");
-  return label;
-}
-
-function showPlainForm() {
-  fireEvent.click(screen.getByRole("radio", { name: "Plain form" }));
 }
 
 describe("PdfForm", () => {
@@ -364,7 +338,7 @@ describe("PdfForm's designed page", () => {
     durableCompletes({ title: "Invoice", doc_type: "invoice", key_points: ["Total $1,728"] });
 
     render(<PdfForm />);
-    const ctaLabel = ctaLabelOf(DESIGN?.jsonl ?? "");
+    const ctaLabel = ctaLabelOf(DESIGN);
     fireEvent.change(screen.getByLabelText("Document"), { target: { files: [pdfFile()] } });
     // Waited on the FILENAME, not on the call to action: a designed page's Cta
     // is never disabled — the catalog has no readiness prop, and a press with an

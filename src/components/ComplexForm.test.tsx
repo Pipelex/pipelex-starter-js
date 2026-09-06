@@ -6,6 +6,7 @@ import {
   runComplexFormBlocking,
   startComplexFormRun,
 } from "@/actions/runComplexFormPipeline";
+import { showPlainForm } from "./designedView.fixture";
 
 vi.mock("@/actions/runComplexFormPipeline", () => ({
   runComplexFormBlocking: vi.fn(),
@@ -62,6 +63,7 @@ const USAGE = {
 describe("ComplexForm", () => {
   it("opens with only the required input on screen, the optional one folded away", () => {
     render(<ComplexForm />);
+    showPlainForm();
     expect(screen.getByLabelText("Text")).toHaveDisplayValue(/Tim Cook/);
     // `focus` is optional and empty, so it starts folded behind the toggle.
     expect(screen.queryByText(/who the extraction is for/i)).not.toBeInTheDocument();
@@ -70,6 +72,7 @@ describe("ComplexForm", () => {
 
   it("reveals the optional structured input, which folds its own children in turn", () => {
     render(<ComplexForm />);
+    showPlainForm();
     fireEvent.click(screen.getByRole("button", { name: /optional input/i }));
 
     // The card is on screen, and folds its children behind a toggle of its own
@@ -89,6 +92,7 @@ describe("ComplexForm", () => {
 
   it("renders the plural input as a repeater that never gates Run", () => {
     render(<ComplexForm />);
+    showPlainForm();
     // `must_include` is plural, so it is always on screen and always ready —
     // the kernel's readiness scan excludes plural and optional inputs.
     expect(screen.getByRole("button", { name: /add item/i })).toBeInTheDocument();
@@ -97,6 +101,7 @@ describe("ComplexForm", () => {
 
   it("gates Run on the contract's required input, not a hand-written check", () => {
     render(<ComplexForm />);
+    showPlainForm();
     const runButton = screen.getByRole("button", { name: /extract brief/i });
     expect(runButton).toBeEnabled();
 
@@ -117,6 +122,7 @@ describe("ComplexForm", () => {
       .mockResolvedValueOnce({ ok: true, state: "completed", output: BRIEF, usage: USAGE });
 
     render(<ComplexForm />);
+    showPlainForm();
     submitForm();
 
     await flush();
@@ -140,6 +146,7 @@ describe("ComplexForm", () => {
     });
 
     render(<ComplexForm />);
+    showPlainForm();
     fireEvent.click(screen.getByRole("button", { name: /optional input/i }));
     fireEvent.click(screen.getByRole("button", { name: /optional field/i }));
     fireEvent.click(screen.getByRole("radio", { name: "legal" }));
@@ -181,6 +188,7 @@ describe("ComplexForm", () => {
     });
 
     render(<ComplexForm />);
+    showPlainForm();
     submitForm();
 
     await flush();

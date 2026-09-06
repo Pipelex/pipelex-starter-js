@@ -2,6 +2,8 @@
 
 This is the reference for the code-generation workflow behind `src/generated/` — why it exists, how the commands relate, what the trust chain guarantees, and the one workaround it currently carries. The day-to-day rules live in [`CLAUDE.md`](../CLAUDE.md) ("Generated types"); this document is the deeper "why" behind them.
 
+The generated tree carries a third artifact this document does not cover: `design.ts`, the projection of the page a model designed for the method. It is written by the same generator and gated by the same sidecar, but it comes from a different source and a different gesture — see [`docs/design.md`](design.md).
+
 ## Why
 
 This template's role is to show developers how to build on Pipelex, and everything our tools can build deterministically should be built by them. Before codegen, the template hand-wrote in `src/types/` the very thing each method already declares in its `.mthds` bundle: the output concept's shape plus a hand-rolled runtime narrower per shape. That is a duplicated type surface with no drift guard — edit a bundle's structure and nothing tells you the TypeScript is now lying.
@@ -27,12 +29,14 @@ Regeneration is the dev action, the offline check is the CI action — the split
 ```
 methods/
   extract-entities/main.mthds        # source of truth — a bundle in this repo
+  extract-entities/design.{jsonl,json}  # the page a model designed for it, and its provenance
   text-stats/method.json             # source of truth — a selector naming a method elsewhere
 src/generated/                        # committed, generated, never hand-edited
   extract-entities/
     types.ts                          # zod schemas + z.infer types — imports only `zod`
     binder.ts                         # parse<Name> / serialize<Name> over the schemas
     contracts.ts                      # PIPE_IO_CONTRACTS + INPUT_FORM + OUTPUT_FORM — the gate's contract, the forms' descriptor, the result's
+    design.ts                         # DESIGN — the committed layout, or null (see docs/design.md)
     codegen.lock                      # pipelex trust-chain lock, written verbatim
     sources.json                      # starter-owned staleness sidecar (see below)
   summarize-pdf/ …                    # same set per method
@@ -48,6 +52,7 @@ scripts/
     shared.mts                        # paths, walk, sha256, discoverMethods, readManifest, the sidecar
     api.mts                           # the network-facing half the keyed entry points share
     add-method.mts                    # the scaffold, over generate.mts's own fetch/write halves
+    design.mts                        # the designed-page producer and its offline gate
 tsconfig.scripts.json                 # type-checks scripts/, the tsconfig.e2e.json pattern
 ```
 
@@ -89,7 +94,7 @@ It is fetched with the SDK's `validateFiles`, not `validate`. Not for ergonomics
 
 **It carries no codegen stamp, deliberately.** The SDK's orphan rule is "a _stamped_ file the lock does not track", and the writer deletes orphans — an emitter that imitated the stamped files beside it would produce a file that silently vanished on every regeneration.
 
-That leaves it outside the lock's protection, which is not acceptable when the two artifacts beside it are protected against precisely this. Re-signing the lock locally was rejected — the lock signs what `POST /v1/codegen` returned, and forging that destroys the one property that makes a committed tree traceable to a server response. So the `sources.json` sidecar grew a second half: a `derived` map of artifact filename → SHA-256, written by the generator from the content it wrote, compared by the offline check. Two shapes inside it are load-bearing: the hash is taken from the **written content**, not a re-read, and the expected set is a **constant** (`DERIVED_ARTIFACTS`), never the sidecar's own keys — otherwise an empty `derived` map certifies itself. The check reports the usual four states: hand-edited, missing, unrecorded, and recorded-but-no-longer-generated.
+That leaves it outside the lock's protection, which is not acceptable when the two artifacts beside it are protected against precisely this. Re-signing the lock locally was rejected — the lock signs what `POST /v1/codegen` returned, and forging that destroys the one property that makes a committed tree traceable to a server response. So the `sources.json` sidecar grew a second half: a `derived` map of artifact filename → SHA-256, written by the generator from the content it wrote, compared by the offline check. There are two entries in it now — `contracts.ts` and `design.ts`, the projection of the method's [designed page](design.md) — and the machinery took neither of them as a special case, which is the shape it was built for. Two shapes inside it are load-bearing: the hash is taken from the **written content**, not a re-read, and the expected set is a **constant** (`DERIVED_ARTIFACTS`), never the sidecar's own keys — otherwise an empty `derived` map certifies itself. The check reports the usual four states: hand-edited, missing, unrecorded, and recorded-but-no-longer-generated.
 
 `codegen:verify` covers it too, by re-fetching `/v1/validate` and comparing the **rendered bytes** (which is why the renderer is shared by all three scripts). The crate fingerprint says nothing about a different route's response, and an artifact no keyed gate covers is one nobody will notice has gone stale. One asymmetry with the fingerprint check: an engine bump is a _note_ there, because `engine_version` rides in every stamp; contracts carry no engine version, so any difference in them is a real content difference and is reported as a failure.
 

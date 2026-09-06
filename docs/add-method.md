@@ -43,7 +43,7 @@ For `METHOD=github.com/Pipelex/methods/text_stats@v0.1.1`, with no other argumen
 
 ```
 methods/text-stats/method.json          # { "method_ref": "github.com/Pipelex/methods/text_stats@v0.1.1" }
-src/generated/text-stats/               # types.ts, binder.ts, contracts.ts, codegen.lock, sources.json
+src/generated/text-stats/               # types.ts, binder.ts, contracts.ts, design.ts, codegen.lock, sources.json
 src/types/textStatsPipeline.ts          # the narrower over the generated binder
 src/actions/runTextStatsPipeline.ts     # the blocking + start + poll trio
 src/actions/runTextStatsPipeline.test.ts
@@ -51,7 +51,17 @@ src/components/TextStatsForm.tsx        # useRunInputs + RunInputsForm + useRun 
 src/components/ExampleTabs.tsx          # one import line, one tab entry
 ```
 
-That is the same file set the "Swap in your own pipeline" checklist in the README asks you to write by hand, minus the loader — a selector-sourced slice reads no bundle from disk, so `src/lib/loadBundle.ts` gains nothing.
+That is the same file set the "Swap in your own pipeline" checklist in the README asks you to write by hand, minus the loader — a selector-sourced slice reads no bundle from disk, so `src/lib/loadBundle.ts` gains nothing. The `design.ts` in that tree is `null`, which is not an omission: it is the [designed-page](design.md) arm's ordinary first state, and it is what makes the second gesture below a one-liner.
+
+## The second gesture
+
+A scaffolded tab opens on the kernel's plain form, rendered from the method's contract. To give it a page a model laid out instead:
+
+```bash
+make design NAME=text-stats
+```
+
+That is the only other gesture, and `add-method` prints it when it finishes. It is separate for one reason worth stating plainly: **it spends a model call, and nothing in this repo spends one implicitly.** It writes `methods/text-stats/design.{jsonl,json}` and re-projects `src/generated/text-stats/design.ts`; the tab then opens on the page, with a toggle back to the plain form and the same run path on both views. Nothing in the scaffolded slice is edited — the form the scaffold emitted already composes the designed arm, because it is the same composition the hand-written examples use. [`docs/design.md`](design.md) is the reference.
 
 **Nothing is written until everything has been fetched and derived.** The gesture runs in two halves: a read-only half that parses the selector, shakes hands with the API, fetches the projection and the contracts, chooses the pipe, binds the output, derives every name, checks every collision and locates the anchors in `ExampleTabs.tsx`; and a write half that runs only once all of that has passed. Every refusal happens in the first half, with nothing on disk changed. `--dry-run` stops at the boundary and prints the plan.
 
@@ -165,5 +175,6 @@ Then `make all`. `tsc` names most dangling references itself; the ones it cannot
 
 - [`docs/codegen.md`](codegen.md) — the trust chain this extends, and the two source kinds in full.
 - [`docs/input-form.md`](input-form.md) — the kernel composition every scaffolded form is an instance of.
+- [`docs/design.md`](design.md) — the second gesture, and what a committed design is allowed to say.
 - `scripts/lib/add-method.mts` — the behavior, with the pure helpers each unit-tested over a table in `add-method.test.mts`.
 - `@pipelex/sdk` `dist/client.d.ts` — `validate` / `codegen` / `prepareInputs` selectors, and `version().extensions`.

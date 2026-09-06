@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { showPlainForm } from "./designedPage";
 import { requireLiveApi } from "./liveApi";
 
 // This test hits the live Pipelex API configured by PIPELEX_BASE_URL +
@@ -20,6 +21,8 @@ requireLiveApi();
 test("reports statistics for pasted text", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("tab", { name: /text stats/i }).click();
+  // On the plain form, for `extract.spec.ts`'s reason: this tab is designed too.
+  await showPlainForm(page);
 
   // The label is the humanized input name from the committed descriptor, not a
   // string this repo chose — query by role plus name, as the other specs do.

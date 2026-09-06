@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
-import { specFromJsonl } from "@pipelex/mthds-form/generative";
 import { DESIGN } from "@/generated/extract-entities/design";
+import { ctaLabelOf, showPlainForm } from "./designedView.fixture";
 import { EntityForm } from "./EntityForm";
 import {
   pollExtractEntitiesRun,
@@ -58,21 +58,6 @@ const USAGE = {
   state: "records" as const,
   assemblyError: null,
 };
-
-/**
- * Switch to the kernel's plain form.
- *
- * This method carries a committed design now, so the tab opens on the page a
- * model laid out — and every label, button name and section title on that page
- * is the model's, re-written whenever the design is re-produced. The toggle is
- * app chrome and its name is this repo's, so one click here is what keeps the
- * assertions below about the run path rather than about somebody's copy. The
- * designed view has its own tests, which read what the committed layout
- * actually says rather than assuming any of it.
- */
-function showPlainForm() {
-  fireEvent.click(screen.getByRole("radio", { name: "Plain form" }));
-}
 
 describe("EntityForm", () => {
   it("renders the input the method's contract declares, seeded with the sample", () => {
@@ -188,11 +173,7 @@ describe("EntityForm", () => {
 // re-produced design changes the page and this test follows it — which is the
 // only way a test about a produced artifact can be honest.
 describe("EntityForm's designed page", () => {
-  const spec = specFromJsonl(DESIGN?.jsonl ?? "");
-  const cta = Object.values(spec.elements ?? {}).find(
-    (element) => (element as { type?: string }).type === "Cta",
-  ) as { props?: { label?: string } } | undefined;
-  const ctaLabel = cta?.props?.label ?? "";
+  const ctaLabel = ctaLabelOf(DESIGN);
 
   it("has a committed design that this kernel renders", () => {
     // If this fails, the tab has quietly fallen back to the plain form and

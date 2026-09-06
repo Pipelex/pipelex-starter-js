@@ -6,6 +6,8 @@ import {
   runTextStatsBlocking,
   startTextStatsRun,
 } from "@/actions/runTextStatsPipeline";
+import { ctaLabelOf, showPlainForm } from "./designedView.fixture";
+import { DESIGN } from "@/generated/text-stats/design";
 
 // The scaffolded slice's own test, written by hand like the other four examples
 // — `make add-method` emits only the fixture-free action test, deliberately.
@@ -54,6 +56,7 @@ const USAGE = {
 describe("TextStatsForm", () => {
   it("renders the input the published method's contract declares", () => {
     render(<TextStatsForm />);
+    showPlainForm();
     // `text_stats.analyze_text` takes one `native.Text` input named `text`, and
     // the label is the kernel's humanization of that name. Nothing in the
     // component names it: the field comes from the committed descriptor, which
@@ -63,6 +66,7 @@ describe("TextStatsForm", () => {
 
   it("gates Run on the contract's required inputs", () => {
     render(<TextStatsForm />);
+    showPlainForm();
     const runButton = screen.getByRole("button", { name: /run text stats/i });
     // The one input gates, and the scaffolded form seeds nothing — so an
     // untouched form cannot be submitted.
@@ -85,6 +89,7 @@ describe("TextStatsForm", () => {
       .mockResolvedValueOnce({ ok: true, state: "completed", output: REPORT, usage: USAGE });
 
     render(<TextStatsForm />);
+    showPlainForm();
     fireEvent.change(screen.getByLabelText("Text"), { target: { value: "Some prose." } });
     submitForm();
 
@@ -109,6 +114,7 @@ describe("TextStatsForm", () => {
     blocking.mockResolvedValueOnce({ ok: true, output: REPORT, usage: USAGE });
 
     render(<TextStatsForm />);
+    showPlainForm();
     fireEvent.change(screen.getByLabelText("Text"), { target: { value: "Some prose." } });
     fireEvent.click(screen.getByRole("radio", { name: "Blocking" }));
     submitForm();
@@ -128,6 +134,7 @@ describe("TextStatsForm", () => {
     });
 
     render(<TextStatsForm />);
+    showPlainForm();
     fireEvent.change(screen.getByLabelText("Text"), { target: { value: "Some prose." } });
     submitForm();
 
@@ -140,6 +147,7 @@ describe("TextStatsForm", () => {
     blocking.mockRejectedValueOnce(new TypeError("Failed to fetch"));
 
     render(<TextStatsForm />);
+    showPlainForm();
     fireEvent.change(screen.getByLabelText("Text"), { target: { value: "Some prose." } });
     fireEvent.click(screen.getByRole("radio", { name: "Blocking" }));
     submitForm();
@@ -147,5 +155,34 @@ describe("TextStatsForm", () => {
     await flush();
     expect(screen.getByRole("alert")).toBeInTheDocument();
     expect(screen.getByText(/Could not reach the server/i)).toBeInTheDocument();
+  });
+});
+
+// The go/no-go this whole slice exists to answer: a method the template never
+// saw takes both gestures, and nothing between them is edited by hand.
+// `make add-method` wrote this component, `make design NAME=text-stats` gave it
+// a page, and the two meet here — the scaffold's own composition, running the
+// method from a layout a model produced.
+describe("TextStatsForm's designed page", () => {
+  it("has a committed design that this kernel renders", () => {
+    expect(DESIGN).not.toBeNull();
+    expect(ctaLabelOf(DESIGN)).not.toBe("");
+  });
+
+  it("runs the scaffolded action from the store's inputs", async () => {
+    start.mockResolvedValueOnce({ ok: true, runId: "run-1" });
+    poll.mockResolvedValueOnce({ ok: true, state: "completed", output: REPORT, usage: USAGE });
+
+    render(<TextStatsForm />);
+    // The scaffold seeds nothing, so the value is typed on the designed page's
+    // own control — reached by the label the method's descriptor gives it,
+    // which is the one name on that page the model did not choose.
+    fireEvent.change(screen.getByLabelText("Text"), { target: { value: "Some prose." } });
+    fireEvent.click(screen.getByRole("button", { name: ctaLabelOf(DESIGN) }));
+
+    await flush();
+
+    expect(start).toHaveBeenCalledWith({ text: { text: "Some prose." } });
+    expect(screen.getByText(/Text statistics/)).toBeInTheDocument();
   });
 });

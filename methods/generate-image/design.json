@@ -1,0 +1,11 @@
+{
+  "pipeRef": "generate_image.generate_image",
+  "producer": "pipelex-method",
+  "model": "claude-5-sonnet",
+  "promptHash": "4dcf6d57cb71",
+  "date": "2026-09-06",
+  "sources": {
+    "methods/generate-image/main.mthds": "87180d8893e376e3e725b099faca8d1b171052ef7977156594e2097de3cebeb1"
+  },
+  "jsonlSha256": "82e154e0b689f95fc6f3c2ee29106ac18b26a4d67ae994851fec2013db86d403"
+}

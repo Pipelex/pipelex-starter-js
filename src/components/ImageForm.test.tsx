@@ -6,6 +6,7 @@ import {
   runGenerateImageBlocking,
   startGenerateImageRun,
 } from "@/actions/runGenerateImagePipeline";
+import { showPlainForm } from "./designedView.fixture";
 
 vi.mock("@/actions/runGenerateImagePipeline", () => ({
   runGenerateImageBlocking: vi.fn(),
@@ -63,6 +64,7 @@ describe("ImageForm", () => {
     poll.mockResolvedValueOnce({ ok: true, state: "completed", output: IMAGE, usage: USAGE });
 
     render(<ImageForm />);
+    showPlainForm();
     submitForm();
 
     await flush();
@@ -103,6 +105,7 @@ describe("ImageForm", () => {
     });
 
     render(<ImageForm />);
+    showPlainForm();
     submitForm();
 
     await flush();
@@ -111,6 +114,7 @@ describe("ImageForm", () => {
 
   it("seeds the prompt under the contract's declared input name", () => {
     render(<ImageForm />);
+    showPlainForm();
     const box = screen.getByRole("textbox", { name: /image prompt/i });
     expect((box as HTMLTextAreaElement | HTMLInputElement).value).toContain("friendly robot");
     expect(screen.getByRole("button", { name: /generate image/i })).toBeEnabled();
@@ -129,6 +133,7 @@ describe("ImageForm", () => {
     });
 
     render(<ImageForm />);
+    showPlainForm();
     fireEvent.click(screen.getByRole("radio", { name: "Blocking" }));
     submitForm();
 
@@ -142,6 +147,7 @@ describe("ImageForm", () => {
     blocking.mockRejectedValueOnce(new TypeError("Failed to fetch"));
 
     render(<ImageForm />);
+    showPlainForm();
     fireEvent.click(screen.getByRole("radio", { name: "Blocking" }));
     submitForm();
 

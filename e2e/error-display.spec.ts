@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { showPlainForm } from "./designedPage";
 import { DEFAULT_API_BASE_URL } from "@pipelex/sdk";
 
 // Verifies the developer-friendly error UX when the Pipelex API isn't reachable.
@@ -42,6 +43,11 @@ test.describe("offline-API error display", () => {
 
   test("renders structured error with title, recovery hint, and details", async ({ page }) => {
     await page.goto("/");
+    // On the plain form. The first tab's designed page happens to name its
+    // control and its call to action the same way today, but that is the
+    // model's choice and a re-produced design may not repeat it — and this
+    // spec is about the error card, not about the page it was triggered from.
+    await showPlainForm(page);
 
     await page.getByRole("textbox", { name: "Text" }).fill("Apple announced new products today.");
     await page.getByRole("button", { name: /extract entities/i }).click();

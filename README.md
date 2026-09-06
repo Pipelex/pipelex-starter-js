@@ -10,6 +10,8 @@ It ships demo pipelines, presented as tabs:
 - **Complex inputs** (`methods/complex-form`) — the same extraction with an optional structured input and a plural one, so the form has something to derive beyond a single text box. Its point is what the code does _not_ contain: `src/components/ComplexForm.tsx` is no longer than `EntityForm.tsx` and names no input.
 - **Text stats** (`methods/text-stats`) — a method that does **not** live in this repo. `methods/text-stats/method.json` names a published package by address, and every file behind the tab was written by `make add-method` rather than by hand (see [Add a method that lives elsewhere](#add-a-method-that-lives-elsewhere)).
 
+Every one of those tabs opens on a **designed page**: a layout a model produced for that method once, committed beside it and rendered by the app. A toggle above each page switches to the generic form the method's contract alone produces, so you can see both renderings of the same method side by side — including on the scaffolded tab, which was designed by the same one-line gesture. See [Designed pages](#designed-pages).
+
 Starting from zero? Use this template (next section). Adding Pipelex to an app you already have? This repo doubles as the worked example of the pattern — [`docs/adopt-in-an-existing-project.md`](docs/adopt-in-an-existing-project.md) is the transplant checklist.
 
 ## Use this template
@@ -57,19 +59,23 @@ Open [http://localhost:4300](http://localhost:4300) and try the example tabs.
 ```
 methods/
   extract-entities/main.mthds # text → { people, orgs, dates }
+  extract-entities/design.*   # the page a model designed for it, plus its provenance
+                              # (every method here has a pair — see Designed pages)
   summarize-pdf/main.mthds    # PDF Document → { title, doc_type, key_points }
   generate-image/main.mthds   # text prompt → generated Image
   text-stats/method.json      # a selector — the method lives in a published package, not here
 public/sample-invoice.pdf     # sample PDF, so the PDF example works out of the box
-scripts/                      # npm run codegen / codegen:check / codegen:verify / add-method
+scripts/                      # npm run codegen / codegen:check / codegen:verify / add-method / design
 src/
   config.ts                   # ExecutionMode + DEFAULT_EXECUTION_MODE
   app/                        # Next.js App Router (layout, page, globals.css)
   actions/                    # 'use server' Server Actions — blocking + start + poll trio per pipeline
   generated/                  # generated from methods/ — committed, never hand-edited
-    summarize-pdf/            # types.ts (zod) + binder.ts + contracts.ts + codegen.lock + sources.json
+    summarize-pdf/            # types.ts (zod) + binder.ts + contracts.ts + design.ts + codegen.lock + sources.json
+  brand.ts                    # the brand manifest a designed page renders under
   lib/
     pipelexClient.ts          # PipelexApiClient singleton
+    design.ts                 # the designed-page model and its runtime fallback gate
     loadBundle.ts             # reads the .mthds bundles from disk
     blockingRun.ts            # the blocking execute path
     durableRun.ts             # the durable start + poll path
@@ -85,7 +91,7 @@ src/
     useRun.ts                 # unified blocking|durable client state machine — the run
     useRunInputs.ts           # form values + readiness + the wire shape — the inputs
     useFileInputs.ts          # the drop → encode → write-back seam for file inputs
-  components/                 # ExampleTabs + RunInputsForm + RunResult + per-example chrome
+  components/                 # ExampleTabs + RunInputsForm + RunResult + DesignedPage + per-example chrome
   types/                      # thin adapters over src/generated/ — parseXxx(RunResults)
 ```
 
@@ -151,12 +157,36 @@ A method directory holds either a `.mthds` bundle or a `method.json` manifest na
 
 **Regeneration currently needs `PIPELEX_BASE_URL=https://api-dev.pipelex.com`.** Measured 2026-09-05: `api.pipelex.com` is on an older release that returns neither of `/v1/validate`'s `input_form` and `output_form` views (codegen needs both for every method) and does not advertise `method_ref` (which a package-sourced manifest needs). Both scripts say so rather than failing obscurely, and this is a deploy away. Nothing in the committed tree depends on it — `npm run codegen:check` is pure hashing, so `git clone && make all` passes with no key and no network either way.
 
+## Designed pages
+
+The forms above are rendered from what each method declares, which makes them correct for every method and generic for all of them: one column of controls, in the order the method lists them. A real product page has a shape a contract cannot supply — something above the fold saying what this does, the inputs grouped into steps, the call to action in a rail.
+
+So this template ships a third committed artifact about a method: **the page a model designed for it.**
+
+```bash
+make design NAME=extract-entities   # produce a page — needs a key, and spends a model call
+make design-check                   # prove the committed pages are current — offline, no key
+```
+
+`make design` renders a brief from the method's own committed contracts, runs the designer method [`@pipelex/mthds-form`](https://www.npmjs.com/package/@pipelex/mthds-form) ships as data, and commits what comes back at `methods/<name>/design.jsonl` with its provenance beside it. `npm run codegen` projects the pair into `src/generated/<name>/design.ts`, and the tab opens on the page instead of the form. **No inference happens at request time** — a page is a file in the repository, reviewed in a pull request like any other.
+
+What makes committing a layout safe is the rule the form kernel is built on: **a layout names a path and nothing more.** A design says "there is a text area here, bound to `/inputs/text`". It never says that `text` is required, or what kind it is, or what its bounds are — all of that still comes from the method, through the same descriptor the generic form uses. Three artifacts, three questions: the descriptor says what a field _is_, the design says where it _goes_, the store holds what the value _is_. A design cannot go stale about a fact it never stated.
+
+Both views read one store, so the toggle between them carries your values across and both send the identical request. The Run button, the mode toggle and the server-side gate are unchanged. That is what makes the toggle worth having on every tab rather than only on a demo one: the same method, rendered two ways, with nothing behind them differing.
+
+**When a design does not hold up, the generic form renders instead** — and that is a normal path, not an error path. Five causes: no design was produced (every method starts here, and a scaffolded one stays here until you run the gesture), the kernel's design vocabulary moved under it, the layout does not compile or validate, it no longer fits the method, or the page threw while rendering. `make design-check` catches the middle three offline on every `make all`, so a fallback in a browser is never news your CI could have delivered first — and it also catches the two staleness cases that matter: a layout edited by hand, and a method edited without re-designing.
+
+A refused layout is written to `methods/<name>/design.rejected.jsonl` (gitignored — evidence, not an artifact) and the previous design stays committed. **Re-run it, with `SEED=` if the first run had none; never repair a layout by hand.** A hand-edited layout fails its own record's signature, and the next production silently undoes the edit.
+
+The full reference — the artifacts, the gates, the fallback rule, the upload seam on a designed page — is [`docs/design.md`](docs/design.md).
+
 ## Swap in your own pipeline
 
 1. Add `methods/<name>/main.mthds` (the `/mthds-build` skill from the [mthds-plugins](https://github.com/Pipelex/mthds-plugins) marketplace can generate one).
 2. Run `npm run codegen` — it writes `src/generated/<name>/` with the zod schemas and binders for the concepts that method declares.
 3. Add a loader in `src/lib/loadBundle.ts`, a `parseXxx(results)` adapter over the generated binder in `src/types/`, and the action trio (`run<Name>Blocking`, `start<Name>Run`, `poll<Name>Run`) in `src/actions/`. Each action takes the schema-shaped data dict and starts with `gateRunInputs(CONTRACT, data)`.
 4. Wire it from a component with `useRunInputs(CONTRACT, DESCRIPTOR)` + `<RunInputsForm>` for the inputs, `useRun({ mode, blocking, start, poll })` for the run, and `<RunResult field={RESULT_FIELD} …>` for the output. **You write neither the form fields nor the result view** — both come from the method's own descriptors. The existing examples are the canonical patterns to copy.
+5. Optional: `make design NAME=<name>` to give it a designed page. Nothing in the component changes — the examples already compose it — and until you run it the tab renders the generic form. See [Designed pages](#designed-pages).
 
 ## Add a method that lives elsewhere
 
@@ -179,8 +209,8 @@ Useful arguments: `PIPE=<pipe_code>` when the method carries several pipes (with
 
 Stripping the demos is usually the first act of making this template yours. Each example is one vertical slice; removing one (say `extract-entities`) means deleting, in one commit:
 
-1. The bundle: `methods/extract-entities/`.
-2. Its generated tree: `src/generated/extract-entities/` — `make check` fails on a generated tree with no method behind it (and vice versa), so always remove both together. Its `contracts.ts` goes with it, and with it the form that read it.
+1. The bundle: `methods/extract-entities/` — the whole directory, so a [designed page](#designed-pages) beside it goes too.
+2. Its generated tree: `src/generated/extract-entities/` — `make check` fails on a generated tree with no method behind it (and vice versa), so always remove both together. Its `contracts.ts` goes with it, and with it the form that read it; so does its `design.ts`, and `make design-check` fails on a tree carrying a design for a method that is gone.
 3. Its loader in `src/lib/loadBundle.ts`, its adapter in `src/types/extractEntitiesPipeline.ts`, and its action trio `src/actions/runExtractEntitiesPipeline.ts` — each with its co-located `.test.ts`, plus that loader's `describe` block in `src/lib/loadBundle.test.ts`.
 4. Its component — `EntityForm.tsx` and its test — and its tab entry in `src/components/ExampleTabs.tsx`, whose own test (`ExampleTabs.test.tsx`) mocks that form and asserts its tab. There is no result component to remove: every example renders the shared `<RunResult>`.
 5. Its e2e spec: `e2e/extract.spec.ts`.
@@ -204,12 +234,14 @@ Then run `make all`. `tsc` type-checks the co-located tests, so it names most da
 | `make codegen-check`  | Prove `src/generated/` is current — offline, no key (part of `make check`)                               |
 | `make codegen-verify` | Ask the API whether the committed types still match the methods (needs an API key)                       |
 | `make add-method`     | Scaffold a method that lives elsewhere into the app — `METHOD=<mt_… \| address>` (needs an API key)      |
+| `make design`         | Produce a method's [designed page](#designed-pages) — `NAME=<method>` (needs an API key, spends a call)  |
+| `make design-check`   | Prove the committed designs are current — offline, no key (part of `make check`)                         |
 | `make test`           | Vitest single pass (unit tests, no API call)                                                             |
 | `make agent-test`     | Vitest, silent on success (for AI agents)                                                                |
 | `make test-e2e`       | **Optional** Playwright e2e — live API, costs an LLM call (prompts first; auto-skips without a key)      |
 | `make test-e2e-ui`    | Same, with the Playwright UI runner                                                                      |
-| `make check`          | lint + format-check + typecheck + codegen-check                                                          |
-| `make all`            | check + test + build (does **not** run e2e or `codegen` — both need a key)                               |
+| `make check`          | lint + format-check + typecheck + codegen-check + design-check                                           |
+| `make all`            | check + test + build (does **not** run e2e, `codegen` or `design` — all need a key)                      |
 | `make use-local`      | Pack & install siblings `../pipelex-sdk-js` + `../mthds-form` into `node_modules` (alias: `ul`)          |
 | `make use-npm`        | Restore the latest npm-published `@pipelex/sdk` + `@pipelex/mthds-form` packages (alias: `un`)           |
 

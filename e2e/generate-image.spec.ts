@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { DEFAULT_API_BASE_URL } from "@pipelex/sdk";
+import { showPlainForm } from "./designedPage";
 import { requireLiveApi } from "./liveApi";
 
 // These tests hit the live Pipelex API configured by PIPELEX_BASE_URL +
@@ -12,6 +13,9 @@ test("durable mode: streams live status, then generates an image", async ({ page
   test.setTimeout(180_000);
   await page.goto("/");
   await page.getByRole("tab", { name: /image generation/i }).click();
+  // On the plain form: every tab carries a design, and every label on a designed
+  // page is the model's. This one click keeps the spec about the run path.
+  await showPlainForm(page);
 
   // Durable is the default mode. Image generation outlives the ~30s hosted cap,
   // so this is the mode that actually returns an image.
@@ -54,6 +58,7 @@ test("blocking mode: demonstrates the ~30s hosted cap with a timeout error", asy
   test.setTimeout(120_000);
   await page.goto("/");
   await page.getByRole("tab", { name: /image generation/i }).click();
+  await showPlainForm(page); // as above
 
   // Flip this example to Blocking — image generation overruns the hosted
   // gateway's ~30s synchronous limit, which surfaces as a classified

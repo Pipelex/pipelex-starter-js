@@ -1,0 +1,11 @@
+{
+  "pipeRef": "complex_form.extract_brief",
+  "producer": "pipelex-method",
+  "model": "claude-5-sonnet",
+  "promptHash": "4dcf6d57cb71",
+  "date": "2026-09-06",
+  "sources": {
+    "methods/complex-form/main.mthds": "51298c00e25be12ca039ceee0e743f5c25e317b0e798d313c31819c90a1280f9"
+  },
+  "jsonlSha256": "48787cf38363fe215409f14e57a1516adb0862feeab50f0344bfa60f94b90e9f"
+}

@@ -3,11 +3,12 @@ import path from "node:path";
 import type { Page } from "@playwright/test";
 
 /**
- * The helpers the two designed tabs need, and the reason they exist.
+ * The helpers a designed tab needs, and the reason they exist.
  *
- * A tab whose method carries a committed design opens on the page a model laid
- * out, and every label on that page is the model's — re-written whenever the
- * design is re-produced. So a spec picks one of two footings, deliberately:
+ * Every method in this template carries a committed design, so every tab opens
+ * on the page a model laid out, and every label on that page is the model's —
+ * re-written whenever the design is re-produced. So a spec picks one of two
+ * footings, deliberately:
  *
  *  - `showPlainForm` — one click on chrome this repo names, after which the
  *    spec's role-and-name selectors are about the run path rather than about

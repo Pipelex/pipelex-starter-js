@@ -1,0 +1,11 @@
+{
+  "pipeRef": "text_stats.analyze_text",
+  "producer": "pipelex-method",
+  "model": "claude-5-sonnet",
+  "promptHash": "4dcf6d57cb71",
+  "date": "2026-09-06",
+  "sources": {
+    "methods/text-stats/method.json": "d1bf7d43f9b1930f4481d8b4d3f84c89e424b609f3d929eca9fcbaee2a3db87e"
+  },
+  "jsonlSha256": "4586854b743e6601aec628a5c4d5af49ca85576c29e24e386e9ae8cc1828b7bf"
+}

@@ -15,13 +15,16 @@ This repo is a **reference template**. Keep it small, clear, and high-quality �
 - **Git hooks**: Husky + lint-staged
 - **SDK**: [`@pipelex/sdk`](https://www.npmjs.com/package/@pipelex/sdk) (`PipelexApiClient`)
 - **Forms**: [`@pipelex/mthds-form`](https://www.npmjs.com/package/@pipelex/mthds-form) — the headless kernel (`.`) plus its React control set (`./react`). Every method input is rendered from the method's own contract
+- **Designed pages**: the same package's `./generative` entry — the element catalog, the designer method it ships as data, and the renderer. A page is produced once by `make design` and committed; nothing designs at request time
 
 ## Project Structure
 
 ```
 methods/                      # the source of truth — everything in src/generated/ comes from here
   extract-entities/main.mthds # text → entities pipeline (TOML)
+  extract-entities/design.*   # design.jsonl (the layout) + design.json (its provenance)
   summarize-pdf/main.mthds    # PDF Document → structured summary
+  summarize-pdf/design.*      # every method has a pair; this one delegates its document input
   generate-image/main.mthds   # text prompt → image (gpt-image-2)
   complex-form/main.mthds     # text + optional struct + plural text → brief
   text-stats/method.json      # a SELECTOR, not a bundle — the method lives in a published package
@@ -32,6 +35,8 @@ scripts/                      # native-Node TypeScript (node --experimental-stri
   codegen-check.mts           # npm run codegen:check — CLI entry over lib/check
   codegen-verify.mts          # npm run codegen:verify — CLI entry over lib/verify
   add-method.mts              # npm run add-method — CLI entry over lib/add-method
+  design.mts                  # npm run design — CLI entry over lib/design
+  design-check.mts            # npm run design:check — CLI entry over lib/design
   lib/                        # the behavior, importable so it can be tested
     generate.mts              # runGenerate + generateMethod (= fetchGenerated + writeGenerated)
     check.mts                 # runCheck + checkMethod + summarizeVerdicts — the offline gate
@@ -39,6 +44,7 @@ scripts/                      # native-Node TypeScript (node --experimental-stri
     shared.mts                # paths, tree walk, sha256, MethodSource, readManifest, sources.json
     api.mts                   # assertSelectorSupport + explainSelectorFailure — the network half
     add-method.mts            # runAddMethod — the scaffold, over generate.mts's two halves
+    design.mts                # designMethod (produce) + checkMethodDesign (the offline gate)
     *.test.mts                # vitest over the lib (vitest's glob matches .mts)
 src/
   config.ts                   # ExecutionMode + DEFAULT_EXECUTION_MODE (client-safe)
@@ -54,14 +60,17 @@ src/
       types.ts                # zod schemas + z.infer types, stamped
       binder.ts               # parseXxx / serializeXxx over those schemas, stamped
       contracts.ts            # PIPE_IO_CONTRACTS + INPUT_FORM + OUTPUT_FORM — the gate's contract, the forms' descriptor, the result's (unstamped)
+      design.ts               # DESIGN: MethodDesign | null — the committed layout, projected (unstamped)
       codegen.lock            # pipelex trust-chain lock, written verbatim
       sources.json            # starter-owned sidecar — SHA-256 of each source .mthds + derived
     summarize-pdf/ …          # same set per method
     generate-image/ …
     complex-form/ …
     text-stats/ …             # same set — projected from a selector, not from local .mthds files
+  brand.ts                    # BRAND: BrandManifest — what a designed page renders under (client-safe)
   lib/
     pipelexClient.ts          # PipelexApiClient singleton factory
+    design.ts                 # MethodDesign + DesignRecord + acceptDesign + describeFallback (pure)
     loadBundle.ts             # fs.readFile of the .mthds bundles
     blockingRun.ts            # executeBlockingRun — the blocking `execute` path (server)
     durableRun.ts             # startDurableRun + pollDurableRun — the durable start/poll path (server)
@@ -78,12 +87,17 @@ src/
     useRun.ts                 # unified blocking|durable state machine (client)
     useRunInputs.ts           # form values + derived fields + readiness + wire shape (client)
     useFileInputs.ts          # drop → encode → write-back the FileValue; the kernel's file seam (client)
+                              #   takes `pathOf` — the id→path inverse a designed page needs
   components/
     ExampleTabs.tsx           # client component — tab switcher across the examples
     RunInputsForm.tsx         # client component — the one kernel composition (FieldRenderer per field)
     EntityForm/PdfForm/ImageForm/ComplexForm.tsx  # client components (per-example chrome, mode-agnostic)
-    TextStatsForm.tsx         # client component — SCAFFOLDED, the same composition with no design
+    TextStatsForm.tsx         # client component — SCAFFOLDED, and designed by the same gesture
+    DesignedPage.tsx          # client component — the one composition on the designed side
+    DesignFallbackNote.tsx    # the one line saying why the plain form is rendering
+    SegmentedControl.tsx      # the ARIA radiogroup both toggles are built on
     ModeToggle.tsx            # client component — Blocking|Durable segmented control
+    ViewToggle.tsx            # client component — Designed|Plain form segmented control
     RunStatus.tsx             # live-status card (spinner + status label + elapsed)
     RunResult.tsx             # client component — the one kernel composition on the output side
     CostReport.tsx            # per-run token usage + cost breakdown
@@ -100,6 +114,8 @@ e2e/
   summarize-pdf.spec.ts
   generate-image.spec.ts
   text-stats.spec.ts
+  designed-page.spec.ts       # runs a method from its designed page, live
+  designedPage.ts             # showPlainForm + ctaLabel — the two views' shared handles
 ```
 
 ### What lives where
@@ -113,7 +129,7 @@ e2e/
 
 ## Generated types (`src/generated/`)
 
-**The output shapes are projected from the `.mthds` bundles, not hand-written.** `npm run codegen` sends every method under `methods/` to `POST /v1/codegen` and writes back, byte-for-byte, a `types.ts` (zod schemas plus their `z.infer` types), a `binder.ts` (`parseXxx` / `serializeXxx` over those schemas), and a `codegen.lock`. The narrowers in `src/types/` are thin adapters over those binders, so a bundle and its TypeScript cannot drift apart. The same run also asks `POST /v1/validate` for the method's IO contracts and **both** of its wire form descriptors (`views: ["input_form", "output_form"]`) and writes all three into a `contracts.ts` — the two halves of the same idea. On the way in, the forms derive their fields from `INPUT_FORM` (co-walking the contract) and the run gate validates against the contract; on the way out, `OUTPUT_FORM` says what the result IS and the contract's `output.json_schema` names the property its payload sits under, and the kernel's `buildResultField` pairs them into the one field the result view renders (see [`docs/input-form.md`](docs/input-form.md)). Design rationale and the decisions behind it: [`docs/codegen.md`](docs/codegen.md).
+**The output shapes are projected from the `.mthds` bundles, not hand-written.** `npm run codegen` sends every method under `methods/` to `POST /v1/codegen` and writes back, byte-for-byte, a `types.ts` (zod schemas plus their `z.infer` types), a `binder.ts` (`parseXxx` / `serializeXxx` over those schemas), and a `codegen.lock`. The narrowers in `src/types/` are thin adapters over those binders, so a bundle and its TypeScript cannot drift apart. The same run also asks `POST /v1/validate` for the method's IO contracts and **both** of its wire form descriptors (`views: ["input_form", "output_form"]`) and writes all three into a `contracts.ts` — the two halves of the same idea. On the way in, the forms derive their fields from `INPUT_FORM` (co-walking the contract) and the run gate validates against the contract; on the way out, `OUTPUT_FORM` says what the result IS and the contract's `output.json_schema` names the property its payload sits under, and the kernel's `buildResultField` pairs them into the one field the result view renders (see [`docs/input-form.md`](docs/input-form.md)). Design rationale and the decisions behind it: [`docs/codegen.md`](docs/codegen.md). The tree carries a third artifact from a different source and a different gesture — `design.ts`, the projection of the page a model designed for the method; see "Designed pages" below and [`docs/design.md`](docs/design.md).
 
 | Command                                          | Needs a key?                                   | When                                           |
 | ------------------------------------------------ | ---------------------------------------------- | ---------------------------------------------- |
@@ -132,8 +148,30 @@ The rules below are each load-bearing — breaking one produces a wrong verdict 
 - **An engine bump rewrites every artifact.** `engine_version` rides in the stamp, so an upstream pipelex release restamps the whole tree with zero semantic change (`crate_fingerprint` is the semantic signal, and it stays put). A whole-tree diff after such a release is correct behaviour, not drift — which is why `codegen:verify` reports an engine difference as a **note**, not a failure, leaving the restamp to a deliberate commit.
 - **Regeneration currently wants `PIPELEX_BASE_URL=https://api-dev.pipelex.com`.** Measured 2026-09-05: `api.pipelex.com` (hosted `0.10.1`) returns neither of `/v1/validate`'s `input_form` and `output_form` views, both of which codegen needs for **every** method, and does not advertise `method_ref`, which a package-sourced manifest needs. Both scripts name the missing capability rather than failing obscurely, and the gap is a deploy away. `codegen:check` needs no server at all, so `make all` stays green offline regardless — which is the property that makes the gap survivable.
 - **Field names stay wire-native snake_case, deliberately** — `doc_type`, `key_points`, `public_url`, `mime_type` travel unchanged from the bundle to the components. Do **not** add a camelCase mapping layer: a hand-maintained mirror of a generated shape is precisely the duplicated surface this removes.
-- **`contracts.ts` is the one artifact the lock does not sign, and that is deliberate.** The SDK's orphan rule is "a _stamped_ file the lock does not track", and the writer deletes orphans — so a stamped `contracts.ts` would silently vanish on every regeneration. Its SHA-256 lives instead in `sources.json`'s `derived` map, written by the generator from the content it wrote and compared by `codegen:check`; `codegen:verify` re-fetches `/v1/validate` and compares the rendered bytes. Both gates are shape-blind, which is why adding `OUTPUT_FORM` to the file needed no change to either. It is still never hand-edited.
+- **`contracts.ts` and `design.ts` are the artifacts the lock does not sign, and that is deliberate.** The SDK's orphan rule is "a _stamped_ file the lock does not track", and the writer deletes orphans — so a stamped `contracts.ts` would silently vanish on every regeneration. Each one's SHA-256 lives instead in `sources.json`'s `derived` map, written by the generator from the content it wrote and compared by `codegen:check`; the expected set is the `DERIVED_ARTIFACTS` **constant**, never the sidecar's own keys, or an empty map certifies itself. `codegen:verify` covers `contracts.ts` by re-fetching `/v1/validate` and comparing the rendered bytes; `design.ts` needs no keyed twin, because `design-check` re-projects it offline from the design on disk. Both gates are shape-blind, which is why adding `OUTPUT_FORM` to the file needed no change to either, and why adding a second derived artifact needed none. Neither is ever hand-edited.
 - **The `views` opt-in is declared once, as `VALIDATE_VIEWS` in `scripts/lib/shared.mts`.** `generate.mts` writes the bytes and `verify.mts` re-renders a live response to compare against them, so one script asking for a view the other does not would read as drift on a tree nobody touched. A view token is lenient-ignored by an API too old to serve it, so both scripts refuse on the absent payload instead — naming which view was missing, because a `contracts.ts` without `input_form` renders an empty form and one without `output_form` renders an empty result.
+
+## Designed pages (`methods/<name>/design.jsonl`)
+
+**A third committed artifact about a method: the page a model designed for it.** `make design NAME=<method>` renders a brief from the method's committed contracts, runs the designer method `@pipelex/mthds-form` ships as data (`ui_designer`, resolved through `createRequire`), and writes `methods/<name>/design.jsonl` (the layout, byte-for-byte as emitted) plus `design.json` (its provenance and the hashes the offline gate compares). `npm run codegen` projects the pair into `src/generated/<name>/design.ts` as `DESIGN`, which is `null` for a method nobody has designed a page for — that unconditional projection is what lets a form import it at module level beside `CONTRACT` and `DESCRIPTOR`. Full reference: [`docs/design.md`](docs/design.md).
+
+| Command                                      | Needs a key? | Costs inference?                      | When                                    |
+| -------------------------------------------- | ------------ | ------------------------------------- | --------------------------------------- |
+| `make design` / `npm run design`             | Yes          | **Yes** — one designer run per method | Deliberately, to give a method a page   |
+| `make design-check` / `npm run design:check` | No — offline | No                                    | Every `make check`, so every `make all` |
+
+The rules below are each load-bearing:
+
+- **Rule 1 — a layout names a path and nothing more.** A design says "a `Textarea` here, bound to `/inputs/text`". It never restates a field's kind, requiredness, bounds or choices; the descriptor still owns all of that. So a design cannot go stale about a fact it never stated, and the two gates only ever ask the two questions that remain: is it written in the vocabulary this kernel renders, and does it still fit this method.
+- **Never repair a refused or imperfect design by hand.** A refusal writes `methods/<name>/design.rejected.jsonl` (gitignored — evidence, not an artifact) and leaves any previous design committed. Re-run, with `SEED=` if the first run had none. A second refusal is filed against `mthds-form` with the problems and the brief — the catalog and the prompt are the package's. A hand-edited layout fails its own record's signature, and the next production silently undoes the edit.
+- **The fallback is the product's safety, and it is a normal path.** `acceptDesign(design, fields)` (`src/lib/design.ts`) names five causes — `none`, `prompt_hash`, `invalid`, `unfit`, `render_error` — and the plain form renders for each. `none` is where every method starts and where a scaffolded one stays until `make design` is run; the five shipped methods have all been designed, so the cause is covered by `src/lib/design.test.ts` rather than by a permanently plain tab. `render_error` is the one the gate cannot reach: `DesignedPage`'s boundary reports it up and the form swaps views.
+- **`acceptDesign` runs cheapest-first, and the order matters.** The prompt hash is a string comparison against a constant, and it is the condition a package bump moves — so a design produced for an older catalog is refused before anything tries to compile it in a vocabulary that has since changed.
+- **The offline gate asks the runtime's three questions with the runtime's own functions** (`specFromJsonl`, `validateAgainstCatalog`, `layoutProblems`), plus two staleness questions the runtime cannot ask: was the JSONL hand-edited, and did the method move since. So a fallback in a browser is never news `make check` could have delivered first. Exit codes match `codegen:check`: `0` current, `1` drift, `2` no verdict (half a design on disk, or a missing projection).
+- **Every shipped method is designed, and every tab therefore carries the toggle.** That is the point of the toggle: the same method rendered two ways, with one store, one gate and one wire behind both, so the contrast is the design and nothing else. A tab loses its toggle only when its design stops being accepted — which is the fallback working.
+- **One store, both views.** `useRunInputs(CONTRACT, DESCRIPTOR, seed, DESIGN)` calls `acceptDesign` and, when the verdict is `ok`, creates one json-render store that `values` / `setValues` / `ready` / `toData` read instead of React state. `ViewToggle` copies nothing, and both views deflate to the same wire shape through the same contract — pinned by a form test, not by a comment.
+- **`DesignedPage` owns three things that are the app's, not the model's**: the full-bleed band (a product page inside `max-w-2xl` reads as a phone screenshot), `FieldPresentationProvider presentation="app"` (without it a delegated `MthdsField` shows its raw contract name and concept pill, and the two views disagree about a field neither wrote), and the credit line naming what produced the page.
+- **The toggles are chrome, above the form, in every example.** `ModeToggle` inside the plain `<form>` would vanish with it on the designed view. `PdfForm`'s sample-PDF shortcut sits in the same row for the same reason.
+- **A file input on a designed page needs the id inverse.** `MthdsField` mints the field id from the store pointer, so `useFileInputs` takes a `pathOf` mapper (default `id.split(".")`) and the designed form passes `pathFromDomId` → `segmentsUnder(INPUTS_ROOT, …)`. An id neither form recognises is a loud inline `bad_request` naming it, never a silent no-op — a dropped file that writes nowhere looks exactly like an upload still running.
 
 ## Pipelex Integration Pattern
 
@@ -239,16 +277,17 @@ Text inputs are plain strings. File inputs (PDFs, images) take one extra step, d
 - **File/image outputs come back as a URL** — a storage URL or a base64 data URL — in the output content. On the hosted durable path the runtime returns both a non-web `url` (`pipelex-storage://…`) and a web `public_url` (a signed S3 URL); `parseGeneratedImage` keeps both and validates the one that will actually be displayed (`public_url ?? url`), so a non-web `url` can't ship a silently-broken image. The kernel's file arms prefer `public_url` for the same reason, which is why every file this template produces paints without a resolver. **The result view applies a URL policy of its own, and it is the one thing it re-reads.** The form kernel decides what to paint, link and frame from its own `isViewableUrl`, which accepts `http:`, **any** `data:` media type and `blob:` — and one of the sinks behind that verdict is a `DocumentPreview` `<iframe>` with no `sandbox` attribute, offered whenever the payload's own `filename` or `mime_type` looks previewable. So `scrubResultUrls` (`src/lib/resultUrls.ts`) walks the result descriptor exactly as `checkFileInputs` walks the input one, and removes any file URL the kernel would act on that is not `https:` or a PNG/JPEG/WebP `data:` URL, reporting what it removed so `<RunResult>` can say so rather than quietly differ. It normalizes an accepted URL too, so the string this judged is the string the kernel gets — untrimmed leading whitespace passes `new URL` and fails the kernel's `/^https?:/`, which is how a validated `public_url` gets skipped in favour of an unvalidated `url`. A reference the kernel would never touch (`pipelex-storage://`) is left verbatim: it reaches no sink, so removing it would strip the JSON receipt for nothing. **This is a stopgap owned upstream** — the fixes belong in `@pipelex/mthds-form` — and it does not cover the markdown a `native.Text` result carries, where a `![](https://…)` in the model's own answer loads on paint.
 - **A `pipelex-storage://` reference on its own resolves nowhere in a browser**, and the kernel's seam for exchanging one is a `<ResultEnvProvider resolveUrl>` mounted above the result — one provider high in the tree, not a prop threaded through `<RunResult>`. Wiring it over the SDK's `resolveStorageUrl` is a follow-up this template has not needed.
 
-To add a new pipeline **whose method lives elsewhere** — on the platform (a `mt_…` catalog id) or in a published package (a `github.com/owner/repo[/pkg][@tag]` address) — do not follow the checklist below by hand. Run `make add-method METHOD=<selector>`: it writes the manifest, the generated tree, the adapter, the action trio, an action test, the form and the tab entry, refusing rather than overwriting anything that already exists. `src/components/TextStatsForm.tsx` and its siblings are one such slice, committed untouched. [`docs/add-method.md`](docs/add-method.md) is the reference; the checklist below is what it automates, and remains the path for a bundle you author here.
+To add a new pipeline **whose method lives elsewhere** — on the platform (a `mt_…` catalog id) or in a published package (a `github.com/owner/repo[/pkg][@tag]` address) — do not follow the checklist below by hand. Run `make add-method METHOD=<selector>`: it writes the manifest, the generated tree, the adapter, the action trio, an action test, the form and the tab entry, refusing rather than overwriting anything that already exists. `src/components/TextStatsForm.tsx` and its siblings are one such slice, committed untouched. The gesture prints the optional second one when it finishes — `make design NAME=<name>` — because a scaffolded tab opens on the plain form until a method has a design. [`docs/add-method.md`](docs/add-method.md) is the reference; the checklist below is what it automates, and remains the path for a bundle you author here.
 
 To add a new pipeline whose bundle lives in this repo:
 
 1. Create `methods/<name>/main.mthds` (use `/mthds-build`).
-2. Run `npm run codegen`. It writes `src/generated/<name>/` — the zod schemas, the binders, the IO contracts, the lock, and the sources sidecar — for every concept that method declares. Commit that tree alongside the bundle.
+2. Run `npm run codegen`. It writes `src/generated/<name>/` — the zod schemas, the binders, the IO contracts, the design projection (`null` until there is one), the lock, and the sources sidecar — for every concept that method declares. Commit that tree alongside the bundle.
 3. Add `loadXxxBundle()` in `src/lib/loadBundle.ts` (or one helper per bundle).
 4. Add the adapter in `src/types/<name>.ts`: re-export the generated type, and write `parseXxx(results)` as the generated binder applied to `wireOutput(results)` inside a `try/catch` that rethrows `describeSchemaFailure(err, "<Name>")` as a tagged error subclass. A plural output is `z.array(<Code>Schema)` over `wireListOutput(results, <Code>Schema)` instead, typed `<Code>[]`. Write no shape by hand — if you find yourself declaring fields, the bundle already declares them.
 5. Add the action **trio** in `src/actions/run<Name>Pipeline.ts` — `run<Name>Blocking` (→ `executeBlockingRun`), `start<Name>Run` (→ `startDurableRun`), `poll<Name>Run` (→ `pollDurableRun`) — sharing a `buildOptions` closure and a module-level `CONTRACT = requireContract(PIPE_IO_CONTRACTS, "<domain>", "<pipe_code>")`. Each entry point opens with `gateRunInputs(CONTRACT, data)`.
-6. Wire it from a component: `useRunInputs(CONTRACT, DESCRIPTOR, seed?)` for the inputs (module-level `DESCRIPTOR = requireInputForm(INPUT_FORM, "<domain>", "<pipe_code>")` beside the `CONTRACT` lookup), a module-level `RESULT_FIELD = requireResultField(OUTPUT_FORM, CONTRACT, "<domain>", "<pipe_code>")` beside both, `useState<ExecutionMode>(DEFAULT_EXECUTION_MODE)` and `useRun({ mode, blocking, start, poll })` for the run. Render `<RunInputsForm fields values onValuesChange disabled>`, `<ModeToggle>` (disabled while running), a submit button gated on `ready`, then `<RunStatus>` while running, `<ErrorDisplay>` on error, and `<RunResult field={RESULT_FIELD} value={state.output} name="<stuff_name>">` on done — all keyed off `state.phase`. Submit with `run(toData())`. **Write neither the form fields nor the result view**; the contract declares both. See `src/components/EntityForm.tsx` for the canonical pattern, and `PdfForm.tsx` for the `onDropFile` file seam.
+6. Wire it from a component: `useRunInputs(CONTRACT, DESCRIPTOR, seed?, DESIGN)` for the inputs (module-level `DESCRIPTOR = requireInputForm(INPUT_FORM, "<domain>", "<pipe_code>")` beside the `CONTRACT` lookup), a module-level `RESULT_FIELD = requireResultField(OUTPUT_FORM, CONTRACT, "<domain>", "<pipe_code>")` beside both, `useState<ExecutionMode>(DEFAULT_EXECUTION_MODE)` and `useRun({ mode, blocking, start, poll })` for the run. Render `<RunInputsForm fields values onValuesChange disabled>`, `<ModeToggle>` (disabled while running), a submit button gated on `ready`, then `<RunStatus>` while running, `<ErrorDisplay>` on error, and `<RunResult field={RESULT_FIELD} value={state.output} name="<stuff_name>">` on done — all keyed off `state.phase`. Submit with `run(toData())`. **Write neither the form fields nor the result view**; the contract declares both. The hook's `design` verdict and `store` drive the designed arm: render `<DesignedPage>` when the verdict is `ok` and the view is `"designed"`, the plain `<form>` plus `<DesignFallbackNote>` otherwise, with `<ViewToggle>` in the chrome row only when there is a page to toggle to. All five examples carry the whole composition whether or not the method has a design, so adding one later is `make design NAME=<name>` and nothing else. See `src/components/EntityForm.tsx` for the canonical pattern, and `PdfForm.tsx` for the `onDropFile` file seam and its `pathOf` inverse.
+7. Optional: `make design NAME=<name>` for a designed page. Commit `methods/<name>/design.{jsonl,json}` with the re-projected `design.ts` and `sources.json`, and put the provenance in the commit message.
 
 ## Component Conventions
 
@@ -305,11 +344,13 @@ Enforced via Husky + lint-staged on commit.
 | `make codegen-check`  | Prove `src/generated/` is current — offline, no key. Part of `make check`                      |
 | `make codegen-verify` | Ask the engine whether the committed crates are still current (needs a key; not in `make all`) |
 | `make add-method`     | Scaffold a method that lives elsewhere into the app — `METHOD=<mt_… \| address>` (needs a key) |
+| `make design`         | Produce a method's designed page — `NAME=` `PIPE=` `SEED=` (needs a key; **costs inference**)  |
+| `make design-check`   | Prove the committed designs are current — offline, no key. Part of `make check`                |
 | `make test`           | Vitest single pass                                                                             |
 | `make agent-test`     | Vitest, silent on success (preferred for AI agents)                                            |
 | `make test-e2e`       | Optional Playwright e2e (live API, costs an LLM call; prompts first, auto-skips without a key) |
-| `make check`          | lint + format-check + typecheck + codegen-check                                                |
-| `make all`            | check + test + build (does **not** include e2e, `codegen`, or `codegen-verify`)                |
+| `make check`          | lint + format-check + typecheck + codegen-check + design-check                                 |
+| `make all`            | check + test + build (no e2e, `codegen`, `codegen-verify` or `design` — each needs a key)      |
 | `make use-local`      | Pack and install siblings `../pipelex-sdk-js` + `../mthds-form` (alias: `ul`)                  |
 | `make use-npm`        | Restore the latest npm-published `@pipelex/sdk` + `@pipelex/mthds-form` (alias: `un`)          |
 
@@ -327,13 +368,16 @@ We use a tarball install rather than a symlink (`ln -s`) because Next.js 16's Tu
 
 **After editing anything under `methods/`, run `npm run codegen`.** `make check` compares each generated tree against a hash of the `.mthds` files it was projected from, so a bundle edit without a regeneration fails with "Run `npm run codegen` to regenerate." rather than shipping types that quietly lie. Regeneration needs `PIPELEX_API_KEY` and, until the hosted deploy lands, `PIPELEX_BASE_URL=https://api-dev.pipelex.com`. Commit the regenerated tree in the same commit as the bundle edit. The same applies to a `methods/<name>/method.json` manifest: bumping its tag is a source edit, and `make check` fails until you regenerate.
 
+**Editing a method also stales its design, and `make check` says so separately.** `design-check` compares the method's current source hashes against the ones its `design.json` was produced against, so a bundle edit reddens both gates: `codegen` fixes the types, `make design NAME=<method>` re-produces the page. The order matters — the producer reads the _committed contracts_, so regenerate first. A method with no design is unaffected, which is the ordinary case.
+
 If `make format-check` fails, run `make format` to auto-fix and re-run `make all`. Don't hand-edit files to satisfy Prettier — let the formatter do it.
 
 Other targets that matter:
 
 - **`make agent-test`** instead of `make test` when an AI agent runs the suite. It's silent on success; only failures hit the context.
-- **`make test-e2e`** before shipping changes that touch the SDK call path (`src/actions/`, `src/lib/pipelexClient.ts`, `src/lib/loadBundle.ts`, `src/lib/blockingRun.ts`, `src/lib/durableRun.ts`, `src/lib/wireOutput.ts`, `src/lib/errors.ts`, `src/lib/fileEncoding.ts`, `src/lib/resultUrls.ts`, `src/hooks/useRun.ts`, `src/generated/`, `methods/`). Unit tests mock the SDK; only e2e exercises the real API, the durable poll loop, and the rendered error UX. Not part of `make all` (costs an LLM call per run).
+- **`make test-e2e`** before shipping changes that touch the SDK call path (`src/actions/`, `src/lib/pipelexClient.ts`, `src/lib/loadBundle.ts`, `src/lib/blockingRun.ts`, `src/lib/durableRun.ts`, `src/lib/wireOutput.ts`, `src/lib/errors.ts`, `src/lib/fileEncoding.ts`, `src/lib/resultUrls.ts`, `src/lib/design.ts`, `src/hooks/useRun.ts`, `src/hooks/useRunInputs.ts`, `src/components/DesignedPage.tsx`, `src/generated/`, `methods/`). Unit tests mock the SDK; only e2e exercises the real API, the durable poll loop, and the rendered error UX. Not part of `make all` (costs an LLM call per run).
 - **`make use-local`** after editing the sibling `../pipelex-sdk-js` SDK or `../mthds-form` form kernel, before re-running tests or the dev server. The tarball install only refreshes when the target re-runs.
+- **`make design`** only when a page is actually wanted. It is the one target in this repo that spends a model call, and nothing else in it — not `make all`, not `make check`, not `make codegen`, not `make add-method` — produces a design implicitly. After a `@pipelex/mthds-form` bump, run `make design-check`: a moved catalog prompt hash is the one condition that stales every committed design at once, and re-producing them belongs in the same commit as the bump.
 
 ## Git Workflow
 
@@ -350,6 +394,8 @@ Other targets that matter:
 - **No per-input validation beside the gate** — one `gateRunInputs` call per action, and no client-side twin of it. A check the contract genuinely cannot express (the PDF byte cap) runs _after_ the gate, over its output, and reads a shared constant.
 - **No hand-rolled result markup for a method's output** — no headings, lists or `<img>` for something the method declares. `OUTPUT_FORM` carries the declaration and `<RunResult>` renders it. Write a bespoke view only where a specific output genuinely earns one, and never by inspecting the payload to work out what it is: the descriptor already says.
 - **No edits to `src/generated/`** — reformatting included. Wrap it from `src/types/`; a stamped file that changed is a `make check` failure.
+- **No hand-edited layout, ever** — `methods/<name>/design.jsonl` is written by `make design` and signed by the record beside it. A refused layout is re-run (with `SEED=` if the first had none), and a second refusal is filed against `mthds-form`. Editing one is a `make check` failure that the next production would undo anyway.
+- **No hand-written page for a method that has a design** — and none for one that does not either. A page a model produced or the kernel's plain form; there is no third option in this template.
 - **No camelCase mirror of a generated type** — keys stay wire-native (`doc_type`, `public_url`) all the way to the components.
 - **No `try/catch` that swallows errors silently** in narrowers — throw a tagged subclass. The action's outer catch routes it through `classifyPipelineError`.
 - **No `throw new Error(...)` from server actions for known failure modes** — return `{ ok: false, error: classifyPipelineError(err, env) }` so the structured error survives the server→client boundary in production.
