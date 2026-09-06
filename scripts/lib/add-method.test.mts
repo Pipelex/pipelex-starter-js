@@ -629,6 +629,26 @@ describe("renderForm", () => {
     expect(source).not.toContain("pathFromDomId");
     expect(source).not.toContain("useFileInputs");
   });
+
+  // The second file read from the real repo, for `ExampleTabs.tsx`'s reason one
+  // step further along. `src/components/TextStatsForm.tsx` is not an example
+  // somebody wrote: it is this function's own output, committed untouched, and
+  // the template says so. That claim is only worth making while it is true, and
+  // the substring assertions above cannot keep it true — they probe the lines
+  // somebody thought to name, so a prop added to the hand-written four and not
+  // to the generator (or the reverse) passes every one of them. Byte-for-byte
+  // is the only assertion that says what the claim says.
+  //
+  // It costs nothing to hold: the committed file is what this emits today, and
+  // a scaffolded form is written straight to disk without Prettier, so the
+  // generator's own formatting is the formatting on disk.
+  it("emits the committed TextStatsForm.tsx byte for byte", async () => {
+    const committed = await readFile(
+      path.join(REPO_ROOT, "src", "components", "TextStatsForm.tsx"),
+      "utf-8",
+    );
+    expect(renderForm(TEXT_STATS_PLAN)).toBe(committed);
+  });
 });
 
 // ── The orchestration ───────────────────────────────────────────────────────

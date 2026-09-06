@@ -200,7 +200,18 @@ export function PdfForm() {
       <div className="flex flex-wrap items-start gap-4">
         <ModeToggle value={mode} onChange={setMode} disabled={running} />
         {design.ok && renderError === null && (
-          <ViewToggle value={view} onChange={setView} disabled={running} />
+          // Also held while a file is resolving, which the other examples have
+          // no reason to do. The kernel holds a file field busy by comparing
+          // `uploadingIds` against the id its own control reported, and the two
+          // views report DIFFERENT ids for the same input — `document` on the
+          // plain form, `summarize-pdf-inputs-document` on the designed page.
+          // So a toggle mid-encode hands the reader the same input through a
+          // control the busy set does not name: they can select a second file,
+          // and the first encode then lands last and silently replaces it.
+          // Both ids resolve to one value path, which is what makes the
+          // overwrite invisible. Closing the toggle for the span of the encode
+          // is the whole fix.
+          <ViewToggle value={view} onChange={setView} disabled={running || resolving} />
         )}
         <button
           type="button"
@@ -232,7 +243,14 @@ export function PdfForm() {
             resolveUrl: resolvePreviewUrl,
             disabled: running || resolving,
           }}
-          onRun={() => run(toData())}
+          // `clearError()` for `handleSubmit`'s reason, and it is not optional
+          // here: `outcome` renders a pipeline error only under `!fileError`, so
+          // a rejection the reader has already fixed would otherwise sit there
+          // hiding every error the run itself reports.
+          onRun={() => {
+            clearError();
+            run(toData());
+          }}
           result={outcome}
           resultTitle={humanizeFieldName(RESULT_NAME)}
           onRenderError={setRenderError}

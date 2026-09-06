@@ -16,7 +16,7 @@ The design goal in one sentence: **`npm run design` produces a committed page fo
 
 This is the form kernel's own rule, and it is what makes committing a layout safe at all.
 
-A design never says that `text` is required, or that `document` takes a PDF, or that `tone` is one of three choices. It says: _there is a `Textarea` here, bound to `/inputs/text`_. Every fact about the field itself still comes from the descriptor, derived from the method exactly as it is today. Three artifacts, three questions, no overlap:
+A design never says what `document` _is_, or that `tone` is one of three choices, or what a number's bounds are. It says: _there is a `Textarea` here, bound to `/inputs/text`, and it is called "Text"_. Every fact about the field itself still comes from the descriptor, derived from the method exactly as it is today. Three artifacts, three questions, almost no overlap:
 
 | Artifact                                                  | Answers                             | Comes from                            |
 | --------------------------------------------------------- | ----------------------------------- | ------------------------------------- |
@@ -25,6 +25,8 @@ A design never says that `text` is required, or that `document` takes a PDF, or 
 | the **state** (the store's `/inputs` and `/result` trees) | what the values _are_ right now     | the person using it                   |
 
 The consequence is the whole point: **a design cannot go stale about a fact it never stated.** Loosen an input's bounds, add a choice, change a description — the page keeps rendering, because none of that was ever in it. Only two things can actually invalidate a layout, and they are precisely the two questions the gates ask: is it written in the vocabulary this kernel renders, and does it still fit this method.
+
+**"Almost", and it is worth knowing where.** A layout carries its own copy of two things: the **label** on each control, and any **check** the catalog offers — a produced layout usually binds `checks: [{ "type": "required" }]` to the input a run cannot go without, and four of the five committed here do. Neither is derived from the descriptor, and neither gate compares them against it, so a method whose input went from required to optional would keep a page that still insists on it. What catches that is not the layout's silence but `design:check`'s **third** question: the record signs the SHA-256 of every source the method is generated from, so any edit to a `.mthds` reddens the gate and asks for the page to be produced again. The rule is therefore narrower than "a layout states nothing" — it is that a layout states nothing the descriptor is the authority on _for rendering_, which is what keeps a page working across every change that does not touch the method itself. A layout restating a rule the descriptor already owns is the package's to remove, not this template's to edit around: the catalog is what offers `checks` to the model in the first place.
 
 ## The artifacts
 

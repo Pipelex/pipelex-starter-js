@@ -227,6 +227,33 @@ describe("designMethod", () => {
     expect(call.inputs.brief).toContain("/inputs/text");
   });
 
+  it("refuses before spending when the committed contracts are behind the sources", async () => {
+    // The order this enforces: `npm run codegen` writes the contracts the brief
+    // is rendered from, so designing first describes the method as it WAS and
+    // then signs the record with the sources as they ARE — after which both
+    // gates read green forever. The one moment that is catchable is before the
+    // call, which is also the only moment it is free.
+    const edited = `${MAIN_MTHDS}\n# edited since the last codegen\n`;
+    await writeFile(path.join(methodsDir, METHOD_NAME, "main.mthds"), edited);
+    const d = deps(DEMO_JSONL);
+    // The sidecar still records the hash of the method as it was generated.
+    const source: MethodSource = {
+      ...SOURCE,
+      files: [{ content: edited, source: SOURCE_PATH }],
+      sourceHashes: { [SOURCE_PATH]: hashSource(edited) },
+    };
+
+    expect(await designMethod(d, source)).toBe("failed");
+
+    // Nothing asked of the model, and nothing written.
+    expect(d.client.startAndWaitForResult).not.toHaveBeenCalled();
+    expect(await exists(`methods/${METHOD_NAME}/${DESIGN_JSONL_FILENAME}`)).toBe(false);
+    expect(await exists(`methods/${METHOD_NAME}/${DESIGN_RECORD_FILENAME}`)).toBe(false);
+    expect(await read(`src/generated/${METHOD_NAME}/${DESIGN_MODULE_FILENAME}`)).toBe(
+      renderDesignModule(null),
+    );
+  });
+
   it("writes NOTHING but the rejected text when the catalog refuses the layout", async () => {
     const bad = DEMO_JSONL.replace('"type":"Hero"', '"type":"NoSuchComponent"');
     expect(await designMethod(deps(bad), SOURCE)).toBe("failed");

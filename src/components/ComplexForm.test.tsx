@@ -6,7 +6,8 @@ import {
   runComplexFormBlocking,
   startComplexFormRun,
 } from "@/actions/runComplexFormPipeline";
-import { showPlainForm } from "./designedView.fixture";
+import { DESIGN } from "@/generated/complex-form/design";
+import { ctaLabelOf, showPlainForm } from "./designedView.fixture";
 
 vi.mock("@/actions/runComplexFormPipeline", () => ({
   runComplexFormBlocking: vi.fn(),
@@ -194,5 +195,63 @@ describe("ComplexForm", () => {
     await flush();
     expect(screen.getByRole("alert")).toBeInTheDocument();
     expect(screen.getByText("Run failed")).toBeInTheDocument();
+  });
+});
+
+describe("ComplexForm's designed page", () => {
+  const ctaLabel = ctaLabelOf(DESIGN);
+
+  it("has a committed design that this kernel renders", () => {
+    expect(DESIGN).not.toBeNull();
+    expect(ctaLabel).not.toBe("");
+  });
+
+  it("runs the method from the store's inputs when the call to action is pressed", async () => {
+    start.mockResolvedValueOnce({ ok: true, runId: "run-1" });
+    poll.mockResolvedValueOnce({ ok: true, state: "completed", output: BRIEF, usage: USAGE });
+
+    render(<ComplexForm />);
+    fireEvent.click(screen.getByRole("button", { name: ctaLabel }));
+
+    await flush();
+
+    // This method's layout is the one that flattens its optional structure
+    // into a chip row and a notes field rather than delegating it, so the wire
+    // shape is the thing worth pinning here: the designed view deflates through
+    // the same contract the plain form deflates through, down to how an
+    // untouched optional struct and an empty plural are rendered.
+    expect(start).toHaveBeenCalledWith({
+      text: { text: expect.stringContaining("Tim Cook") },
+      focus: undefined,
+      must_include: [],
+    });
+  });
+
+  it("refuses a second press while the run it started is still in flight", async () => {
+    start.mockResolvedValue({ ok: true, runId: "run-1" });
+    poll.mockResolvedValue({
+      ok: true,
+      state: "running",
+      status: "RUNNING",
+      degraded: false,
+      retryAfterSeconds: null,
+    });
+
+    render(<ComplexForm />);
+    const cta = screen.getByRole("button", { name: ctaLabel });
+    fireEvent.click(cta);
+    await flush();
+    fireEvent.click(cta);
+    fireEvent.click(cta);
+    await flush();
+
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the same value on the plain form, because both views read one store", () => {
+    render(<ComplexForm />);
+    fireEvent.change(screen.getByLabelText("Text"), { target: { value: "Ada Lovelace, 1843" } });
+    showPlainForm();
+    expect(screen.getByLabelText("Text")).toHaveDisplayValue("Ada Lovelace, 1843");
   });
 });

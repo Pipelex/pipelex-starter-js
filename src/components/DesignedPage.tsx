@@ -50,6 +50,21 @@ interface DesignedPageProps {
  * slot, where the reader is already looking. That is the trust boundary doing
  * its job rather than a second rule written on top of it.
  *
+ * **It IS gated on busy, and that gate has to live here.** `Cta` renders a bare
+ * `<button onClick={() => emit("press")}>` and reads nothing from `env` — so
+ * unlike every control on the page, it stays live while a run is in flight,
+ * where the plain form's submit button carries `disabled={running}`. `useRun`'s
+ * `run()` does not refuse a re-entry either: it bumps its staleness token, which
+ * abandons the previous run's tracking without cancelling the execution the API
+ * is already being paid for. A second press would therefore start a second
+ * billed run and show only the last one's result. One guard here covers all
+ * five examples and every form `make add-method` will ever scaffold, because
+ * `env.disabled` is exactly what each of them already computes — `running`, or
+ * `running || resolving` where a file is still encoding. The button cannot be
+ * made to LOOK disabled from here (the catalog has no prop for it); the live
+ * status card in the result slot is what says a run is under way. Giving `Cta`
+ * a busy state is filed upstream.
+ *
  * The boundary below is the fallback rule's last case. `acceptDesign` proved the
  * layout compiles, validates and fits before this component was rendered at all,
  * so a throw here is something none of those three could have known — and the
@@ -100,8 +115,12 @@ export function DesignedPage({
                 // The state the page hands over is the store's, which the form
                 // already reads — so the run is started from `toData()` exactly as
                 // the plain view starts it, and the two cannot send different
-                // inputs.
-                onRun={(_state: StateModel) => onRun()}
+                // inputs. The busy refusal is the one thing this wrapper adds:
+                // see the note above.
+                onRun={(_state: StateModel) => {
+                  if (env?.disabled) return;
+                  onRun();
+                }}
               />
             </ResultSlotProvider>
           </FieldPresentationProvider>

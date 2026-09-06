@@ -93,6 +93,29 @@ describe("describeFallback", () => {
     expect(line).toContain("npm run design");
   });
 
+  it("passes the validator's own problems through, rather than summarising them", () => {
+    // The line exists so a reader can account for the fallback. A cause without
+    // the problems behind it is one they will read as a bug in the template.
+    const line = describeFallback({
+      cause: "invalid",
+      problems: "hero: unknown component 'NoSuchComponent'",
+    });
+    expect(line).toContain("NoSuchComponent");
+  });
+
+  it("lists everything that no longer fits, and names the gesture that re-fits it", () => {
+    const line = describeFallback({
+      cause: "unfit",
+      problems: [
+        "/inputs/renamed is read, and no input has it",
+        "text is required, and the layout offers nowhere to enter it",
+      ],
+    });
+    expect(line).toContain("/inputs/renamed");
+    expect(line).toContain("nowhere to enter it");
+    expect(line).toContain("npm run design");
+  });
+
   it("reports a render error, the one cause acceptDesign cannot see", () => {
     expect(describeFallback({ cause: "render_error", message: "boom" })).toContain("boom");
   });

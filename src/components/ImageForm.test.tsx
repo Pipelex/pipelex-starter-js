@@ -6,7 +6,8 @@ import {
   runGenerateImageBlocking,
   startGenerateImageRun,
 } from "@/actions/runGenerateImagePipeline";
-import { showPlainForm } from "./designedView.fixture";
+import { DESIGN } from "@/generated/generate-image/design";
+import { ctaLabelOf, showPlainForm } from "./designedView.fixture";
 
 vi.mock("@/actions/runGenerateImagePipeline", () => ({
   runGenerateImageBlocking: vi.fn(),
@@ -154,5 +155,65 @@ describe("ImageForm", () => {
     await flush();
     expect(screen.getByText(/Could not reach the server/i)).toBeInTheDocument();
     expect(screen.getByText(/Failed to fetch/i)).toBeInTheDocument();
+  });
+});
+
+describe("ImageForm's designed page", () => {
+  const ctaLabel = ctaLabelOf(DESIGN);
+
+  it("has a committed design that this kernel renders", () => {
+    // If this fails the tab has quietly fallen back to the plain form, and
+    // every assertion below would be testing the wrong view.
+    expect(DESIGN).not.toBeNull();
+    expect(ctaLabel).not.toBe("");
+  });
+
+  it("runs the method from the store's inputs when the call to action is pressed", async () => {
+    start.mockResolvedValueOnce({ ok: true, runId: "run-1" });
+    poll.mockResolvedValueOnce({ ok: true, state: "completed", output: IMAGE, usage: USAGE });
+
+    render(<ImageForm />);
+    fireEvent.click(screen.getByRole("button", { name: ctaLabel }));
+
+    await flush();
+
+    // The seeded sample, deflated through the same contract the plain form
+    // deflates through — one store, one wire, whichever view was on screen.
+    expect(start).toHaveBeenCalledWith({
+      image_prompt: { text: expect.stringContaining("friendly robot") },
+    });
+  });
+
+  it("refuses a second press while the run it started is still in flight", async () => {
+    // The kernel's `Cta` reads nothing from `env`, so it stays clickable for
+    // the whole run; the guard is `DesignedPage`'s. Without it each press is
+    // another billed run whose tracking the previous one just lost.
+    start.mockResolvedValue({ ok: true, runId: "run-1" });
+    poll.mockResolvedValue({
+      ok: true,
+      state: "running",
+      status: "RUNNING",
+      degraded: false,
+      retryAfterSeconds: null,
+    });
+
+    render(<ImageForm />);
+    const cta = screen.getByRole("button", { name: ctaLabel });
+    fireEvent.click(cta);
+    await flush();
+    fireEvent.click(cta);
+    fireEvent.click(cta);
+    await flush();
+
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the same value on the plain form, because both views read one store", () => {
+    render(<ImageForm />);
+    fireEvent.change(screen.getByLabelText("Image prompt"), {
+      target: { value: "A lighthouse at dusk" },
+    });
+    showPlainForm();
+    expect(screen.getByLabelText("Image prompt")).toHaveDisplayValue("A lighthouse at dusk");
   });
 });

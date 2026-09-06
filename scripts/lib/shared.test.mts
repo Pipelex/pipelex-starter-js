@@ -23,11 +23,13 @@ import {
   findOrphanTrees,
   hashSource,
   isContainedPath,
+  DesignFileError,
   ManifestError,
   MANIFEST_FILENAME,
   NonUtf8FileError,
   parseManifest,
   readGeneratedTree,
+  readMethodDesign,
   readTextFile,
   renderContracts,
   renderDesignModule,
@@ -614,5 +616,133 @@ describe("isContainedPath", () => {
   it("refuses a sibling directory that merely shares the tree's name as a prefix", () => {
     // The bug a bare `startsWith` would have: `…/demo-backup/` is not `…/demo/`.
     expect(isContainedPath(TREE, path.join("..", "demo-backup", "types.ts"))).toBe(false);
+  });
+});
+
+// ── The design reader ───────────────────────────────────────────────────────
+//
+// `readMethodDesign` is the only thing standing between a hand-written or
+// half-written `design.json` and the two gates that read it, and every refusal
+// below is one a permissive reader would turn into a silent wrong verdict: an
+// absent field read as `undefined` certifies a design nobody can trace, and
+// HALF a design read as "no design" hides an interrupted production behind the
+// ordinary state.
+
+describe("readMethodDesign", () => {
+  const NAME = "demo";
+  let methodsDir: string;
+  let dir: string;
+
+  /** Everything a valid record carries, so each test can spoil exactly one thing. */
+  function validRecord(): Record<string, unknown> {
+    return {
+      pipeRef: "demo.run",
+      producer: "pipelex-method",
+      model: "claude-5-sonnet",
+      promptHash: "4dcf6d57cb71",
+      date: "2026-09-06",
+      sources: { "methods/demo/main.mthds": "a".repeat(64) },
+      jsonlSha256: "b".repeat(64),
+    };
+  }
+
+  async function write(files: { jsonl?: string; record?: string }): Promise<void> {
+    if (files.jsonl !== undefined) await writeFile(path.join(dir, "design.jsonl"), files.jsonl);
+    if (files.record !== undefined) await writeFile(path.join(dir, "design.json"), files.record);
+  }
+
+  beforeEach(async () => {
+    methodsDir = path.join(fixtureDir, "methods");
+    dir = path.join(methodsDir, NAME);
+    await mkdir(dir, { recursive: true });
+  });
+
+  it("answers null for a method nobody has designed a page for", async () => {
+    // The ordinary state, and the reason it cannot simply be an error.
+    expect(await readMethodDesign(NAME, methodsDir)).toBeNull();
+  });
+
+  it("reads a well-formed pair, and does not judge its hashes", async () => {
+    // Whether the hashes still describe the method is `design:check`'s question.
+    // Asking it here would make `npm run codegen` refuse to project a design
+    // that a `make design` re-run is about to fix.
+    const record = validRecord();
+    await write({ jsonl: "{}\n", record: JSON.stringify(record) });
+
+    const files = await readMethodDesign(NAME, methodsDir);
+    expect(files?.record).toMatchObject({ pipeRef: "demo.run", producer: "pipelex-method" });
+    expect(files?.jsonl).toBe("{}\n");
+    expect(files?.recordPath).toBe("methods/demo/design.json");
+    expect(files?.jsonlPath).toBe("methods/demo/design.jsonl");
+  });
+
+  it("keeps an optional seed when the record carries one", async () => {
+    await write({ jsonl: "{}\n", record: JSON.stringify({ ...validRecord(), seed: "cobalt" }) });
+    expect((await readMethodDesign(NAME, methodsDir))?.record.seed).toBe("cobalt");
+  });
+
+  it("refuses a layout with no record beside it", async () => {
+    // Half a design is a failure, and a loud one: a layout with no record has
+    // no prompt hash to be judged by, so it cannot be treated as "no design".
+    await write({ jsonl: "{}\n" });
+    await expect(readMethodDesign(NAME, methodsDir)).rejects.toThrow(DesignFileError);
+    await expect(readMethodDesign(NAME, methodsDir)).rejects.toThrow(/no design\.json beside it/);
+  });
+
+  it("refuses a record with no layout beside it", async () => {
+    await write({ record: JSON.stringify(validRecord()) });
+    await expect(readMethodDesign(NAME, methodsDir)).rejects.toThrow(/no design\.jsonl beside it/);
+  });
+
+  it("refuses a record that is not valid JSON", async () => {
+    await write({ jsonl: "{}\n", record: "{ not json" });
+    await expect(readMethodDesign(NAME, methodsDir)).rejects.toThrow(/is not valid JSON/);
+  });
+
+  it("refuses a record that is not a JSON object", async () => {
+    await write({ jsonl: "{}\n", record: "[]" });
+    await expect(readMethodDesign(NAME, methodsDir)).rejects.toThrow(/is not a JSON object/);
+  });
+
+  it.each(["pipeRef", "model", "promptHash", "date", "jsonlSha256"])(
+    "refuses a record with no %s",
+    async (field) => {
+      const record = validRecord();
+      delete record[field];
+      await write({ jsonl: "{}\n", record: JSON.stringify(record) });
+      await expect(readMethodDesign(NAME, methodsDir)).rejects.toThrow(
+        new RegExp(`has no string "${field}"`),
+      );
+    },
+  );
+
+  it("refuses a producer this repo does not know", async () => {
+    // The provenance is the whole point of the record: a page credited to
+    // something nothing here can name is a page nobody can trace.
+    await write({
+      jsonl: "{}\n",
+      record: JSON.stringify({ ...validRecord(), producer: "nobody" }),
+    });
+    await expect(readMethodDesign(NAME, methodsDir)).rejects.toThrow(/unknown producer 'nobody'/);
+  });
+
+  it("refuses a record with no sources map", async () => {
+    const record = validRecord();
+    delete record.sources;
+    await write({ jsonl: "{}\n", record: JSON.stringify(record) });
+    await expect(readMethodDesign(NAME, methodsDir)).rejects.toThrow(/has no "sources" map/);
+  });
+
+  it("refuses a sources map whose hash is not a string", async () => {
+    // Left permissive, this is the staleness check comparing a hash against a
+    // number and finding them different forever.
+    const record = { ...validRecord(), sources: { "methods/demo/main.mthds": 1 } };
+    await write({ jsonl: "{}\n", record: JSON.stringify(record) });
+    await expect(readMethodDesign(NAME, methodsDir)).rejects.toThrow(/non-string hash/);
+  });
+
+  it("refuses a non-string seed", async () => {
+    await write({ jsonl: "{}\n", record: JSON.stringify({ ...validRecord(), seed: 7 }) });
+    await expect(readMethodDesign(NAME, methodsDir)).rejects.toThrow(/non-string "seed"/);
   });
 });

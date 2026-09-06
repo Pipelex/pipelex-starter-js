@@ -22,13 +22,24 @@ import {
  * and `RESULT_FIELD`.
  *
  * What a design is allowed to say is the form kernel's first rule, one level
- * out: **a layout names a path and nothing more.** It never restates a field's
- * kind, its requiredness, its bounds or its choices — the descriptor still owns
- * all of that, derived from the method as it always was. So a design cannot go
- * out of date about a fact it never stated, and the only two questions worth
- * asking of one are the two `npm run design:check` and `acceptDesign` ask: was
- * it written in the vocabulary this kernel renders, and does it still fit this
- * method.
+ * out: **a layout names a path, and almost nothing more.** It never restates a
+ * field's kind, its bounds or its choices — the descriptor still owns all of
+ * that, derived from the method as it always was. So a design cannot go out of
+ * date about those, and the two questions this file asks are the ones that
+ * remain: was it written in the vocabulary this kernel renders, and does it
+ * still fit this method.
+ *
+ * The **almost** is worth knowing, because it is the one place the rule is
+ * softer than it sounds. A layout carries its own labels, and the catalog
+ * offers the model a `checks` prop — so a produced layout usually binds
+ * `required` to the input a run cannot go without, and four of the five
+ * committed here do. Nothing compares that against the descriptor, in this file
+ * or in the gate, so a method whose input became optional would keep a page
+ * that still insists on it. What covers it is the third question `npm run
+ * design:check` asks and this file cannot: the record signs the hash of every
+ * source the method is generated from, so any edit to a `.mthds` reddens the
+ * gate and asks for the page again. Narrowing what the catalog offers belongs
+ * to `@pipelex/mthds-form`; a layout is never edited here to close the gap.
  */
 
 /** The provenance the projection carries into the app, plus the layout itself. */

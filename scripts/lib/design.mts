@@ -63,6 +63,7 @@ import {
 
 import {
   assertSecureBaseUrl,
+  compareSidecar,
   DESIGN_JSONL_FILENAME,
   DESIGN_MODULE_FILENAME,
   DESIGN_RECORD_FILENAME,
@@ -282,6 +283,31 @@ export async function designMethod(
   let pipeRef: string;
   let model: string;
   try {
+    // Before anything is spent: are the committed contracts the ones this
+    // method's sources project to today?
+    //
+    // The brief is rendered from `contracts.ts` and the record is signed with
+    // the sources as they are NOW, so running this gesture before `npm run
+    // codegen` describes the old method to the model and then certifies the
+    // result against the new one. Both gates stay green afterwards — the
+    // record's hashes match, and `layoutProblems` only asks whether the paths
+    // still resolve — so the one moment this is catchable is here, before the
+    // call. `compareSidecar` is the same comparison `codegen:check` makes; only
+    // its source half is asked, because the derived half is about `design.ts`,
+    // which this run is on its way to rewrite.
+    const stale = (await compareSidecar(outDir, source.sourceHashes)).filter((line) =>
+      line.startsWith("stale-source:"),
+    );
+    if (stale.length > 0) {
+      console.error(
+        `\n✗ ${source.name} — the committed contracts are not current, so the brief would ` +
+          `describe the method as it WAS:\n` +
+          stale.map((line) => `    ${line}`).join("\n") +
+          "\n    Run `npm run codegen` first, then `make design` — nothing was spent.",
+      );
+      return "failed";
+    }
+
     const artifacts = await loadMethodContracts(deps.generatedRoot, source.name);
     pipeRef = resolvePipeRef(artifacts.contracts, options.pipeRef);
     const fields = fieldsOf(artifacts, pipeRef);

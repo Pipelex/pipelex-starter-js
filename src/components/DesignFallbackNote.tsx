@@ -21,7 +21,15 @@ export function DesignFallbackNote({ fallback }: DesignFallbackNoteProps) {
   const line = fallback === null ? null : describeFallback(fallback);
   if (line === null) return null;
   return (
-    <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+    // A live region for `RunStatus`'s and `ErrorDisplay`'s reason: this note can
+    // appear with no user action at all — the render-error cause swaps the whole
+    // view out from under a reader — so the swap has to be announced, not just
+    // drawn.
+    <p
+      role="status"
+      aria-live="polite"
+      className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+    >
       <span className="font-medium">Showing the plain form.</span> {line}
     </p>
   );
