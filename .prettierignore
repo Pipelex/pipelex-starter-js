@@ -12,3 +12,9 @@ package-lock.json
 # 100, so formatting these would rewrite bytes, break every stamp, and make
 # `npm run codegen:check` report the whole tree as hand-edited.
 src/generated/
+
+# Scratch written by local developer tooling, ignored by a nested `.gitignore`
+# of its own — which Prettier does not read (it consults the ROOT `.gitignore`
+# and this file), so without the entry `make format-check` fails on a file that
+# is not the repo's at all.
+.gstack/
