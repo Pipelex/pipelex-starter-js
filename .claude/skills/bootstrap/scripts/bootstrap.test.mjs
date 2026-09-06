@@ -120,6 +120,16 @@ describe("bootstrap.mjs anchors", () => {
     expect(layout).toContain('"Invoice Extractor"');
     expect(layout).toContain('description: "Extracts invoices."');
 
+    // The brand is what a designed page's app bar renders. Its name is renamed
+    // like every other display name; its logo URLs and website are deliberately
+    // left, because they are Pipelex's own assets on Pipelex's own domains and
+    // no substitution can invent the user's. The script says so on the way out.
+    const brand = read(root, "src/brand.ts");
+    expect(brand).toContain('name: "Invoice Extractor"');
+    expect(brand).not.toContain(TEMPLATE_TITLE);
+    expect(brand).toContain("https://pipelex.com/");
+    expect(res.stdout).toContain("src/brand.ts still carries Pipelex's");
+
     const year = new Date().getFullYear();
     expect(read(root, "LICENSE")).toContain(`Copyright (c) ${year} Acme Corp`);
     expect(read(root, "CHANGELOG.md")).toMatch(/## \[v0\.1\.0\] - \d{4}-\d{2}-\d{2}/);

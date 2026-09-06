@@ -1,6 +1,6 @@
 ---
 name: bump-mthds-form
-description: Bump the @pipelex/mthds-form dependency in pipelex-starter-js to a newer published version. Reads the form kernel's CHANGELOG.md for the versions in between, checks the changes against the seams this repo consumes (the gate, readiness, the wire format, the React controls, the Tailwind token mirror), applies mechanical renames, updates package.json/package-lock.json, runs the checks, and prepares a commit. Use when the user says "bump mthds-form", "bump the form kernel", "update @pipelex/mthds-form", "upgrade the form package", "is there a new mthds-form version", or asks to pull in a newer @pipelex/mthds-form release.
+description: Bump the @pipelex/mthds-form dependency in pipelex-starter-js to a newer published version. Reads the form kernel's CHANGELOG.md for the versions in between, checks the changes against the seams this repo consumes (the gate, readiness, the wire format, the React controls, the Tailwind token mirror, and the designed-page catalog and prompt), applies mechanical renames, re-produces any design the bump staled, updates package.json/package-lock.json, runs the checks, and prepares a commit. Use when the user says "bump mthds-form", "bump the form kernel", "update @pipelex/mthds-form", "upgrade the form package", "is there a new mthds-form version", or asks to pull in a newer @pipelex/mthds-form release.
 ---
 
 # Bump @pipelex/mthds-form
@@ -56,6 +56,12 @@ Extract the entries between `## [v{CURRENT}]` (exclusive) and `## [v{TARGET_VERS
   One cross-package detail worth knowing before a minor bump: `src/lib/fileEncoding.ts` takes its `PipeInputFormDescriptor` and `InputFormItem` types from **`@pipelex/sdk`**, while `src/lib/runInputs.ts` takes `PipeInputFormDescriptor` from the kernel. That is not two descriptions of one artifact — both packages `export * from "mthds/protocol"`, and both declare the same `mthds` range, so npm dedupes to one copy and the two imports resolve to the _same_ type. The hazard is that dedupe failing: if a kernel release moves to an `mthds` minor the installed SDK's range does not cover (npm treats a leading `0` as the major, so `^0.25.0` and `^0.26.0` do not overlap), npm installs two copies and the same-named type becomes two incompatible types. `make typecheck` then fails where `fileEncoding.ts` is handed a descriptor derived on the kernel side, with a message that names the type twice and explains nothing. `npm ls mthds` is the one-line diagnosis, and the cure is bumping `@pipelex/sdk` in the same commit.
 
 - **Theming and Tailwind** — `src/app/layout.tsx` imports `@pipelex/mthds-form/theme.css`, and `src/app/globals.css` (Tailwind v4 is configured in CSS; there is no `tailwind.config.ts`) keeps a **mirror of the kernel's own `src/styles/tailwind-entry.css` token block** as an `@theme inline` mapping (the shadcn semantic colors and radii) plus `@source "../../node_modules/@pipelex/mthds-form/dist"`. A release that adds tokens, changes the form a token value takes, or moves the CSS entry points needs that mirror re-synced by hand — nothing automated catches it. A release that moves the kernel's own Tailwind major is the loudest case: 0.8.0 did, and a host on the previous major compiles the renamed utilities to nothing rather than failing.
+- **The designed-page catalog and its prompt** — the seam that a bump can invalidate _committed artifacts_ through, which no other one does. This repo imports from `@pipelex/mthds-form/generative`: `PROMPT_HASH`, `catalog`, `catalogPrompt`, `renderInputBrief`, `specFromJsonl`, `specToJsonl`, `validateAgainstCatalog`, `layoutProblems`, `formatProblems`, `fixtureLabel`, `GenerativePage`, `ResultSlotProvider`, `brandManifestSchema`, `seedInputs`, `INPUTS_ROOT`, `pathFromDomId`, `segmentsUnder`, and the types `Producer` and `BrandManifest` — across `src/lib/design.ts`, `src/hooks/useRunInputs.ts`, `src/components/DesignedPage.tsx`, `src/brand.ts`, the forms with a file input, and `scripts/lib/design.mts`.
+
+  **Three kinds of change here have three different answers**, and telling them apart is the judgment this step exists for. A **renamed export** is mechanical, Step 4. A **changed catalog** — an element added, removed, or its props reshaped — can make a committed layout stop validating or stop fitting, which `make design-check` reports as `invalid` or `unfit`; the answer is to re-produce the affected designs, never to edit a `design.jsonl`. And a **moved `PROMPT_HASH`** stales _every_ committed design at once, on purpose: a layout is only meaningful in the vocabulary it was written for, so the gate refuses one produced against a prompt this kernel no longer ships. Step 6 has the procedure.
+
+  Two things not to do. Do not treat a `prompt_hash` refusal as a failure to work around — the tabs fall back to the plain form and the app keeps working, so re-producing is a deliberate act with a cost, not an emergency. And do not hand-edit `methods/*/design.jsonl` under any circumstance: the record beside it signs its SHA-256, so an edit fails `make check`, and the next production would undo it anyway.
+
 - **The generated contracts type** — every `src/generated/*/contracts.ts` imports `type PipeIOContracts` from the kernel. Those files are generated and **never hand-edited** (see "Generated types" in this repo's `CLAUDE.md`): if a release renames or reshapes that type, the fix routes through the emitter upstream and `npm run codegen`, not through an edit to `src/generated/`.
 
 Everything else (internal refactors, non-breaking additions, docs) is FYI only — mention briefly, don't dwell.
@@ -89,6 +95,20 @@ Then, conditionally:
 - **If any changelog entry is wire-visible or touches the gate**, offer `make test-e2e`. The wire shape a run submits only travels form → Server Action → live API on the e2e path; unit tests mock the SDK and can pass while the API rejects the new shape. It costs an LLM call per run and needs `PIPELEX_API_KEY`, so only run it with explicit user approval.
 - **If any changelog entry touches the controls, `styles.css`/`theme.css`, or Tailwind classes**, the deterministic purge check now runs in `make test` as `src/app/globals.test.ts` (it compiles the stylesheet with and without the `@source` lines and requires the difference; `docs/input-form.md` explains why a class-name grep cannot serve here). Confirm it passed, then offer `make dev` for a visual pass over every example form. A styling regression here is silent: the form still renders, just subtly unstyled.
 - **If any changelog entry renames or reshapes `PipeIOContracts`** (or anything else `contracts.ts` carries), run `npm run codegen` (needs `PIPELEX_API_KEY`) and commit the regenerated trees with the bump — never patch `src/generated/` by hand.
+- **Run `npm run design:check` on every bump, whatever the changelog said.** It is keyless and offline, it is already part of `make check` (so `make all` above has run it), and it is the only thing that answers whether the committed designs survived. Read its verdict rather than the changelog for this one — the catalog and its prompt can move without a bullet naming them.
+
+  Three verdicts, three answers:
+
+  | It reports                                                                                   | What happened                                                                                            | What to do               |
+  | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------ |
+  | `N designed · 0 drift`                                                                       | nothing that matters moved                                                                               | nothing                  |
+  | `produced against catalog prompt X, and @pipelex/mthds-form now ships Y` on **every** method | the designer's prompt moved, so every layout was written in a vocabulary this kernel no longer ships     | re-produce, below        |
+  | `invalid` or `unfit` on **some** methods                                                     | the catalog changed — an element gone, its props reshaped, or a field the layout named no longer offered | re-produce those methods |
+
+  **Re-producing spends a model call per method, so ask before running it.** The gesture is `make design` for all of them, or `make design NAME=<method>` one at a time; it needs `PIPELEX_API_KEY`. Then re-run `make check` and commit the re-produced `methods/*/design.{jsonl,json}` and `src/generated/*/design.ts` **with the bump**, because they are the same change: the layouts belong to the kernel version that renders them.
+
+  Two things to hold to. **Nothing is broken while you wait** — a stale design falls back to the plain form, so the app runs and the tabs work; re-producing is a deliberate act with a cost, not a repair. And a re-produced page is a _new_ page: the model may lay the method out differently, and the copy on it will change. Say so before running, and look at the tabs afterwards.
+
 - **If the bump changed the kernel's minor, run `npm ls mthds`** and confirm it still reports one deduped copy. Two copies mean the kernel and `@pipelex/sdk` have drifted onto non-overlapping `mthds` ranges, which splits the shared protocol types — see the React-controls bullet in Step 3. Whether or not `make typecheck` has already failed on it, the fix is to bump `@pipelex/sdk` alongside (the `bump-sdk` skill), not to work around the type.
 
 ## Step 7 — Update This Repo's CHANGELOG.md
@@ -106,7 +126,7 @@ If the bump changes something a consumer of this template would notice — a for
 Present a full summary:
 
 - `@pipelex/mthds-form`: `{OLD_VERSION} → {TARGET_VERSION}`
-- Files changed: `package.json`, `package-lock.json`, `CHANGELOG.md`, plus any files touched by Step 4's migrations, plus any regenerated `src/generated/` trees from Step 6
+- Files changed: `package.json`, `package-lock.json`, `CHANGELOG.md`, plus any files touched by Step 4's migrations, plus any regenerated `src/generated/` trees from Step 6, plus any re-produced `methods/*/design.{jsonl,json}` and their projections
 - Any unresolved "needs manual review" items from Step 4
 
 Ask the user to confirm. On confirmation:
@@ -123,5 +143,7 @@ Then offer (but do not automatically execute) pushing and opening a PR, same as 
 - Never push or create PRs without explicit user approval.
 - Never guess at a fix for a non-mechanical change (gate semantics, wire shapes, rendering) — flag it and let the user decide.
 - Never edit `src/generated/` — a kernel change that reaches those trees goes through `npm run codegen`.
+- Never edit `methods/*/design.jsonl` — a layout the bump staled is re-produced with `make design`, never repaired. The record beside it signs its hash, so an edit fails `make check`.
+- Never run `make design` without asking — it is the one gesture in this repo that spends a model call, and a re-produced page is a new page.
 - Don't assume the sibling `../mthds-form` checkout exists — always have the GitHub-raw fallback ready.
 - If any step fails or the user wants to abort, stop immediately — do not continue the workflow.

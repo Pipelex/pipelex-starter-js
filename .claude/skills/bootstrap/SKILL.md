@@ -75,12 +75,14 @@ The dry run prints the list of files that would be edited. Present that summary 
 
 Re-run the exact same command **without** `--dry-run`. The script:
 
-- substitutes both name spellings across `package.json`, `README.md`, `CLAUDE.md`, `AGENTS.md`, `src/app/layout.tsx`, `src/app/page.tsx`, and the release skill's `SKILL.md`
+- substitutes both name spellings across `package.json`, `README.md`, `CLAUDE.md`, `AGENTS.md`, `src/app/layout.tsx`, `src/app/page.tsx`, `src/brand.ts`, and the release skill's `SKILL.md`
 - softens the template's "the starter ..." / "this starter ..." prose self-references in `src/lib/errors.ts` (user-facing error messages), `CLAUDE.md`, the release skill, the `Makefile`, and the e2e spec comments
 - fills in the description (package.json, README intro, CLAUDE.md, layout metadata), and (if given) author and repository URL
 - resets `version` to `0.1.0` and rewrites `CHANGELOG.md` to a fresh v0.1.0 entry dated today
 - applies the license choice in all three places: the `LICENSE` body, the `license` field in `package.json`, and the README license line
 - strips CLAUDE.md's template charter paragraph (with `--clean`)
+
+**One thing it deliberately renames only halfway: the brand.** `src/brand.ts` is what the app bar of every [designed page](../../../docs/design.md) renders — a name, two logo URLs and a website. The name is renamed like every other display name; the logo URLs and the website are left as Pipelex's, because they are Pipelex's own assets on Pipelex's own domains and no substitution can invent the user's. Rewriting them to a guessed URL would put a broken image at the top of every designed page. The script says so in its closing note; carry it into the Step 6 summary.
 
 It deliberately does **not** touch git, run `npm install`, run the checks, or modify `.github/`, `node_modules/`, `package-lock.json`, `methods/`, or the existing `release` skill's logic (only its name references).
 
@@ -116,6 +118,8 @@ Finally, give the user a short summary:
 - that **nothing is committed and nothing is staged** — they should review with `git status` and `git diff`, then commit when ready
 - a nudge to skim the new `README.md` (it still documents the three demo examples — keep them as references, swap in their own pipeline per the "Swap in your own pipeline" section, or strip a demo by following the "Remove an example" checklist right below it), and to update `CLAUDE.md` as their project grows its own conventions. If the user asks to remove the demos now, that checklist is the procedure — offer to walk it with them
 - a heads-up that the home page (`src/app/page.tsx`) still shows the template's subtitle and the three demo tabs under their new title — accurate while the demos remain, theirs to rewrite when they swap in their own pipeline
+- **the one edit the script could not make**: `src/brand.ts` still carries Pipelex's logo URLs and website, which are what the app bar of every designed page renders. The brand's `name` is already theirs. Point them at the two `logo` URLs and the `website` field, and mention that `brandManifestSchema` accepts only absolute `http(s)` URLs — a root-relative path to their own `public/` is refused — and that `src/brand.test.ts` fails `make check` on a typo rather than silently dropping the app bar
+- that every method carries a **designed page**, and it is theirs to re-produce: a method they swap in renders the kernel's plain form until they run `make design NAME=<method>`, and the pages the template ships were laid out for the template's demo methods. See [`docs/design.md`](../../../docs/design.md)
 
 ## Rules
 

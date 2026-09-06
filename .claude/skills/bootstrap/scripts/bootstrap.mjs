@@ -312,6 +312,26 @@ export function transformPage(text, names) {
   return text.replaceAll(TEMPLATE_NAME, literally(names.name));
 }
 
+/**
+ * `src/brand.ts` is what a designed page's app bar renders, and only its name
+ * is the template's to rename.
+ *
+ * The logo URLs and the website are Pipelex's own assets, hosted on Pipelex's
+ * own domains, and no substitution can invent the user's. Rewriting them to a
+ * guessed URL would put a broken image in the app bar of every designed page;
+ * leaving them and saying so keeps the pages rendering while making the one
+ * remaining edit obvious. The webfont is a neutral default and stays.
+ */
+export function transformBrand(text, names) {
+  const anchor = `name: "${TEMPLATE_TITLE}"`;
+  if (text.includes(anchor)) {
+    text = text.replace(anchor, literally(`name: "${jsString(names.title)}"`));
+  } else {
+    warn("src/brand.ts: template brand name not found; left as-is.");
+  }
+  return text;
+}
+
 export function transformLicense(text, opts) {
   const lic = opts.lic;
   if (lic.kind === "mit") {
@@ -386,6 +406,7 @@ export const TARGETS = [
   { rel: "CHANGELOG.md", transform: (text, _names, opts) => resetChangelog(text, opts) },
   { rel: "src/app/layout.tsx", transform: transformLayout },
   { rel: "src/app/page.tsx", transform: transformPage },
+  { rel: "src/brand.ts", transform: transformBrand },
   {
     rel: ".claude/skills/release/SKILL.md",
     transform: (text, names) => applyNameTokens(applyStarterProse(text), names),
@@ -450,6 +471,14 @@ export function run(root, names, opts) {
   }
   console.log("");
   console.log(`Done. ${edits.length} file(s) ${opts.dryRun ? "would be " : ""}edited.`);
+  // A note rather than a warning: nothing drifted, and `warn` is reserved for
+  // an anchor that did (the anchor test asserts an empty stderr on the real
+  // template files). This is the one edit the script cannot make for anybody.
+  console.log(
+    "\nOne edit left, and no substitution can make it: src/brand.ts still carries Pipelex's\n" +
+      "logo URLs and website. They are what the app bar of every designed page renders, so\n" +
+      "point them at yours — the name is already renamed.",
+  );
   if (!opts.dryRun) {
     console.log(
       "\nNext: sync the lock file (npm ci in CI validates its name/version) and run the gates:",
