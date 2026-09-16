@@ -14,7 +14,7 @@ description: >
 
 # Releasing pipelex-starter-js
 
-The procedure is the workspace release play, [`docs/releasing.md`](../../../../docs/releasing.md) at the workspace root — `../docs/releasing.md` from this repo's own root, which resolves the same from the main checkout and from any worktree. Read it first, then run it with what follows. The repo key is `pipelex-starter-js`, the base is `dev`, and the pull request targets `main`. The release worktree is `_pipelex-starter-js--release`, made with `wt add pipelex-starter-js release --branch release/vX.Y.Z`; the repo declares no `.worktree.toml`, so `wt` resolves the base from `origin/dev`, and provisioning runs the Makefile's `install` target, which is the `npm install` that puts the `node_modules` every gate below needs into the worktree.
+The procedure is the workspace release play, [`docs/workspace/releasing.md`](../../../../docs/workspace/releasing.md) at the workspace root — `../docs/workspace/releasing.md` from this repo's own root, which resolves the same from the main checkout and from any worktree. Read it first, then run it with what follows. The repo key is `pipelex-starter-js`, the base is `dev`, and the pull request targets `main`. The release worktree is `_pipelex-starter-js--release`, made with `wt add pipelex-starter-js release --branch release/vX.Y.Z`; the repo declares no `.worktree.toml`, so `wt` resolves the base from `origin/dev`, and provisioning runs the Makefile's `install` target, which is the `npm install` that puts the `node_modules` every gate below needs into the worktree.
 
 ## What ships
 
