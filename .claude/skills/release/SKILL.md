@@ -18,7 +18,7 @@ The procedure is the workspace release play, [`docs/releasing.md`](../../../../d
 
 ## What ships
 
-**Nothing is published, and that is the whole answer.** `package.json` declares `"private": true`, so nothing goes to npm. `.github/workflows/` holds `lint-check.yml` and `tests-check.yml`, and both open with `on: pull_request:` — no workflow in this repo fires on a push to `main`, so the merge triggers no build, no publish and no tagger. The repo carries no tags and no GitHub Releases, and none are made by hand. What the merge produces is the template at its new version on `main`, which is this repo's default branch and therefore what a consumer clones.
+**Nothing is published.** That is the whole answer: `package.json` declares `"private": true`, so nothing goes to npm. `.github/workflows/` holds `lint-check.yml` and `tests-check.yml`, and both open with `on: pull_request:` — no workflow in this repo fires on a push to `main`, so the merge triggers no build, no publish and no tagger. The repo carries no tags and no GitHub Releases, and none are made by hand. What the merge produces is the template at its new version on `main`, which is this repo's default branch and therefore what a consumer clones.
 
 The landing has no publish to verify, so it verifies the merge and the version that reached `main`:
 
