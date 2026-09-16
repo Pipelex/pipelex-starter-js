@@ -1,9 +1,9 @@
 // Scaffolded by `make add-method` — yours to edit from here on.
 //
-// The output shape is NOT written here: `npm run codegen` projects it from the
-// method `methods/text-stats/method.json` names, and this module is the
-// thin adapter over that projection. If you find yourself declaring fields,
-// the method already declares them.
+// The output shape is NOT written here: `npm run codegen` projects it from
+// the method `methods/text-stats/method.json` names, and this module is the thin
+// adapter over that projection. If you find yourself declaring fields, the
+// method already declares them.
 
 import type { RunResults } from "@pipelex/sdk";
 import { parseText } from "@/generated/text-stats/binder";

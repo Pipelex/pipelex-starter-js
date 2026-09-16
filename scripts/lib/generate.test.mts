@@ -441,4 +441,32 @@ describe("generateMethod", () => {
     expect(errors.join("\n")).toContain(`no ${view} view`);
     await expect(readdir(outDir)).rejects.toThrow();
   });
+
+  // The writer lays the lock, the sidecar and `contracts.ts` over whatever the
+  // server returned, so an artifact on one of those names would be overwritten
+  // silently and the tree would fail its own check forever after. A contained
+  // path that normalizes onto one of them is the same collision.
+  it.each([CONTRACTS_FILENAME, SOURCES_SIDECAR, LOCK_FILENAME, `nested/../${CONTRACTS_FILENAME}`])(
+    "refuses a server artifact that lands on %s, writing nothing",
+    async (artifactPath) => {
+      noDrifts();
+      const errors: string[] = [];
+      vi.spyOn(console, "error").mockImplementation((line: unknown) => {
+        errors.push(String(line));
+      });
+      const client = fakeClient({
+        codegen: vi.fn().mockResolvedValue({
+          ...VALID_REPORT,
+          artifacts: [...VALID_REPORT.artifacts, { path: artifactPath, content: "export {};\n" }],
+        }),
+      });
+
+      expect(await generateMethod(client, FILES_SOURCE, outDir, "https://api.example")).toBe(
+        "failed",
+      );
+      expect(errors.join("\n")).toContain("land on a file this script writes itself");
+      expect(client.validateFiles).not.toHaveBeenCalled();
+      await expect(readdir(outDir)).rejects.toThrow();
+    },
+  );
 });

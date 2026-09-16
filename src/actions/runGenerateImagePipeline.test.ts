@@ -7,13 +7,14 @@ const getRunStatus = vi.fn();
 const getRunResult = vi.fn();
 
 vi.mock("@/lib/loadBundle", () => ({
-  loadGenerateImageBundle: vi.fn().mockResolvedValue("DUMMY_BUNDLE_TOML"),
+  loadMethodBundles: vi.fn().mockResolvedValue(["DUMMY_BUNDLE_TOML"]),
 }));
 
 vi.mock("@/lib/pipelexClient", () => ({
   getPipelexClient: () => ({ execute, start, getRunStatus, getRunResult }),
 }));
 
+import { loadMethodBundles } from "@/lib/loadBundle";
 import {
   pollGenerateImageRun,
   runGenerateImageBlocking,
@@ -46,6 +47,7 @@ describe("runGenerateImageBlocking", () => {
   it("calls execute with the bundle, pipe code, and gated inputs; returns narrowed output", async () => {
     execute.mockResolvedValueOnce(BLOCKING_RESPONSE);
     const result = await runGenerateImageBlocking(DATA);
+    expect(loadMethodBundles).toHaveBeenCalledWith("generate-image");
     expect(execute).toHaveBeenCalledWith({
       pipe_code: "generate_image",
       mthds_contents: ["DUMMY_BUNDLE_TOML"],

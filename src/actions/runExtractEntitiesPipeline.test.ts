@@ -7,13 +7,14 @@ const getRunStatus = vi.fn();
 const getRunResult = vi.fn();
 
 vi.mock("@/lib/loadBundle", () => ({
-  loadExtractEntitiesBundle: vi.fn().mockResolvedValue("DUMMY_BUNDLE_TOML"),
+  loadMethodBundles: vi.fn().mockResolvedValue(["DUMMY_BUNDLE_TOML"]),
 }));
 
 vi.mock("@/lib/pipelexClient", () => ({
   getPipelexClient: () => ({ execute, start, getRunStatus, getRunResult }),
 }));
 
+import { loadMethodBundles } from "@/lib/loadBundle";
 import {
   pollExtractEntitiesRun,
   runExtractEntitiesBlocking,
@@ -45,6 +46,7 @@ describe("runExtractEntitiesBlocking", () => {
   it("calls execute with the bundle, pipe code, and gated inputs; returns narrowed output", async () => {
     execute.mockResolvedValueOnce(BLOCKING_RESPONSE);
     const result = await runExtractEntitiesBlocking(DATA);
+    expect(loadMethodBundles).toHaveBeenCalledWith("extract-entities");
     expect(execute).toHaveBeenCalledWith({
       pipe_code: "extract_entities",
       mthds_contents: ["DUMMY_BUNDLE_TOML"],

@@ -1,7 +1,7 @@
 "use server";
 
 import { PIPE_IO_CONTRACTS } from "@/generated/complex-form/contracts";
-import { loadComplexFormBundle } from "@/lib/loadBundle";
+import { loadMethodBundles } from "@/lib/loadBundle";
 import { parseExtractionBriefResult, type ExtractionBrief } from "@/types/complexFormPipeline";
 import { executeBlockingRun, type BlockingOutcome } from "@/lib/blockingRun";
 import {
@@ -25,7 +25,7 @@ const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "complex_form", PIPE_CODE);
 async function buildOptions(inputs: Record<string, unknown>): Promise<StartOptions> {
   return {
     pipe_code: PIPE_CODE,
-    mthds_contents: [await loadComplexFormBundle()],
+    mthds_contents: await loadMethodBundles("complex-form"),
     inputs,
   };
 }

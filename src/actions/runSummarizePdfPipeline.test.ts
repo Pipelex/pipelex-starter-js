@@ -8,13 +8,14 @@ const getRunResult = vi.fn();
 const prepareInputs = vi.fn();
 
 vi.mock("@/lib/loadBundle", () => ({
-  loadSummarizePdfBundle: vi.fn().mockResolvedValue("DUMMY_BUNDLE_TOML"),
+  loadMethodBundles: vi.fn().mockResolvedValue(["DUMMY_BUNDLE_TOML"]),
 }));
 
 vi.mock("@/lib/pipelexClient", () => ({
   getPipelexClient: () => ({ execute, start, getRunStatus, getRunResult, prepareInputs }),
 }));
 
+import { loadMethodBundles } from "@/lib/loadBundle";
 import {
   pollSummarizePdfRun,
   runSummarizePdfBlocking,
@@ -69,6 +70,7 @@ describe("runSummarizePdfBlocking", () => {
     prepareInputs.mockResolvedValueOnce(PREPARED);
     execute.mockResolvedValueOnce(BLOCKING_RESPONSE);
     const result = await runSummarizePdfBlocking(DATA);
+    expect(loadMethodBundles).toHaveBeenCalledWith("summarize-pdf");
     expect(prepareInputs).toHaveBeenCalledWith(PREPARE_CALL);
     expect(execute).toHaveBeenCalledWith({
       pipe_code: "summarize_pdf",

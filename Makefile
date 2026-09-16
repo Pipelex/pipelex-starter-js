@@ -1,5 +1,29 @@
 .PHONY: help run dev build start port-check lint format format-check typecheck codegen codegen-check codegen-verify add-method test test-watch test-e2e test-e2e-ui confirm-live-e2e agent-test check clean install lock all use-local use-npm ul un
 
+# ── Arguments ──────────────────────────────────────────────────────────────
+# A gesture takes its values as make variables (`make add-method METHOD=…
+# NAME=…`) and hands them to a script as flags. Three rules keep that faithful:
+#
+#   - Only a value given on the command line counts. A variable of the same name
+#     exported by the shell (NAME is common in the wild) is not a request, so
+#     `opt` reads a variable's origin before its value.
+#   - The value reaches the script exactly as typed. `shq` wraps it in single
+#     quotes, closing and escaping any quote inside, and `$(value …)` keeps a `$`
+#     in it from being expanded by make, so a label such as `Bob's "$5" app`
+#     arrives intact and a METHOD holding `$(…)` is never run.
+#   - A blank value is not given: `NAME=` is how a person clears a value, not
+#     how they ask for an empty one. For a switch, `0` is not given either.
+#
+# `$(call opt,NAME,--name)` expands to `--name '<value>'`, or to nothing.
+shq = '$(subst ','\'',$(1))'
+given = $(if $(filter command line,$(origin $(1))),$(strip $(value $(1))))
+opt = $(if $(call given,$(1)),$(2) $(call shq,$(value $(1))))
+flag = $(if $(filter-out 0,$(call given,$(1))),$(2))
+# Refuse a gesture run without its required variable. Decided by make from the
+# variable's origin and value, so the value itself never reaches a shell line
+# unquoted.
+require = @$(if $(call given,$(1)),:,echo "$(2)"; exit 2)
+
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
@@ -70,9 +94,10 @@ typecheck: ## Run TypeScript type checking (app + e2e specs + scripts)
 	npm run typecheck:scripts
 
 # Regenerates src/generated/<method>/ from methods/<method>/. Needs PIPELEX_API_KEY
-# and nothing else: POST /v1/codegen is served on the default hosted URL.
+# and a base URL that serves /v1/validate's form views — for now
+# PIPELEX_BASE_URL=https://api-dev.pipelex.com (see docs/codegen.md).
 # Deliberately OUT of `make all`, for the same reason test-e2e is: key + network.
-codegen: ## Regenerate the typed artifacts in src/generated/ from methods/ (needs PIPELEX_API_KEY)
+codegen: ## Regenerate the typed artifacts in src/generated/ from methods/ (needs PIPELEX_API_KEY and, for now, the api-dev base URL)
 	npm run codegen
 
 # The CI half of the trust chain: pure hashing, no key, no network. Proves each
@@ -83,20 +108,23 @@ codegen-check: ## Verify src/generated/ is current, offline (no API key needed)
 
 # The semantic gate the offline check deliberately cannot be: re-resolves each
 # method live and compares crate fingerprints. Keyed and online, so it stays out
-# of `make all` — run it before a release, or after touching methods/.
-codegen-verify: ## Ask the engine whether the committed crates are still current (needs PIPELEX_API_KEY)
+# of `make all` — run it before a release, or after touching methods/. Wants the
+# same base URL as `codegen`.
+codegen-verify: ## Ask the engine whether the committed crates are still current (needs PIPELEX_API_KEY and, for now, the api-dev base URL)
 	npm run codegen:verify
 
-# Scaffolds a method that lives on the platform (a catalog id) or in a published
-# package (an address) into the app: the manifest, the generated tree, the action
-# trio, the narrower, the form and a tab. One-shot — it never overwrites, and
-# `npm run codegen` is the refresh. Keyed and online, so it stays out of `make all`.
-add-method: ## Scaffold a method into the app from METHOD=<mt_… | github.com/owner/repo[/pkg][@tag]> (needs PIPELEX_API_KEY)
-	@if [ -z "$(METHOD)" ]; then \
-		echo "usage: make add-method METHOD=<mt_… | github.com/owner/repo[/pkg][@tag]> [PIPE=<pipe_code>] [NAME=<dir-name>] [LABEL=<tab label>] [DRY_RUN=1]"; \
-		exit 2; \
-	fi
-	npm run add-method -- $(METHOD) $(if $(PIPE),--pipe $(PIPE)) $(if $(NAME),--name $(NAME)) $(if $(LABEL),--label "$(LABEL)") $(if $(DRY_RUN),--dry-run)
+# Scaffolds a method into the app as a new tab: a bundle (a .mthds file or a
+# directory of them, copied into methods/<name>/ unless it is already there), a
+# method on the platform (a catalog id) or one in a published package (an
+# address). It writes the generated tree, the action trio, the narrower, the
+# form and the tab entry, and the manifest for a method that lives elsewhere.
+# One-shot — it never overwrites, and `npm run codegen` is the refresh. Keyed
+# and online, so it stays out of `make all`. Wants the same base URL as
+# `codegen`, which is also the one that resolves a package address. A relative
+# bundle path is read from the directory make runs in.
+add-method: ## Scaffold a method into a new tab from METHOD=<path/to/bundle | mt_… | github.com/owner/repo[/pkg][@tag]> (needs PIPELEX_API_KEY and, for now, the api-dev base URL)
+	$(call require,METHOD,usage: make add-method METHOD=<path/to/bundle | mt_… | github.com/owner/repo[/pkg][@tag]> [PIPE=<pipe_code>] [NAME=<dir-name>] [LABEL=<tab label>] [DRY_RUN=1])
+	npm run add-method -- $(call shq,$(value METHOD)) $(call opt,PIPE,--pipe) $(call opt,NAME,--name) $(call opt,LABEL,--label) $(call flag,DRY_RUN,--dry-run)
 
 test: ## Run tests (single pass)
 	npm run test

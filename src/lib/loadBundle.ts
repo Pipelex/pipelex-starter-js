@@ -1,46 +1,43 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
-const EXTRACT_ENTITIES_BUNDLE_PATH = path.join(
-  process.cwd(),
-  "methods",
-  "extract-entities",
-  "main.mthds",
-);
-const SUMMARIZE_PDF_BUNDLE_PATH = path.join(
-  process.cwd(),
-  "methods",
-  "summarize-pdf",
-  "main.mthds",
-);
-const GENERATE_IMAGE_BUNDLE_PATH = path.join(
-  process.cwd(),
-  "methods",
-  "generate-image",
-  "main.mthds",
-);
-const COMPLEX_FORM_BUNDLE_PATH = path.join(process.cwd(), "methods", "complex-form", "main.mthds");
+const METHODS_DIR = path.join(process.cwd(), "methods");
+
+/** A method directory name, exactly as `make add-method` derives one: kebab-case, a letter first. */
+const METHOD_NAME = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 
 /**
- * Read a .mthds bundle as a TOML string. The Pipelex API accepts the bundle
- * content directly via the `mthds_contents` field — one helper per bundle.
+ * Read every `.mthds` file of one method directory, for a run's
+ * `mthds_contents`.
+ *
+ * The Pipelex API takes a bundle's TOML directly, so a method authored in this
+ * repo is read from disk at request time rather than inlined as a string. The
+ * files are the ones `npm run codegen` projected the method from — every
+ * `.mthds` file under `methods/<name>/`, at any depth, in sorted path order — so
+ * a run and its generated types always describe the same bundle. One loader
+ * serves every bundle-sourced action, hand-written or scaffolded: the action
+ * names its directory, and that is all it holds.
+ *
+ * A missing directory, or one holding no `.mthds` file, rejects with an
+ * `ENOENT` error, which `classifyPipelineError` reports as `bundle_load_failed`.
  */
-export async function loadExtractEntitiesBundle(): Promise<string> {
-  return readFile(EXTRACT_ENTITIES_BUNDLE_PATH, "utf-8");
+export async function loadMethodBundles(
+  name: string,
+  methodsDir: string = METHODS_DIR,
+): Promise<string[]> {
+  // The name comes from a constant in an action, never from a request, but it
+  // is joined into a filesystem path, so it is held to the one shape it can have.
+  if (!METHOD_NAME.test(name)) {
+    throw new Error(`"${name}" is not a method directory name (kebab-case).`);
+  }
+  const dir = path.join(methodsDir, name);
+  const entries = await readdir(dir, { recursive: true, withFileTypes: true });
+  const bundlePaths = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".mthds"))
+    .map((entry) => path.join(entry.parentPath, entry.name))
+    .sort();
+  if (bundlePaths.length === 0) {
+    throw Object.assign(new Error(`ENOENT: no .mthds file under ${dir}`), { code: "ENOENT" });
+  }
+  return Promise.all(bundlePaths.map((bundlePath) => readFile(bundlePath, "utf-8")));
 }
-
-export async function loadSummarizePdfBundle(): Promise<string> {
-  return readFile(SUMMARIZE_PDF_BUNDLE_PATH, "utf-8");
-}
-
-export async function loadGenerateImageBundle(): Promise<string> {
-  return readFile(GENERATE_IMAGE_BUNDLE_PATH, "utf-8");
-}
-
-export async function loadComplexFormBundle(): Promise<string> {
-  return readFile(COMPLEX_FORM_BUNDLE_PATH, "utf-8");
-}
-
-export const EXTRACT_ENTITIES_BUNDLE_PATH_FOR_TESTS = EXTRACT_ENTITIES_BUNDLE_PATH;
-export const SUMMARIZE_PDF_BUNDLE_PATH_FOR_TESTS = SUMMARIZE_PDF_BUNDLE_PATH;
-export const GENERATE_IMAGE_BUNDLE_PATH_FOR_TESTS = GENERATE_IMAGE_BUNDLE_PATH;

@@ -1,7 +1,7 @@
 "use server";
 
 import { PIPE_IO_CONTRACTS } from "@/generated/generate-image/contracts";
-import { loadGenerateImageBundle } from "@/lib/loadBundle";
+import { loadMethodBundles } from "@/lib/loadBundle";
 import { parseGeneratedImage, type GeneratedImage } from "@/types/generateImagePipeline";
 import { executeBlockingRun, type BlockingOutcome } from "@/lib/blockingRun";
 import {
@@ -20,7 +20,7 @@ const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "generate_image", PIPE_CODE)
 async function buildOptions(inputs: Record<string, unknown>): Promise<StartOptions> {
   return {
     pipe_code: PIPE_CODE,
-    mthds_contents: [await loadGenerateImageBundle()],
+    mthds_contents: await loadMethodBundles("generate-image"),
     inputs,
   };
 }
