@@ -73,7 +73,7 @@ What actually differs is two calls. For a bundle source, `validateFiles(files, {
 
 Two consequences worth stating plainly. A **`method_id`** slice regenerates only with a key of the same organization, since the catalog is org-scoped — which is why the template itself ships only an address-sourced slice. And a selector is resolved **server-side**, so the base URL has to forward it; see the handshake below.
 
-[`docs/add-method.md`](add-method.md) is the reference for the gesture that writes a manifest and the app files around it.
+[`docs/add-method.md`](add-method.md) is the reference for the gesture that writes either kind — a manifest, or a bundle copied into `methods/<name>/` — and the app files around it.
 
 **Committed, deliberately.** A template consumer must see the generated code without holding an API key, `git clone && make all` must pass keyless, and the diff of a regeneration is itself documentation of what a bundle edit changed. The offline check keeps the committed tree honest.
 

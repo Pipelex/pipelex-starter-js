@@ -21,7 +21,7 @@ beforeEach(() => {
 // Scaffolded by `make add-method`, and deliberately fixture-free: a test that
 // guessed input values from the method's descriptor would be wrong the day the
 // method changes. Add your own cases with real inputs once you know what this
-// method takes — `src/actions/runExtractEntitiesPipeline.test.ts` is the shape.
+// method takes: mock `execute` and `start`, call the action, assert the outcome.
 describe("runTextStatsPipeline", () => {
   // The browser's readiness check is the Run button's UX; this is the trust
   // boundary. The gate runs the kernel's rules over the method's own contract.

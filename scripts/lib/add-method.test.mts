@@ -13,7 +13,7 @@
 // re-fetched. The one thing read from the real repo is `ExampleTabs.tsx`: the
 // anchor test exists precisely to fail the day a template edit moves an anchor.
 
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -34,21 +34,27 @@ import {
   hasGatingInput,
   humanize,
   IMPORTS_ANCHOR,
-  insertTab,
   kebabCase,
+  looksLikePath,
   parseArgs,
   parseMethodArg,
   pascalCase,
+  planAddMethod,
+  readBundle,
+  registerMethod,
   renderManifest,
   runAddMethod,
   scaffoldNames,
   scaffoldPaths,
   slugSource,
   TABS_ANCHOR,
+  writeAddMethod,
   type ScaffoldPlan,
 } from "./add-method.mts";
 import { renderAction, renderActionTest, renderAdapter, renderForm } from "./add-method.mts";
 import { MANIFEST_FILENAME, REPO_ROOT } from "./shared.mts";
+import RECEIPT_REVIEW_CODEGEN from "./fixtures/recorded/receipt-review.codegen.json" with { type: "json" };
+import RECEIPT_REVIEW_VALIDATE from "./fixtures/recorded/receipt-review.validate.json" with { type: "json" };
 import {
   DOCUMENTS_CONTRACTS,
   DOCUMENTS_INPUT_FORM,
@@ -91,8 +97,21 @@ describe("parseMethodArg", () => {
       { method_ref: "github.com/Pipelex/methods/documents" },
     ],
     ["  github.com/o/r  ", { method_ref: "github.com/o/r" }],
-  ])("parses %s", (arg, expected) => {
-    expect(parseMethodArg(arg)).toEqual(expected);
+  ])("parses the selector %s", (arg, expected) => {
+    expect(parseMethodArg(arg)).toEqual({ kind: "selector", selector: expected });
+  });
+
+  it.each([
+    "cv_screening.mthds",
+    "./bundles/cv",
+    "../cv",
+    "/tmp/cv",
+    "~/cv",
+    "methods/text-stats",
+    "bundles/cv/main.mthds",
+    "C:\\bundles\\cv",
+  ])("reads %s as a bundle path, kept as given", (arg) => {
+    expect(parseMethodArg(arg)).toEqual({ kind: "bundle", path: arg });
   });
 
   it.each([
@@ -100,11 +119,35 @@ describe("parseMethodArg", () => {
     ["mt_", "malformed id"],
     ["mt_bad id", "id with a space"],
     ["github.com/Pipelex", "address with no repository"],
-    ["methods/text_stats", "path that is not an address"],
     ["github.com/o/r@v1@v2", "two tags"],
-    ["../../etc/passwd", "a path"],
+    ["github.com/o/r@", "an empty tag"],
   ])("refuses %s (%s)", (arg) => {
     expect(() => parseMethodArg(arg)).toThrow(AddMethodError);
+  });
+
+  // A name that exists is a path, whatever the selector grammar would make of it.
+  it.each(["bundles.v2/cv", "my.org/methods/cv", "mt_drafts", "github.com/o/r"])(
+    "reads %s as a bundle path when it exists on disk",
+    (arg) => {
+      expect(parseMethodArg(arg, (value) => value === arg)).toEqual({ kind: "bundle", path: arg });
+    },
+  );
+});
+
+describe("looksLikePath", () => {
+  // An address starts with its host, and a host has a dot; nothing else does.
+  it.each([
+    ["github.com/o/r", false],
+    ["gitlab.example.org/o/r", false],
+    ["bundles/cv", true],
+    ["cv", true],
+    ["./cv", true],
+    [".", true],
+    ["..", true],
+    ["x.mthds", true],
+    ["github.com/o/r/main.mthds", true],
+  ])("%s → %s", (value, expected) => {
+    expect(looksLikePath(value)).toBe(expected);
   });
 });
 
@@ -119,6 +162,114 @@ describe("addressSegments", () => {
   });
 });
 
+// ── The bundle ──────────────────────────────────────────────────────────────
+
+/** The fixture bundle, read in place from this checkout. */
+const RECEIPTS_DIR = path.join(
+  REPO_ROOT,
+  "scripts",
+  "lib",
+  "fixtures",
+  "bundles",
+  "receipt-review",
+);
+
+describe("readBundle", () => {
+  let app: string;
+  let outside: string;
+
+  beforeEach(async () => {
+    app = await mkdtemp(path.join(tmpdir(), "read-bundle-app-"));
+    outside = await mkdtemp(path.join(tmpdir(), "read-bundle-src-"));
+    await mkdir(path.join(app, "methods"), { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(app, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  });
+
+  async function put(root: string, relative: string, content = 'domain = "x"\n'): Promise<void> {
+    await mkdir(path.dirname(path.join(root, relative)), { recursive: true });
+    await writeFile(path.join(root, relative), content, "utf-8");
+  }
+
+  it("takes every .mthds file under a directory, keeping their relative paths", async () => {
+    await put(outside, "cv/main.mthds");
+    await put(outside, "cv/steps/screen.mthds");
+    await put(outside, "cv/notes.md");
+
+    const bundle = await readBundle("cv", outside, app);
+
+    expect(bundle.inPlace).toBeNull();
+    expect(bundle.display).toBe("cv/");
+    expect(bundle.files.map((file) => [file.relative, file.label])).toEqual([
+      ["main.mthds", path.join("cv", "main.mthds")],
+      ["steps/screen.mthds", path.join("cv", "steps", "screen.mthds")],
+    ]);
+  });
+
+  it("takes a single file alone, under its own name", async () => {
+    await put(outside, "cv/main.mthds");
+    await put(outside, "cv/other.mthds");
+
+    const bundle = await readBundle(path.join(outside, "cv", "main.mthds"), app, app);
+
+    expect(bundle.files.map((file) => file.relative)).toEqual(["main.mthds"]);
+    // Outside the directory it was typed in, a path is named absolutely.
+    expect(bundle.files[0]!.label).toBe(path.join(outside, "cv", "main.mthds"));
+  });
+
+  it("reads a whole method directory in place, whichever of its files was named", async () => {
+    await put(app, "methods/cv/main.mthds");
+    await put(app, "methods/cv/screen.mthds");
+
+    for (const given of ["methods/cv", "methods/cv/", "methods/cv/screen.mthds"]) {
+      const bundle = await readBundle(given, app, app);
+      expect(bundle.inPlace).toBe("cv");
+      expect(bundle.files.map((file) => file.label)).toEqual([
+        "methods/cv/main.mthds",
+        "methods/cv/screen.mthds",
+      ]);
+    }
+  });
+
+  it.each([
+    ["nope", "a path that is not there", /is not a file or a directory/],
+    ["notes.md", "a file that is not a bundle", /is not a \.mthds file/],
+    ["empty", "a directory with no bundle", /holds no \.mthds file/],
+  ])("refuses %s (%s)", async (given, _what, message) => {
+    await put(outside, "notes.md", "# notes\n");
+    await mkdir(path.join(outside, "empty"));
+    await expect(readBundle(given, outside, app)).rejects.toThrow(message);
+  });
+
+  it("refuses methods/ itself, and a file sitting directly in it", async () => {
+    await put(app, "methods/stray.mthds");
+    await expect(readBundle("methods", app, app)).rejects.toThrow(/methods\/ directory itself/);
+    await expect(readBundle("methods/stray.mthds", app, app)).rejects.toThrow(
+      /sits directly in methods\//,
+    );
+  });
+
+  it("refuses a directory that contains the app", async () => {
+    await expect(readBundle(app, outside, app)).rejects.toThrow(/contains this app/);
+    await expect(readBundle(path.dirname(app), outside, app)).rejects.toThrow(/contains this app/);
+  });
+
+  it("refuses a method directory holding a manifest beside its bundle", async () => {
+    await put(app, "methods/cv/main.mthds");
+    await put(app, `methods/cv/${MANIFEST_FILENAME}`, "{}\n");
+    await expect(readBundle("methods/cv", app, app)).rejects.toThrow(/holds one or the other/);
+  });
+
+  it("refuses a symlink inside the bundle rather than follow or skip it", async () => {
+    await put(outside, "cv/main.mthds");
+    await symlink(path.join(outside, "cv", "main.mthds"), path.join(outside, "cv", "link.mthds"));
+    await expect(readBundle("cv", outside, app)).rejects.toThrow(AddMethodError);
+  });
+});
+
 // ── Names ───────────────────────────────────────────────────────────────────
 
 describe("the name derivations", () => {
@@ -128,6 +279,7 @@ describe("the name derivations", () => {
     ["Test-1", "test-1"],
     ["pipelex_mcp_e2e_fixture", "pipelex-mcp-e2e-fixture"],
     ["  Create   moodboard  ", "create-moodboard"],
+    ["Model 3D", "model-3d"],
   ])("kebab-cases %s", (input, expected) => {
     expect(kebabCase(input)).toBe(expected);
   });
@@ -136,6 +288,7 @@ describe("the name derivations", () => {
     ["", "empty"],
     ["---", "punctuation only"],
     ["🙂", "no ASCII at all"],
+    ["3D model", "a leading digit, which no TypeScript identifier may have"],
   ])("refuses %s (%s), pointing at --name", (input) => {
     expect(() => kebabCase(input)).toThrow(/--name/);
   });
@@ -163,16 +316,16 @@ describe("the name derivations", () => {
     expect(() => slugSource({ method_id: "mt_x" }, "")).toThrow(/--name/);
   });
 
-  it("puts every emitted file where the four hand-written examples live", () => {
+  it("puts every emitted file where the app's conventions place it", () => {
     expect(scaffoldPaths(scaffoldNames("text-stats"))).toEqual({
-      manifestDir: "methods/text-stats",
+      methodDir: "methods/text-stats",
       manifest: "methods/text-stats/method.json",
       generatedDir: "src/generated/text-stats",
       adapter: "src/types/textStatsPipeline.ts",
       action: "src/actions/runTextStatsPipeline.ts",
       actionTest: "src/actions/runTextStatsPipeline.test.ts",
       form: "src/components/TextStatsForm.tsx",
-      tabs: "src/components/ExampleTabs.tsx",
+      registry: "src/components/ExampleTabs.tsx",
     });
   });
 });
@@ -398,19 +551,35 @@ describe("parseArgs", () => {
   });
 });
 
-// ── The tab ─────────────────────────────────────────────────────────────────
+// ── The registry ────────────────────────────────────────────────────────────
 
-describe("insertTab", () => {
+/**
+ * `src/components/ExampleTabs.tsx` with every tab taken out: the real file, so
+ * the anchors are the ones on disk, emptied of the demos and of whatever a
+ * project has since scaffolded. These tests run in projects made from this
+ * template too, so they must not depend on which tabs that project still has —
+ * only on the anchors.
+ */
+function emptiedRegistry(source: string): string {
+  const lines = source.split("\n").filter((line) => !/^import\s.*\sfrom\s+"\.\/[A-Z]/.test(line));
+  const arrayAt = lines.findIndex((line) => line.startsWith("const TABS"));
+  // Everything between the opening bracket and the anchor's comment block is a
+  // registration, however it was formatted; the block starts at its first comment.
+  const commentAt = lines.findIndex((line, at) => at > arrayAt && line.trim().startsWith("//"));
+  return [...lines.slice(0, arrayAt + 1), ...lines.slice(commentAt)].join("\n");
+}
+
+describe("registerMethod", () => {
   const ENTRY = { id: "demo", label: "Demo", componentName: "DemoForm" };
 
   /** The real file — this is the test that fails the day a template edit moves an anchor. */
-  async function realTabs(): Promise<string> {
+  async function realRegistry(): Promise<string> {
     return readFile(path.join(REPO_ROOT, "src", "components", "ExampleTabs.tsx"), "utf-8");
   }
 
   it("inserts one import and one entry into the real ExampleTabs.tsx", async () => {
-    const source = await realTabs();
-    const updated = insertTab(source, ENTRY);
+    const source = await realRegistry();
+    const updated = registerMethod(source, ENTRY);
 
     expect(updated).toContain('import { DemoForm } from "./DemoForm";');
     expect(updated).toContain('{ id: "demo", label: "Demo", Component: DemoForm },');
@@ -427,18 +596,30 @@ describe("insertTab", () => {
   it.each([IMPORTS_ANCHOR, TABS_ANCHOR])(
     "refuses a source with %s missing, naming it",
     async (anchor) => {
-      const source = (await realTabs())
+      const source = (await realRegistry())
         .split("\n")
         .filter((line) => !line.includes(anchor))
         .join("\n");
-      expect(() => insertTab(source, ENTRY)).toThrow(anchor);
+      expect(() => registerMethod(source, ENTRY)).toThrow(anchor);
     },
   );
 
-  it("refuses a duplicate tab id and a duplicate component, pointing at --name", async () => {
-    const source = await realTabs();
-    expect(() => insertTab(source, { ...ENTRY, id: "text" })).toThrow(/--name/);
-    expect(() => insertTab(source, { ...ENTRY, componentName: "EntityForm" })).toThrow(/--name/);
+  it("refuses a duplicate id and a duplicate component, pointing at --name", async () => {
+    const source = registerMethod(await realRegistry(), ENTRY);
+    expect(() => registerMethod(source, { ...ENTRY, componentName: "OtherForm" })).toThrow(
+      /--name/,
+    );
+    expect(() => registerMethod(source, { ...ENTRY, id: "other" })).toThrow(/--name/);
+  });
+
+  it("lands the first entry inside the empty array, above the anchor comment", async () => {
+    // The empty array the template ships is where the first entry goes: the
+    // entry must land inside it, above the anchor comment, and nowhere else.
+    const updated = registerMethod(emptiedRegistry(await realRegistry()), ENTRY);
+    const body = updated.slice(updated.indexOf("const TABS"));
+    expect(body).toMatch(
+      /= \[\n\s+\{ id: "demo", label: "Demo", Component: DemoForm \},\n\s+\/\/ add-method:tabs/,
+    );
   });
 });
 
@@ -446,17 +627,31 @@ describe("insertTab", () => {
 
 const TEXT_STATS_PLAN: ScaffoldPlan = {
   names: scaffoldNames("text-stats"),
-  selector: { method_ref: TEXT_STATS_REF },
+  source: { kind: "selector", selector: { method_ref: TEXT_STATS_REF } },
   pipe: { ref: "text_stats.analyze_text", domain: "text_stats", code: "analyze_text" },
   binding: { conceptCode: "Text", plural: false },
   files: [],
   gating: true,
 };
 
+/** The bundle arm, as the receipt-review fixture scaffolds: a list of documents in, a list out. */
+const RECEIPTS_PLAN: ScaffoldPlan = {
+  names: scaffoldNames("receipt-review"),
+  source: { kind: "files" },
+  pipe: {
+    ref: "receipt_review.review_receipts",
+    domain: "receipt_review",
+    code: "review_receipts",
+  },
+  binding: { conceptCode: "ReceiptSummary", plural: true },
+  files: [{ path: "receipts[]", kind: "document" }],
+  gating: false,
+};
+
 /** The plural + document variant, built from the `documents` measurements. */
 const DOCUMENTS_PLAN: ScaffoldPlan = {
   names: scaffoldNames("documents", "Document pages"),
-  selector: { method_id: "mt_ca0aa9d3-61ac-4db1-8b46-fb0cc75787df" },
+  source: { kind: "selector", selector: { method_id: "mt_ca0aa9d3-61ac-4db1-8b46-fb0cc75787df" } },
   pipe: { ref: "documents.extract_text_pages", domain: "documents", code: "extract_text_pages" },
   binding: { conceptCode: "Page", plural: true },
   files: [{ path: "document", kind: "document" }],
@@ -477,9 +672,18 @@ describe("renderAdapter", () => {
     expect(source).toContain('import { parseText } from "@/generated/text-stats/binder";');
     expect(source).toContain("export type TextStatsOutput = Text;");
     expect(source).toContain("return parseText(wireOutput(results, TextSchema));");
+    expect(source).toContain(
+      'import { TextSchema, type Text } from "@/generated/text-stats/types";',
+    );
     expect(source).toContain("throw new BadPipelineOutputError(");
     // No shape is declared: if this file lists fields, it duplicates the method.
     expect(source).not.toMatch(/z\.object\(\{\s*\w+:/);
+  });
+
+  it("names the bundle's directory as the source of a bundle-sourced slice", () => {
+    const source = renderAdapter(RECEIPTS_PLAN);
+    expect(source).toContain("the bundle in `methods/receipt-review/`");
+    expect(source).not.toContain("method.json");
   });
 
   it("types a plural output as a list of the concept, read through wireListOutput", () => {
@@ -498,7 +702,11 @@ describe("renderAdapter", () => {
 describe("renderAction", () => {
   it("sends the selector in place of an inline bundle, with the bare pipe code", () => {
     const source = renderAction(TEXT_STATS_PLAN);
-    expect(source).toContain(`const METHOD_REF = "${TEXT_STATS_REF}";`);
+    // The selector is read from the manifest, never copied into the action, so
+    // an upgrade — edit the manifest, regenerate — moves the run with the tree.
+    expect(source).toContain('import MANIFEST from "@methods/text-stats/method.json";');
+    expect(source).toContain("const METHOD_REF = MANIFEST.method_ref;");
+    expect(source).not.toContain(TEXT_STATS_REF);
     expect(source).toContain('const PIPE_CODE = "analyze_text";');
     expect(source).toContain('requireContract(PIPE_IO_CONTRACTS, "text_stats", PIPE_CODE)');
     expect(source).toContain("method_ref: METHOD_REF,");
@@ -526,6 +734,7 @@ describe("renderAction", () => {
     // prepareInputs keys on the QUALIFIED ref — a bare pipe code is refused.
     expect(source).toContain('const PIPE_REF = "documents.extract_text_pages";');
     expect(source).toContain("pipe_ref: PIPE_REF,");
+    expect(source).toContain("const METHOD_ID = MANIFEST.method_id;");
     expect(source).toContain("method_id: METHOD_ID,");
     // The file gate runs over the GATED inputs, never beside the gate — so
     // inside `gateInputs` the shape gate comes first and short-circuits.
@@ -546,6 +755,27 @@ describe("renderAction", () => {
     expect(source).toContain("checkFileInputs(DESCRIPTOR, gated.inputs, {");
     expect(source).toContain("prepareInputs({");
   });
+
+  it("sends a bundle-sourced method inline, naming its directory once", () => {
+    const source = renderAction({ ...RECEIPTS_PLAN, files: [], gating: true });
+    expect(source).toContain('import { loadMethodBundles } from "@/lib/loadBundle";');
+    expect(source).toContain('const METHOD_DIR = "receipt-review";');
+    expect(source).toContain("mthds_contents: await loadMethodBundles(METHOD_DIR),");
+    // No manifest and no selector: the bundle is the method.
+    expect(source).not.toContain("MANIFEST");
+    expect(source).not.toContain("method_ref");
+    expect(source).not.toContain("method_id");
+  });
+
+  it("hands prepareInputs the same bundle the run sends, when it takes a file", () => {
+    const source = renderAction(RECEIPTS_PLAN);
+    expect(source).toContain("const bundles = await loadMethodBundles(METHOD_DIR);");
+    expect(source).toContain("files: bundles.map((content) => ({ content })),");
+    expect(source).toContain("mthds_contents: bundles,");
+    expect(source).toContain('const PIPE_REF = "receipt_review.review_receipts";');
+    // Read once per run: prepareInputs and the run options share the one read.
+    expect(source.match(/loadMethodBundles\(/g)).toHaveLength(1);
+  });
 });
 
 describe("renderActionTest", () => {
@@ -554,13 +784,24 @@ describe("renderActionTest", () => {
     expect(source).toContain("refuses an empty submission before calling the SDK (blocking)");
     expect(source).toContain("expect(execute).not.toHaveBeenCalled();");
     expect(source).not.toContain("execute.mockResolvedValue");
+    // Nothing here reads the selector, and an unused import would fail tsc.
+    expect(source).not.toContain("MANIFEST");
   });
 
   it("pins the wiring instead when the pipe gates on nothing", () => {
     const source = renderActionTest({ ...TEXT_STATS_PLAN, gating: false });
     expect(source).toContain("expect(execute).toHaveBeenCalledWith({");
-    expect(source).toContain(`method_ref: "${TEXT_STATS_REF}",`);
+    expect(source).toContain('import MANIFEST from "@methods/text-stats/method.json";');
+    expect(source).toContain("method_ref: MANIFEST.method_ref,");
     expect(source).toContain('pipe_code: "analyze_text",');
+  });
+
+  it("pins the bundle it sends when a bundle-sourced pipe gates on nothing", () => {
+    const source = renderActionTest(RECEIPTS_PLAN);
+    expect(source).toContain('import { loadMethodBundles } from "@/lib/loadBundle";');
+    expect(source).toContain('mthds_contents: await loadMethodBundles("receipt-review"),');
+    expect(source).toContain("prepareInputs.mockResolvedValueOnce(");
+    expect(source).not.toContain("MANIFEST");
   });
 });
 
@@ -595,6 +836,16 @@ describe("renderForm", () => {
     expect(source).toContain("env={{ onDropFile: dropFile, uploadingIds: encodingIds }}");
     expect(source).toContain("{fileError && <ErrorDisplay error={fileError} />}");
   });
+
+  it("holds the run while a file is encoding — its value is unset until then", () => {
+    // `ready` speaks only for the inputs the gate refuses empty, so an optional
+    // or non-gating file input (a list of receipts) would otherwise run without
+    // the file the person just dropped.
+    const source = renderForm(RECEIPTS_PLAN);
+    expect(source).toContain("disabled={running || encodingIds.size > 0 || !ready}");
+    expect(source).toContain("if (encodingIds.size > 0) return;");
+    expect(renderForm(TEXT_STATS_PLAN)).toContain("disabled={running || !ready}");
+  });
 });
 
 // ── The orchestration ───────────────────────────────────────────────────────
@@ -618,19 +869,14 @@ describe("runAddMethod", () => {
     ]) {
       await mkdir(path.join(dir, relative), { recursive: true });
     }
-    // The real file, minus the slice the template itself ships — which is the
-    // state this gesture is designed to run against. Filtered rather than
-    // fabricated, so the anchors under test stay exactly the ones on disk.
-    const tabs = await readFile(
-      path.join(REPO_ROOT, "src", "components", "ExampleTabs.tsx"),
-      "utf-8",
-    );
+    // The real registry, copied rather than fabricated, so the anchors under
+    // test stay exactly the ones on disk — emptied of its tabs, since this
+    // checkout already ships `text-stats` and these runs would otherwise be
+    // refused as duplicates.
+    const tabs = path.join("src", "components", "ExampleTabs.tsx");
     await writeFile(
-      path.join(dir, "src", "components", "ExampleTabs.tsx"),
-      tabs
-        .split("\n")
-        .filter((line) => !line.includes("TextStatsForm"))
-        .join("\n"),
+      path.join(dir, tabs),
+      emptiedRegistry(await readFile(path.join(REPO_ROOT, tabs), "utf-8")),
       "utf-8",
     );
     return dir;
@@ -660,7 +906,15 @@ describe("runAddMethod", () => {
     } as unknown as Pick<
       PipelexApiClient,
       "codegen" | "validate" | "validateFiles" | "version" | "getMethod"
-    > & { codegen: Mock; validate: Mock; version: Mock; getMethod: Mock };
+    > & { codegen: Mock; validate: Mock; validateFiles: Mock; version: Mock; getMethod: Mock };
+  }
+
+  /** A client answering for the receipt-review bundle, with its recorded responses. */
+  function receiptsClient() {
+    return fakeClient({
+      codegen: vi.fn().mockResolvedValue(RECEIPT_REVIEW_CODEGEN),
+      validateFiles: vi.fn().mockResolvedValue(RECEIPT_REVIEW_VALIDATE),
+    });
   }
 
   function deps(client = fakeClient()) {
@@ -693,7 +947,7 @@ describe("runAddMethod", () => {
     return found.sort();
   }
 
-  it("writes the manifest, the tree and the four app files, and edits the tab switcher", async () => {
+  it("writes the manifest, the tree and the app files, and edits the registry", async () => {
     expect(await runAddMethod([TEXT_STATS_REF], deps())).toBe(0);
 
     expect(await written()).toEqual([
@@ -712,9 +966,11 @@ describe("runAddMethod", () => {
     expect(await readFile(path.join(root, "methods/text-stats", MANIFEST_FILENAME), "utf-8")).toBe(
       `{\n  "method_ref": "${TEXT_STATS_REF}"\n}\n`,
     );
-    const tabs = await readFile(path.join(root, "src/components/ExampleTabs.tsx"), "utf-8");
-    expect(tabs).toContain('import { TextStatsForm } from "./TextStatsForm";');
-    expect(tabs).toContain('{ id: "text-stats", label: "Text stats", Component: TextStatsForm }');
+    const registry = await readFile(path.join(root, "src/components/ExampleTabs.tsx"), "utf-8");
+    expect(registry).toContain('import { TextStatsForm } from "./TextStatsForm";');
+    expect(registry).toContain(
+      '{ id: "text-stats", label: "Text stats", Component: TextStatsForm }',
+    );
   });
 
   it("records the manifest's own hash as the tree's source — that is the staleness gate", async () => {
@@ -731,13 +987,16 @@ describe("runAddMethod", () => {
   it("is one-shot: a second run is refused on the collision, changing nothing", async () => {
     await runAddMethod([TEXT_STATS_REF], deps());
     const before = await written();
-    const tabsBefore = await readFile(path.join(root, "src/components/ExampleTabs.tsx"), "utf-8");
+    const registryBefore = await readFile(
+      path.join(root, "src/components/ExampleTabs.tsx"),
+      "utf-8",
+    );
 
     expect(await runAddMethod([TEXT_STATS_REF], deps())).toBe(1);
 
     expect(await written()).toEqual(before);
     expect(await readFile(path.join(root, "src/components/ExampleTabs.tsx"), "utf-8")).toBe(
-      tabsBefore,
+      registryBefore,
     );
   });
 
@@ -750,8 +1009,8 @@ describe("runAddMethod", () => {
       ),
     ).toBe(0);
 
-    const tabs = await readFile(path.join(root, "src/components/ExampleTabs.tsx"), "utf-8");
-    expect(tabs).toContain(
+    const registry = await readFile(path.join(root, "src/components/ExampleTabs.tsx"), "utf-8");
+    expect(registry).toContain(
       '{ id: "word-counts", label: "Word counts", Component: WordCountsForm }',
     );
   });
@@ -766,7 +1025,12 @@ describe("runAddMethod", () => {
       path.join(root, "src/actions/runPipelexMcpE2eFixturePipeline.ts"),
       "utf-8",
     );
-    expect(action).toContain('const METHOD_ID = "mt_ca0aa9d3-61ac-4db1-8b46-fb0cc75787df";');
+    expect(action).toContain("const METHOD_ID = MANIFEST.method_id;");
+    const manifest = await readFile(
+      path.join(root, "methods/pipelex-mcp-e2e-fixture/method.json"),
+      "utf-8",
+    );
+    expect(JSON.parse(manifest)).toEqual({ method_id: "mt_ca0aa9d3-61ac-4db1-8b46-fb0cc75787df" });
   });
 
   it("--dry-run stops at the end of the read-only half, writing nothing", async () => {
@@ -778,6 +1042,14 @@ describe("runAddMethod", () => {
     expect(await written()).toEqual(["src/components/ExampleTabs.tsx"]);
     expect(lines.join("\n")).toContain("text_stats.analyze_text");
     expect(lines.join("\n")).toContain("Nothing was written");
+  });
+
+  it("refuses a --name that cannot become a TypeScript identifier, writing nothing", async () => {
+    const client = fakeClient();
+    expect(await runAddMethod([TEXT_STATS_REF, "--name", "3d-model"], deps(client))).toBe(1);
+
+    expect(client.codegen).not.toHaveBeenCalled();
+    expect(await written()).toEqual(["src/components/ExampleTabs.tsx"]);
   });
 
   it("refuses a base URL that does not forward the selector, before any fetch", async () => {
@@ -899,17 +1171,269 @@ describe("runAddMethod", () => {
     expect(form).toContain("useFileInputs");
   });
 
-  it("refuses a tab switcher whose anchor is gone, before writing anything", async () => {
-    const tabsPath = path.join(root, "src/components/ExampleTabs.tsx");
-    const stripped = (await readFile(tabsPath, "utf-8"))
+  // ── The bundle arm ──
+
+  it("copies a bundle into methods/<domain>/ and scaffolds it as a files source", async () => {
+    const client = receiptsClient();
+    expect(await runAddMethod([RECEIPTS_DIR], deps(client))).toBe(0);
+
+    expect(await written()).toEqual([
+      "methods/receipt-review/concepts.mthds",
+      "methods/receipt-review/main.mthds",
+      "src/actions/runReceiptReviewPipeline.test.ts",
+      "src/actions/runReceiptReviewPipeline.ts",
+      "src/components/ExampleTabs.tsx",
+      "src/components/ReceiptReviewForm.tsx",
+      "src/generated/receipt-review/binder.ts",
+      "src/generated/receipt-review/codegen.lock",
+      "src/generated/receipt-review/contracts.ts",
+      "src/generated/receipt-review/sources.json",
+      "src/generated/receipt-review/types.ts",
+      "src/types/receiptReviewPipeline.ts",
+    ]);
+    // Copied byte for byte.
+    expect(await readFile(path.join(root, "methods/receipt-review/main.mthds"), "utf-8")).toBe(
+      await readFile(path.join(RECEIPTS_DIR, "main.mthds"), "utf-8"),
+    );
+    // Sent under the names it was read by, so a diagnostic names the person's file…
+    expect(client.validateFiles.mock.calls[0]![0].map((file: { uri: string }) => file.uri)).toEqual(
+      [path.join(RECEIPTS_DIR, "concepts.mthds"), path.join(RECEIPTS_DIR, "main.mthds")],
+    );
+    // …and recorded under the names it now has, which is what `codegen:check` hashes.
+    const sidecar = JSON.parse(
+      await readFile(path.join(root, "src/generated/receipt-review/sources.json"), "utf-8"),
+    ) as { sources: Record<string, string> };
+    expect(Object.keys(sidecar.sources)).toEqual([
+      "methods/receipt-review/concepts.mthds",
+      "methods/receipt-review/main.mthds",
+    ]);
+    const action = await readFile(
+      path.join(root, "src/actions/runReceiptReviewPipeline.ts"),
+      "utf-8",
+    );
+    expect(action).toContain('const METHOD_DIR = "receipt-review";');
+    expect(client.version).not.toHaveBeenCalled();
+  });
+
+  it("resolves a relative bundle path from the directory the command was typed in", async () => {
+    const client = receiptsClient();
+    const relative = path.relative(REPO_ROOT, RECEIPTS_DIR);
+    expect(await runAddMethod([relative], { ...deps(client), cwd: REPO_ROOT })).toBe(0);
+
+    expect(client.validateFiles.mock.calls[0]![0][0].uri).toBe(
+      path.join(relative, "concepts.mthds"),
+    );
+  });
+
+  it("takes --name for a copied bundle", async () => {
+    expect(await runAddMethod([RECEIPTS_DIR, "--name", "receipts"], deps(receiptsClient()))).toBe(
+      0,
+    );
+    expect(await written()).toContain("methods/receipts/main.mthds");
+    expect(await written()).toContain("src/components/ReceiptsForm.tsx");
+  });
+
+  it("scaffolds a bundle already in methods/ in place, named by its directory", async () => {
+    for (const name of ["concepts.mthds", "main.mthds"]) {
+      await mkdir(path.join(root, "methods/receipts"), { recursive: true });
+      await writeFile(
+        path.join(root, "methods/receipts", name),
+        await readFile(path.join(RECEIPTS_DIR, name), "utf-8"),
+        "utf-8",
+      );
+    }
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line: unknown) => void lines.push(String(line)));
+
+    const code = await runAddMethod(["methods/receipts/main.mthds"], deps(receiptsClient()));
+
+    expect(code).toBe(0);
+    expect(lines.join("\n")).toContain("in place");
+    const files = await written();
+    expect(files).toContain("src/components/ReceiptsForm.tsx");
+    expect(files.filter((file) => file.startsWith("methods/"))).toEqual([
+      "methods/receipts/concepts.mthds",
+      "methods/receipts/main.mthds",
+    ]);
+  });
+
+  it("refuses a --name that disagrees with the directory a bundle sits in", async () => {
+    await mkdir(path.join(root, "methods/receipts"), { recursive: true });
+    await writeFile(path.join(root, "methods/receipts/main.mthds"), 'domain = "x"\n', "utf-8");
+    const client = receiptsClient();
+
+    expect(await runAddMethod(["methods/receipts", "--name", "other"], deps(client))).toBe(1);
+    expect(client.codegen).not.toHaveBeenCalled();
+  });
+
+  it("refuses to copy a bundle over a method directory that exists, writing nothing", async () => {
+    await mkdir(path.join(root, "methods/receipt-review"), { recursive: true });
+    const before = await written();
+
+    expect(await runAddMethod([RECEIPTS_DIR], deps(receiptsClient()))).toBe(1);
+    expect(await written()).toEqual(before);
+  });
+
+  it("removes everything it wrote when the write half fails, so a re-run succeeds", async () => {
+    // The self-check in the read-only half passes; the orphan pass in the
+    // writer — after the tree's files are on disk — fails.
+    (runCodegenCheck as unknown as Mock)
+      .mockResolvedValueOnce({ drifts: [], isCurrent: true })
+      .mockRejectedValueOnce(new Error("disk went away"));
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation(
+      (line: unknown) => void errors.push(String(line)),
+    );
+    const registryBefore = await readFile(
+      path.join(root, "src/components/ExampleTabs.tsx"),
+      "utf-8",
+    );
+
+    expect(await runAddMethod([RECEIPTS_DIR], deps(receiptsClient()))).toBe(1);
+
+    expect(errors.join("\n")).toContain("everything this run had created was removed");
+    expect(errors.join("\n")).toContain("disk went away");
+    expect(await written()).toEqual(["src/components/ExampleTabs.tsx"]);
+    expect(await readFile(path.join(root, "src/components/ExampleTabs.tsx"), "utf-8")).toBe(
+      registryBefore,
+    );
+
+    expect(await runAddMethod([RECEIPTS_DIR], deps(receiptsClient()))).toBe(0);
+  });
+
+  it("leaves a method directory another run created after the plan, and its files", async () => {
+    const plan = await planAddMethod(
+      { method: RECEIPTS_DIR, dryRun: false },
+      deps(receiptsClient()),
+    );
+    // Between the plan and the write, another run claims the same directory.
+    const foreign = path.join(root, "methods/receipt-review");
+    await mkdir(foreign, { recursive: true });
+    await writeFile(path.join(foreign, "main.mthds"), 'domain = "theirs"\n', "utf-8");
+    await writeFile(path.join(foreign, "NOTES.txt"), "not this run's\n", "utf-8");
+
+    await expect(writeAddMethod(plan, deps(receiptsClient()))).rejects.toThrow(AddMethodError);
+
+    expect(await written()).toEqual([
+      "methods/receipt-review/NOTES.txt",
+      "methods/receipt-review/main.mthds",
+      "src/components/ExampleTabs.tsx",
+    ]);
+    expect(await readFile(path.join(foreign, "main.mthds"), "utf-8")).toBe('domain = "theirs"\n');
+  });
+
+  it("refuses a generated tree that appeared after the plan, and leaves it", async () => {
+    const plan = await planAddMethod(
+      { method: RECEIPTS_DIR, dryRun: false },
+      deps(receiptsClient()),
+    );
+    const tree = path.join(root, "src/generated/receipt-review");
+    await mkdir(tree, { recursive: true });
+    await writeFile(path.join(tree, "types.ts"), "// theirs\n", "utf-8");
+
+    await expect(writeAddMethod(plan, deps(receiptsClient()))).rejects.toThrow(
+      "appeared after the plan was made",
+    );
+
+    expect(await written()).toEqual([
+      "src/components/ExampleTabs.tsx",
+      "src/generated/receipt-review/types.ts",
+    ]);
+    expect(await readFile(path.join(tree, "types.ts"), "utf-8")).toBe("// theirs\n");
+  });
+
+  it("names the regenerated tree it keeps when an in-place scaffold fails", async () => {
+    await mkdir(path.join(root, "methods/receipts"), { recursive: true });
+    for (const name of ["concepts.mthds", "main.mthds"]) {
+      await writeFile(
+        path.join(root, "methods/receipts", name),
+        await readFile(path.join(RECEIPTS_DIR, name), "utf-8"),
+        "utf-8",
+      );
+    }
+    await mkdir(path.join(root, "src/generated/receipts"), { recursive: true });
+    await writeFile(path.join(root, "src/generated/receipts/types.ts"), "// stale\n", "utf-8");
+    const plan = await planAddMethod(
+      { method: "methods/receipts", dryRun: false },
+      deps(receiptsClient()),
+    );
+    // An app file appears after the plan, so the write half fails after the tree.
+    const appFile = plan.emitted.find((file) => file.relative !== plan.paths.registry)!;
+    await writeFile(path.join(root, appFile.relative), "// theirs\n", "utf-8");
+
+    const failure = writeAddMethod(plan, deps(receiptsClient()));
+
+    await expect(failure).rejects.toThrow("src/generated/receipts/, which existed before");
+    await expect(failure).rejects.toThrow("regenerated in place");
+    const files = await written();
+    expect(files).toContain("src/generated/receipts/types.ts");
+    expect(files).toContain(appFile.relative);
+    // The form it wrote is gone; the registry beside it was restored, not removed.
+    expect(
+      files.filter((file) => file.startsWith("src/components/") && file !== plan.paths.registry),
+    ).toEqual([]);
+    expect(await readFile(path.join(root, "src/generated/receipts/types.ts"), "utf-8")).not.toBe(
+      "// stale\n",
+    );
+  });
+
+  it("scaffolds a directory whose name reads like an address when it exists", async () => {
+    const dotted = path.join(root, "bundles.v2/receipt-review");
+    await mkdir(dotted, { recursive: true });
+    for (const name of ["concepts.mthds", "main.mthds"]) {
+      await writeFile(
+        path.join(dotted, name),
+        await readFile(path.join(RECEIPTS_DIR, name), "utf-8"),
+        "utf-8",
+      );
+    }
+
+    expect(await runAddMethod(["bundles.v2/receipt-review"], deps(receiptsClient()))).toBe(0);
+    expect(await written()).toContain("methods/receipt-review/main.mthds");
+  });
+
+  it("refuses a catalog id the API does not know, naming it, with no stack", async () => {
+    const client = fakeClient({
+      getMethod: vi
+        .fn()
+        .mockRejectedValueOnce(
+          new ApiResponseError(
+            "API GET /v1/methods/mt_missing failed (404)",
+            "https://api.example/v1/methods/mt_missing",
+            404,
+            "Not Found",
+            "{}",
+            "MethodNotFoundError",
+            "Method mt_missing not found",
+            undefined,
+            undefined,
+          ),
+        ),
+    });
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation(
+      (line: unknown) => void errors.push(String(line)),
+    );
+
+    expect(await runAddMethod(["mt_missing"], deps(client))).toBe(1);
+
+    expect(errors.join("\n")).toContain("could not resolve");
+    expect(errors.join("\n")).toContain("Method mt_missing not found");
+    expect(errors.join("\n")).not.toMatch(/\n\s+at /);
+    expect(await written()).toEqual(["src/components/ExampleTabs.tsx"]);
+  });
+
+  it("refuses a registry whose anchor is gone, before writing anything", async () => {
+    const registryPath = path.join(root, "src/components/ExampleTabs.tsx");
+    const stripped = (await readFile(registryPath, "utf-8"))
       .split("\n")
       .filter((line) => !line.includes(TABS_ANCHOR))
       .join("\n");
-    await writeFile(tabsPath, stripped, "utf-8");
+    await writeFile(registryPath, stripped, "utf-8");
 
     expect(await runAddMethod([TEXT_STATS_REF], deps())).toBe(1);
 
     expect(await written()).toEqual(["src/components/ExampleTabs.tsx"]);
-    expect(await readFile(tabsPath, "utf-8")).toBe(stripped);
+    expect(await readFile(registryPath, "utf-8")).toBe(stripped);
   });
 });

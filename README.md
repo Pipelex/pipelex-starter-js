@@ -8,7 +8,7 @@ It ships demo pipelines, presented as tabs:
 - **PDF summary** (`methods/summarize-pdf`) — uploads a PDF in the browser and returns a structured `{ title, doc_type, key_points }` summary from a cheap OpenAI model.
 - **Image generation** (`methods/generate-image`) — turns a text prompt into an image with `gpt-image-2`.
 - **Complex inputs** (`methods/complex-form`) — the same extraction with an optional structured input and a plural one, so the form has something to derive beyond a single text box. Its point is what the code does _not_ contain: `src/components/ComplexForm.tsx` is no longer than `EntityForm.tsx` and names no input.
-- **Text stats** (`methods/text-stats`) — a method that does **not** live in this repo. `methods/text-stats/method.json` names a published package by address, and every file behind the tab was written by `make add-method` rather than by hand (see [Add a method that lives elsewhere](#add-a-method-that-lives-elsewhere)).
+- **Text stats** (`methods/text-stats`) — a method that does **not** live in this repo. `methods/text-stats/method.json` names a published package by address, and every file behind the tab was written by `make add-method` rather than by hand (see [Add a method](#add-a-method)).
 
 Starting from zero? Use this template (next section). Adding Pipelex to an app you already have? This repo doubles as the worked example of the pattern — [`docs/adopt-in-an-existing-project.md`](docs/adopt-in-an-existing-project.md) is the transplant checklist.
 
@@ -70,7 +70,7 @@ src/
     summarize-pdf/            # types.ts (zod) + binder.ts + contracts.ts + codegen.lock + sources.json
   lib/
     pipelexClient.ts          # PipelexApiClient singleton
-    loadBundle.ts             # reads the .mthds bundles from disk
+    loadBundle.ts             # loadMethodBundles — reads a method's .mthds files from disk
     blockingRun.ts            # the blocking execute path
     durableRun.ts             # the durable start + poll path
     wireOutput.ts             # reads main_stuff and readies it for a generated binder
@@ -147,33 +147,27 @@ A few things worth knowing:
 
 **After editing anything under `methods/`, run `npm run codegen`** and commit the result alongside the bundle. `make check` fails until you do.
 
-A method directory holds either a `.mthds` bundle or a `method.json` manifest naming a method that lives elsewhere; `npm run codegen` regenerates both kinds in one pass, and bumping a published method's version is an edit to that manifest's tag plus a regeneration. See [`docs/codegen.md`](docs/codegen.md) for the two source kinds, and [Add a method that lives elsewhere](#add-a-method-that-lives-elsewhere) for the gesture that writes one.
+A method directory holds either a `.mthds` bundle or a `method.json` manifest naming a method that lives elsewhere; `npm run codegen` regenerates both kinds in one pass, and bumping a published method's version is an edit to that manifest's tag plus a regeneration. See [`docs/codegen.md`](docs/codegen.md) for the two source kinds, and [Add a method](#add-a-method) for the gesture that writes either.
 
 **Regeneration currently needs `PIPELEX_BASE_URL=https://api-dev.pipelex.com`.** Measured 2026-09-05: `api.pipelex.com` is on an older release that returns neither of `/v1/validate`'s `input_form` and `output_form` views (codegen needs both for every method) and does not advertise `method_ref` (which a package-sourced manifest needs). Both scripts say so rather than failing obscurely, and this is a deploy away. Nothing in the committed tree depends on it — `npm run codegen:check` is pure hashing, so `git clone && make all` passes with no key and no network either way.
 
-## Swap in your own pipeline
+## Add a method
 
-1. Add `methods/<name>/main.mthds` (the `/mthds-build` skill from the [mthds-plugins](https://github.com/Pipelex/mthds-plugins) marketplace can generate one).
-2. Run `npm run codegen` — it writes `src/generated/<name>/` with the zod schemas and binders for the concepts that method declares.
-3. Add a loader in `src/lib/loadBundle.ts`, a `parseXxx(results)` adapter over the generated binder in `src/types/`, and the action trio (`run<Name>Blocking`, `start<Name>Run`, `poll<Name>Run`) in `src/actions/`. Each action takes the schema-shaped data dict and starts with `gateRunInputs(CONTRACT, data)`.
-4. Wire it from a component with `useRunInputs(CONTRACT, DESCRIPTOR)` + `<RunInputsForm>` for the inputs, `useRun({ mode, blocking, start, poll })` for the run, and `<RunResult field={RESULT_FIELD} …>` for the output. **You write neither the form fields nor the result view** — both come from the method's own descriptors. The existing examples are the canonical patterns to copy.
-
-## Add a method that lives elsewhere
-
-The checklist above assumes the method's bundle is in this repo. When it isn't — when it was authored on [app.pipelex.com](https://app.pipelex.com) and saved under your organization, or published as a package in a public repository — one command does the whole checklist for you:
+One command turns a method into a new tab — a bundle you have on disk, a method saved under your organization on [app.pipelex.com](https://app.pipelex.com), or one published as a package in a public repository:
 
 ```bash
+make add-method METHOD=path/to/my_method.mthds                       # a bundle: a .mthds file, or a directory of them
 make add-method METHOD=github.com/Pipelex/methods/text_stats@v0.1.1   # a published package
 make add-method METHOD=mt_abc123…                                      # a method in your org's catalog
 ```
 
-It writes a `methods/<name>/method.json` manifest naming the method, the generated tree beside it, the narrower, the action trio, the form, an action test, and a tab entry — then tells you the one line to replace once you know what the output should look like. The "Text stats" tab this template ships is the output of exactly that command, committed untouched, so you have something to diff your own run against.
+It writes the method's directory, the generated tree beside it, the narrower, the action trio, the form, an action test, and a tab entry — the same slice the demo tabs were written with by hand, and **you write neither the form fields nor the result view**: both come from the method's own descriptors. A bundle is copied into `methods/<name>/` (or scaffolded in place when it is already there), and its action reads the files at request time; a published or catalog method is named by a `methods/<name>/method.json` manifest and resolved server-side. The "Text stats" tab this template ships is the output of the second command, committed untouched, so you have something to diff your own run against.
 
-The method itself is never copied here: the manifest names it, the run resolves it server-side, and moving to a newer version is editing the tag and running `npm run codegen`. The gesture is **one-shot** — it refuses rather than overwriting a slice that already exists, because the files it writes become yours the moment they land.
+The gesture is **one-shot** — it refuses rather than overwriting a slice that already exists, because the files it writes become yours the moment they land — and it writes nothing until everything has been fetched and rendered, so a refusal leaves the tree untouched. `npm run codegen` is the refresh afterwards: edit the bundle, or move a published method to a newer version by editing the tag in its manifest, then regenerate, and the run follows.
 
-Useful arguments: `PIPE=<pipe_code>` when the method carries several pipes (without it, the method's own default is used, and a method with several pipes and no default is refused listing them), `NAME=` and `LABEL=` to override the derived directory name and tab label, and `DRY_RUN=1` to print the whole plan without writing anything.
+Useful arguments: `PIPE=<pipe_code>` when the method carries several pipes (without it, the method's own default is used, and a method with several pipes and no default is refused listing them), `NAME=` and `LABEL=` to override the derived directory name and tab label, and `DRY_RUN=1` to print the whole plan without writing anything. The `/mthds-build` skill from the [mthds-plugins](https://github.com/Pipelex/mthds-plugins) marketplace can write the bundle in the first place.
 
-**It needs a key and a base URL that resolves the selector** — see the note on `PIPELEX_BASE_URL` in [Environment variables](#environment-variables). The full reference is [`docs/add-method.md`](docs/add-method.md).
+**It needs a key and a base URL that serves the form views** — see the note on `PIPELEX_BASE_URL` in [Environment variables](#environment-variables). The full reference is [`docs/add-method.md`](docs/add-method.md).
 
 ## Remove an example
 
@@ -181,14 +175,14 @@ Stripping the demos is usually the first act of making this template yours. Each
 
 1. The bundle: `methods/extract-entities/`.
 2. Its generated tree: `src/generated/extract-entities/` — `make check` fails on a generated tree with no method behind it (and vice versa), so always remove both together. Its `contracts.ts` goes with it, and with it the form that read it.
-3. Its loader in `src/lib/loadBundle.ts`, its adapter in `src/types/extractEntitiesPipeline.ts`, and its action trio `src/actions/runExtractEntitiesPipeline.ts` — each with its co-located `.test.ts`, plus that loader's `describe` block in `src/lib/loadBundle.test.ts`.
+3. Its adapter in `src/types/extractEntitiesPipeline.ts` and its action trio `src/actions/runExtractEntitiesPipeline.ts`, each with its co-located `.test.ts`. There is no loader to remove: every action reads its bundle through the shared `loadMethodBundles`, naming its directory.
 4. Its component — `EntityForm.tsx` and its test — and its tab entry in `src/components/ExampleTabs.tsx`, whose own test (`ExampleTabs.test.tsx`) mocks that form and asserts its tab. There is no result component to remove: every example renders the shared `<RunResult>`.
 5. Its e2e spec: `e2e/extract.spec.ts`.
 6. The references the shared code keeps to it. The text example is the form `e2e/error-display.spec.ts` drives — repoint it at a surviving example. The blurb in `src/app/page.tsx` names the examples, and the bundle-read hint in `src/lib/errors.ts` names this one by path. The complex-inputs example is additionally named by the shared gate test (`src/lib/runInputs.test.ts` imports its contract for the structured and plural rows).
 
 Then run `make all`. `tsc` type-checks the co-located tests, so it names most dangling references itself; the two it cannot see — the `vi.mock` module string in `ExampleTabs.test.tsx` and the Playwright selectors — surface as test failures instead. The PDF example additionally owns `public/sample-invoice.pdf`, and the image example is the one exercising the blocking-cap e2e case.
 
-**A scaffolded example (`text-stats`) comes apart the same way, with one difference**: `methods/text-stats/` holds a `method.json` manifest rather than a bundle, so there is nothing in `src/lib/loadBundle.ts` to remove. Leave the two `add-method:` anchor comments in `ExampleTabs.tsx` in place — `make add-method` inserts at them, and a test fails if they go missing.
+**A scaffolded example (`text-stats`) comes apart the same way**, `methods/text-stats/` holding a `method.json` manifest rather than a bundle. Leave the two `add-method:` anchor comments in `ExampleTabs.tsx` in place — `make add-method` inserts at them, and a test fails if they go missing.
 
 ## Make targets
 
@@ -203,7 +197,7 @@ Then run `make all`. `tsc` type-checks the co-located tests, so it names most da
 | `make codegen`        | Regenerate `src/generated/` from `methods/` (needs an API key — see [Generated types](#generated-types)) |
 | `make codegen-check`  | Prove `src/generated/` is current — offline, no key (part of `make check`)                               |
 | `make codegen-verify` | Ask the API whether the committed types still match the methods (needs an API key)                       |
-| `make add-method`     | Scaffold a method that lives elsewhere into the app — `METHOD=<mt_… \| address>` (needs an API key)      |
+| `make add-method`     | Scaffold a method into a new tab — `METHOD=<path \| mt_… \| address>` (needs an API key)                 |
 | `make test`           | Vitest single pass (unit tests, no API call)                                                             |
 | `make agent-test`     | Vitest, silent on success (for AI agents)                                                                |
 | `make test-e2e`       | **Optional** Playwright e2e — live API, costs an LLM call (prompts first; auto-skips without a key)      |

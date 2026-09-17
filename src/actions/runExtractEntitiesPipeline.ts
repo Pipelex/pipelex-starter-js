@@ -1,7 +1,7 @@
 "use server";
 
 import { PIPE_IO_CONTRACTS } from "@/generated/extract-entities/contracts";
-import { loadExtractEntitiesBundle } from "@/lib/loadBundle";
+import { loadMethodBundles } from "@/lib/loadBundle";
 import { parseEntities, type ExtractedEntities } from "@/types/extractEntitiesPipeline";
 import { executeBlockingRun, type BlockingOutcome } from "@/lib/blockingRun";
 import {
@@ -23,7 +23,7 @@ const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "extract_entities", PIPE_COD
 async function buildOptions(inputs: Record<string, unknown>): Promise<StartOptions> {
   return {
     pipe_code: PIPE_CODE,
-    mthds_contents: [await loadExtractEntitiesBundle()],
+    mthds_contents: await loadMethodBundles("extract-entities"),
     inputs,
   };
 }

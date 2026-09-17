@@ -1,7 +1,7 @@
 "use server";
 
 import { getPipelexClient } from "@/lib/pipelexClient";
-import { loadSummarizePdfBundle } from "@/lib/loadBundle";
+import { loadMethodBundles } from "@/lib/loadBundle";
 import { MAX_PDF_BYTES, checkFileInputs } from "@/lib/fileEncoding";
 import { parseDocumentSummary, type DocumentSummary } from "@/types/summarizePipeline";
 import { executeBlockingRun, type BlockingOutcome } from "@/lib/blockingRun";
@@ -67,12 +67,12 @@ function gatePdfInputs(
  * so there is no re-upload.
  */
 async function buildOptions(inputs: Record<string, unknown>): Promise<StartOptions> {
-  const bundle = await loadSummarizePdfBundle();
+  const bundles = await loadMethodBundles("summarize-pdf");
   const prepared = await getPipelexClient().prepareInputs({
-    files: [{ content: bundle }],
+    files: bundles.map((content) => ({ content })),
     inputs,
   });
-  return { pipe_code: PIPE_CODE, mthds_contents: [bundle], inputs: prepared.inputs };
+  return { pipe_code: PIPE_CODE, mthds_contents: bundles, inputs: prepared.inputs };
 }
 
 /** BLOCKING path: summarize an uploaded PDF synchronously (`POST /v1/execute`). */

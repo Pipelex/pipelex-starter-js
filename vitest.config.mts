@@ -16,6 +16,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // A scaffolded action reads its selector from its manifest (tsconfig.json).
+      "@methods": path.resolve(__dirname, "./methods"),
       // See the note in vitest.server-only-stub.ts.
       "server-only": path.resolve(__dirname, "./vitest.server-only-stub.ts"),
     },

@@ -114,8 +114,8 @@ Finally, give the user a short summary:
 - that the version was reset to `0.1.0` and `CHANGELOG.md` restarted
 - that `package-lock.json` was re-synced and `make all` passes
 - that **nothing is committed and nothing is staged** — they should review with `git status` and `git diff`, then commit when ready
-- a nudge to skim the new `README.md` (it still documents the three demo examples — keep them as references, swap in their own pipeline per the "Swap in your own pipeline" section, or strip a demo by following the "Remove an example" checklist right below it), and to update `CLAUDE.md` as their project grows its own conventions. If the user asks to remove the demos now, that checklist is the procedure — offer to walk it with them
-- a heads-up that the home page (`src/app/page.tsx`) still shows the template's subtitle and the three demo tabs under their new title — accurate while the demos remain, theirs to rewrite when they swap in their own pipeline
+- a nudge to skim the new `README.md` (it still documents the demo examples — keep them as references, add their own method as a tab with `make add-method METHOD=<path to a .mthds bundle, a catalog id or a published address>` per the "Add a method" section, or strip a demo by following the "Remove an example" checklist right below it), and to update `CLAUDE.md` as their project grows its own conventions. If the user asks to remove the demos now, that checklist is the procedure — offer to walk it with them
+- a heads-up that the home page (`src/app/page.tsx`) still shows the template's subtitle and the demo tabs under their new title — accurate while the demos remain, theirs to rewrite when they add their own method
 
 ## Rules
 

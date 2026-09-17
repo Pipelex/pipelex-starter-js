@@ -40,6 +40,7 @@ import { assertSelectorSupport, explainSelectorFailure, selectorKindsOf } from "
 import {
   assertSecureBaseUrl,
   CONTRACTS_FILENAME,
+  DERIVED_ARTIFACTS,
   discoverMethods,
   hashSource,
   isContainedPath,
@@ -216,6 +217,13 @@ function explain(
   return error instanceof Error ? error.message : String(error);
 }
 
+/** The files `writeTree` writes itself, which no server artifact may land on. */
+const WRITER_OWNED: ReadonlySet<string> = new Set([
+  LOCK_FILENAME,
+  SOURCES_SIDECAR,
+  ...DERIVED_ARTIFACTS,
+]);
+
 /** The three `/v1/validate` payloads `contracts.ts` is rendered from. */
 export interface ValidateArtifacts {
   pipeIoContracts: PipeIOContracts;
@@ -386,19 +394,25 @@ export async function fetchGenerated(
     return null;
   }
 
-  // The derived artifacts are written last, so a server artifact sharing one
-  // of their names would be silently overwritten by ours: `writeTree` returns
-  // normally, the sidecar records our content, and the lock still expects the
-  // server's — leaving `codegen:check` reporting `hand-edited` forever, with a
-  // remedy ("run npm run codegen") that reproduces the same tree. Same class
-  // as the `lock_filename` guard above, and not hypothetical: the roadmap has
-  // the API serving an input-form descriptor at exactly this seam.
-  const colliding = artifacts.filter((artifact) => artifact.path === CONTRACTS_FILENAME);
+  // The writer owns names of its own in the tree — the lock, the sidecar and every
+  // derived artifact — and writes each after the server's artifacts, so a
+  // server artifact landing on one of them would be silently overwritten:
+  // `writeTree` returns normally, the sidecar records our content, and the lock
+  // still expects the server's — leaving `codegen:check` reporting `hand-edited`
+  // forever, with a remedy ("run npm run codegen") that reproduces the same
+  // tree. Same class as the `lock_filename` guard above, and not hypothetical:
+  // the roadmap has the API serving an input-form descriptor at exactly this
+  // seam. The path is normalized first, because `nested/../contracts.ts` is
+  // contained and still lands on the same file.
+  const colliding = artifacts.filter((artifact) =>
+    WRITER_OWNED.has(path.posix.normalize(artifact.path.replaceAll("\\", "/"))),
+  );
   if (colliding.length > 0) {
     console.error(
-      `\n✗ ${source.name} — the server now returns an artifact named '${CONTRACTS_FILENAME}', ` +
-        `which this script also emits. Nothing was written; stop emitting it locally ` +
-        `and take the server's, or report it upstream.`,
+      `\n✗ ${source.name} — the server returned artifact path(s) that land on a file this ` +
+        `script writes itself (${[...WRITER_OWNED].join(", ")}): ` +
+        `${colliding.map((artifact) => artifact.path).join(", ")}. ` +
+        `Nothing was written; report it upstream.`,
     );
     return null;
   }

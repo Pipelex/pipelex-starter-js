@@ -1,36 +1,45 @@
 /**
- * `make add-method` — scaffold a method that lives somewhere else into this app.
+ * `make add-method` — scaffold a method into this app.
  *
- * The template's first story is `methods/<name>/main.mthds` → `npm run codegen`
- * → an app written by hand around the generated tree. This is the second story
- * for a method that lives on the platform (a catalog `method_id`) or in a
- * published package (a `method_ref` address): the method stays where it is,
- * `methods/<name>/method.json` names it, and everything the four shipped
- * examples have by hand — the generated tree, the Server Action trio, the typed
- * narrower, the form, the tab — is written by the same projections.
+ * A method reaches the app in one of several forms, and every form ends in the
+ * same slice: the generated tree, the Server Action trio, the typed narrower,
+ * the form, a test and the registry entry, written by the same projections so
+ * no app file is written by hand.
+ *
+ *  - **A bundle** — a `.mthds` file or a directory of them. The files are
+ *    copied into `methods/<name>/` (a bundle already there is scaffolded in
+ *    place) and the action reads them at request time.
+ *  - **A catalog id** (`mt_…`) or **a published address** (`github.com/…`) —
+ *    the method stays where it is and `methods/<name>/method.json` names it.
  *
  * Two halves, in this order, and the ordering is the whole safety story:
  *
- *  1. **Read-only.** Parse the selector, check the base URL forwards it, fetch
- *     the catalog name, run `fetchGenerated` (both API calls and every pre-write
- *     guard), choose the pipe, bind the output, derive every name, refuse every
- *     collision, and perform the `ExampleTabs.tsx` insertion *in memory*. Every
- *     refusal happens here, with nothing on disk changed. `--dry-run` stops at
- *     the end of it and prints the plan.
- *  2. **Write.** The manifest, the tree through `writeGenerated` (the same
- *     writer `npm run codegen` uses, so a scaffolded tree IS the tree a
- *     regeneration would write), then the four app files and the tab edit.
+ *  1. **Read-only** (`planAddMethod`). Parse the argument, read the bundle or
+ *     check the base URL forwards the selector, fetch the catalog entry, run
+ *     `fetchGenerated` (both API calls and every pre-write guard), choose the
+ *     pipe, bind the output, derive every name, refuse every collision, and
+ *     render and format every file *in memory*, the `ExampleTabs.tsx` insertion
+ *     included. Every refusal happens here, with nothing on disk changed.
+ *     `--dry-run` stops at the end of it and prints the plan.
+ *  2. **Write** (`writeAddMethod`). The method directory, the tree through
+ *     `writeGenerated` (the same writer `npm run codegen` uses, so a scaffolded
+ *     tree IS the tree a regeneration would write), then the app files and the
+ *     registry edit. A failure part-way removes everything the half created and
+ *     restores the registry, so a re-run meets no collision of its own making.
  *
  * The gesture is one-shot: re-running it for a name that already exists is a
- * refusal, not an overwrite. `npm run codegen` is the refresh — bumping a
- * published method's tag is an edit to one line of `method.json` and a
- * regeneration, and `npm run codegen:check` fails until you make it.
+ * refusal, not an overwrite. `npm run codegen` is the refresh — after editing a
+ * bundle, or bumping a published method's tag in `method.json` — and
+ * `npm run codegen:check` fails until you run it.
  *
- * Everything above `runAddMethod` is pure and unit-tested over a table; the
+ * Everything above `planAddMethod` is pure and unit-tested over a table; the
  * orchestration takes its repo root and its client from `deps` so the tests can
- * point it at a temporary skeleton.
+ * point it at a temporary copy of the tree. The two halves are exported
+ * separately, so a caller can plan, act on the plan, and only then write.
  */
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { access, mkdir, readFile, rm, rmdir, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
@@ -48,15 +57,19 @@ import {
   type ValidateMethodSelector,
 } from "@pipelex/sdk";
 
-import { assertSelectorSupport } from "./api.mts";
+import { assertSelectorSupport, explainSelectorFailure } from "./api.mts";
 import { fetchGenerated, writeGenerated, type FetchedMethod } from "./generate.mts";
 import {
   assertSecureBaseUrl,
   hashSource,
   MANIFEST_FILENAME,
+  NonUtf8FileError,
+  readTextFile,
   REPO_ROOT,
   selectorKind,
   describeSelector,
+  SymlinkRefusedError,
+  walk,
   type MethodSource,
 } from "./shared.mts";
 
@@ -77,7 +90,19 @@ export class AddMethodError extends Error {
   }
 }
 
-// ── The selector ────────────────────────────────────────────────────────────
+/**
+ * A failure `fetchGenerated` has already printed. Carried as an error so the
+ * read-only half can stay one straight line, and caught by the entry points
+ * without printing anything more.
+ */
+export class ReportedFailure extends Error {
+  constructor() {
+    super("already reported");
+    this.name = "ReportedFailure";
+  }
+}
+
+// ── The argument ────────────────────────────────────────────────────────────
 
 /** A catalog id, as the platform mints them. */
 const METHOD_ID_PATTERN = /^mt_[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -88,33 +113,69 @@ const ADDRESS_SEGMENT = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 /** A `@tag` suffix: a git tag or branch name, as the address grammar allows. */
 const ADDRESS_TAG = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 
-const METHOD_ARG_FORMS =
-  'a catalog id ("mt_…") or a published address ' +
+export const METHOD_ARG_FORMS =
+  "a path to a .mthds file or to a directory of them, " +
+  'a catalog id ("mt_…"), or a published address ' +
   '("github.com/<owner>/<repo>[/<package>][@<tag>]")';
 
+/** What the one `METHOD` argument names. */
+export type MethodArg =
+  | { kind: "selector"; selector: ValidateMethodSelector }
+  | { kind: "bundle"; path: string };
+
 /**
- * Parse the one `METHOD` argument into the SDK's own selector type.
+ * Does the argument name a place on disk rather than an address?
  *
- * That type is what `validate`, `codegen`, `prepareInputs`, the manifest and
- * the scaffolded action's `buildOptions` all take, so the value is parsed once
- * here and carried unchanged everywhere else — there is no translation layer to
- * disagree with itself.
+ * An address always starts with its host, and a host has a dot in it
+ * (`github.com`), so a first segment without one is a path — `methods/cv`,
+ * `bundles/cv`. The explicit path forms are recognised before that test, since
+ * `./cv` and `../cv` start with a dot of their own, and so is anything ending
+ * in `.mthds`, which no address does.
+ */
+export function looksLikePath(value: string): boolean {
+  if (value.endsWith(".mthds")) return true;
+  if (/^(\/|~(\/|$)|\.{1,2}(\/|$))/.test(value)) return true;
+  if (/^[A-Za-z]:[\\/]/.test(value) || value.includes("\\")) return true;
+  return !value.split("/")[0]!.includes(".");
+}
+
+/**
+ * Parse the one `METHOD` argument.
+ *
+ * `onDisk` answers whether the argument names something that exists, and a
+ * name that does is a path whatever it looks like: `bundles.v2/cv` has a dot in
+ * its first segment and `mt_drafts` the catalog prefix, and both are ordinary
+ * directory names. Only a name that exists nowhere falls through to the
+ * selector grammar.
+ *
+ * A selector comes back as the SDK's own type, which is what `validate`,
+ * `codegen`, `prepareInputs`, the manifest and the scaffolded action's
+ * `buildOptions` all take, so it is parsed once here and carried unchanged
+ * everywhere else. A path comes back as given: resolving it needs the
+ * directory the gesture was run from, which is the orchestration's business.
  *
  * `mthds` does not export its address parser from a public entry (it is
  * internal to the installer), so this is a small parser over the same grammar:
  * `github.com/<owner>/<repo>[/<subpath>…][@<tag>]`, with an optional
  * `https://` prefix that is normalized away.
  */
-export function parseMethodArg(arg: string): ValidateMethodSelector {
+export function parseMethodArg(
+  arg: string,
+  onDisk: (value: string) => boolean = () => false,
+): MethodArg {
   const trimmed = arg.trim();
   if (trimmed === "") throw new AddMethodError(`METHOD is empty — pass ${METHOD_ARG_FORMS}.`);
+  if (onDisk(trimmed)) return { kind: "bundle", path: trimmed };
 
   if (trimmed.startsWith("mt_")) {
     if (!METHOD_ID_PATTERN.test(trimmed)) {
       throw new AddMethodError(`"${trimmed}" is not a well-formed catalog id (mt_…).`);
     }
-    return { method_id: trimmed };
+    return { kind: "selector", selector: { method_id: trimmed } };
   }
+
+  const hasScheme = /^https?:\/\//.test(trimmed);
+  if (!hasScheme && looksLikePath(trimmed)) return { kind: "bundle", path: trimmed };
 
   const bare = trimmed.replace(/^https?:\/\//, "").replace(/\/+$/, "");
   const [address, ...extraTags] = bare.split("@");
@@ -131,12 +192,13 @@ export function parseMethodArg(arg: string): ValidateMethodSelector {
     segments.length >= 3 && segments.every((segment) => ADDRESS_SEGMENT.test(segment));
   if (!wellFormed) {
     throw new AddMethodError(
-      `"${trimmed}" is neither ${METHOD_ARG_FORMS}.\n` +
+      `"${trimmed}" is not ${METHOD_ARG_FORMS}.\n` +
         "  An address names at least a host, an owner and a repository.",
     );
   }
 
-  return { method_ref: tag === undefined ? segments.join("/") : `${segments.join("/")}@${tag}` };
+  const methodRef = tag === undefined ? segments.join("/") : `${segments.join("/")}@${tag}`;
+  return { kind: "selector", selector: { method_ref: methodRef } };
 }
 
 /**
@@ -147,17 +209,183 @@ export function addressSegments(methodRef: string): string[] {
   return methodRef.split("@")[0]!.split("/");
 }
 
+// ── The bundle ──────────────────────────────────────────────────────────────
+
+/** One `.mthds` file of a bundle, as read. */
+export interface BundleFile {
+  /** Where it lands inside the method directory, forward slashes: `main.mthds`. */
+  relative: string;
+  /** How messages and validation diagnostics name it. */
+  label: string;
+  content: string;
+}
+
+/** A bundle the gesture was pointed at, read and placed. */
+export interface Bundle {
+  files: BundleFile[];
+  /**
+   * The method directory's name when the bundle already sits in
+   * `methods/<name>/`, which is then scaffolded in place; `null` when the
+   * files are copied in.
+   */
+  inPlace: string | null;
+  /** How messages name the bundle as a whole. */
+  display: string;
+}
+
+/** `~` and `~/…` the way a shell would have expanded them, had it been asked to. */
+function expandHome(given: string): string {
+  return given === "~" || given.startsWith("~/") ? path.join(os.homedir(), given.slice(1)) : given;
+}
+
+function isInside(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+/**
+ * Read every `.mthds` file under `dir`, refusing what the codegen scripts
+ * refuse: a symlink or special file anywhere below it, and a file that is not
+ * UTF-8. Both are refusals rather than skips, because a bundle that silently
+ * loses a file is a method that silently changes.
+ */
+async function readBundleDir(
+  dir: string,
+  display: string,
+  label: (relative: string) => string,
+): Promise<{ files: BundleFile[]; treePaths: string[] }> {
+  let treePaths: string[];
+  try {
+    treePaths = await walk(dir);
+  } catch (error) {
+    if (error instanceof SymlinkRefusedError) throw new AddMethodError(error.message);
+    throw error;
+  }
+  const bundlePaths = treePaths.filter((relative) => relative.endsWith(".mthds"));
+  if (bundlePaths.length === 0) {
+    throw new AddMethodError(`${display} holds no .mthds file — there is no bundle to add.`);
+  }
+  const files: BundleFile[] = [];
+  for (const relative of bundlePaths) {
+    files.push({
+      relative,
+      label: label(relative),
+      content: await readUtf8(path.join(dir, relative)),
+    });
+  }
+  return { files, treePaths };
+}
+
+async function readUtf8(filePath: string): Promise<string> {
+  try {
+    return await readTextFile(filePath);
+  } catch (error) {
+    if (error instanceof NonUtf8FileError) throw new AddMethodError(error.message);
+    throw error;
+  }
+}
+
+/**
+ * Read the bundle a path names, and decide where it lives in the app.
+ *
+ * A path inside `methods/<name>/` — the directory itself or any file in it —
+ * means that whole directory, because `npm run codegen` reads every `.mthds`
+ * file a method directory holds: scaffolding one file of it would describe a
+ * method the generated tree does not. Anywhere else, a file is taken alone and
+ * a directory is taken with every `.mthds` file under it, and all of them are
+ * copied in later, keeping their paths relative to what was named.
+ */
+export async function readBundle(given: string, cwd: string, repoRoot: string): Promise<Bundle> {
+  const resolved = path.resolve(cwd, expandHome(given));
+  const methodsRoot = path.join(repoRoot, "methods");
+
+  let info;
+  try {
+    info = await stat(resolved);
+  } catch {
+    throw new AddMethodError(
+      `"${given}" is not a file or a directory (looked for ${resolved}).\n` +
+        `  METHOD is ${METHOD_ARG_FORMS}.`,
+    );
+  }
+
+  if (path.relative(methodsRoot, resolved) === "") {
+    throw new AddMethodError(
+      `"${given}" is the methods/ directory itself — point at one method's directory in it.`,
+    );
+  }
+
+  if (isInside(methodsRoot, resolved)) {
+    const [dirName, ...rest] = path.relative(methodsRoot, resolved).split(path.sep);
+    if (rest.length === 0 && !info.isDirectory()) {
+      throw new AddMethodError(
+        `"${given}" sits directly in methods/, where no method is read from. Move it into a ` +
+          "directory of its own, methods/<name>/, and point at that directory.",
+      );
+    }
+    const methodDir = path.join(methodsRoot, dirName!);
+    const display = `methods/${dirName}/`;
+    const { files, treePaths } = await readBundleDir(
+      methodDir,
+      display,
+      (relative) => `methods/${dirName}/${relative}`,
+    );
+    if (treePaths.includes(MANIFEST_FILENAME)) {
+      throw new AddMethodError(
+        `${display} holds a ${MANIFEST_FILENAME} beside its .mthds files — a method directory ` +
+          "holds one or the other. Remove whichever does not describe the method.",
+      );
+    }
+    return { files, inPlace: dirName!, display };
+  }
+
+  const shown = isInside(cwd, resolved) ? path.relative(cwd, resolved) : resolved;
+
+  if (info.isFile()) {
+    if (!resolved.endsWith(".mthds")) {
+      throw new AddMethodError(
+        `"${given}" is not a .mthds file.\n  METHOD is ${METHOD_ARG_FORMS}.`,
+      );
+    }
+    const content = await readUtf8(resolved);
+    return {
+      files: [{ relative: path.basename(resolved), label: shown, content }],
+      inPlace: null,
+      display: shown,
+    };
+  }
+
+  if (!info.isDirectory()) {
+    throw new AddMethodError(`"${given}" is neither a file nor a directory.`);
+  }
+  if (!isInside(resolved, repoRoot) && path.relative(resolved, repoRoot) !== "") {
+    // Not an ancestor of the app: the ordinary case.
+  } else {
+    throw new AddMethodError(
+      `"${given}" contains this app. Point at the directory that holds the bundle's .mthds files.`,
+    );
+  }
+  const display = `${shown}/`;
+  const { files } = await readBundleDir(resolved, display, (relative) =>
+    path.join(shown, relative),
+  );
+  return { files, inPlace: null, display };
+}
+
 // ── Names ───────────────────────────────────────────────────────────────────
 
-const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+// A letter first: the slug also becomes TypeScript identifiers (`TextStatsForm`,
+// `runTextStatsBlocking`), and an identifier cannot start with a digit.
+const SLUG_PATTERN = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 
 /**
  * `text_stats` → `text-stats`, `CV screening` → `cv-screening`, `Test-1` →
- * `test-1`. The result is a directory name, a tab id, and the stem of four
- * source files, so it is validated rather than merely produced: a name that
- * cannot be one of those is a refusal here, not a broken import later.
+ * `test-1`. The result is a directory name, a registry id, and the stem of the
+ * source files and of the identifiers in them, so it is validated rather than
+ * merely produced: a name that cannot be one of those — `3D model`, whose slug
+ * would start with a digit — is a refusal here, not a broken import later.
  */
-export function kebabCase(input: string): string {
+export function kebabCase(input: string, nameFlag = "--name"): string {
   const slug = input
     .trim()
     .toLowerCase()
@@ -166,10 +394,15 @@ export function kebabCase(input: string): string {
   if (!SLUG_PATTERN.test(slug)) {
     throw new AddMethodError(
       `"${input}" does not yield a usable directory name (got "${slug}"). ` +
-        "Pass --name with a kebab-case name of your own.",
+        `Pass ${nameFlag} with a kebab-case name of your own that starts with a letter.`,
     );
   }
   return slug;
+}
+
+/** Is `slug` a name the scaffold can build every file and identifier from? */
+export function isSlug(slug: string): boolean {
+  return SLUG_PATTERN.test(slug);
 }
 
 /** `text-stats` → `TextStats`. The component, the actions, the output type. */
@@ -186,23 +419,28 @@ export function camelCase(slug: string): string {
   return pascal.charAt(0).toLowerCase() + pascal.slice(1);
 }
 
-/** `text-stats` → `Text stats`. The fallback tab label. */
+/** `text-stats` → `Text stats`. The fallback label. */
 export function humanize(slug: string): string {
   const words = slug.split("-").join(" ");
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 /**
- * Where the slug comes from when `--name` is not given: the catalog `name` for
- * a stored method (a person chose it), and the address's last path segment for
- * a published one — the package, falling back to the repository for an address
- * that names no package.
+ * Where a selector's slug comes from when `--name` is not given: the catalog
+ * `name` for a stored method (a person chose it), and the address's last path
+ * segment for a published one — the package, falling back to the repository for
+ * an address that names no package. A bundle's slug is the domain of the pipe
+ * it runs, or the name of the `methods/` directory it already sits in.
  */
-export function slugSource(selector: ValidateMethodSelector, catalogName?: string): string {
+export function slugSource(
+  selector: ValidateMethodSelector,
+  catalogName?: string,
+  nameFlag = "--name",
+): string {
   if (selectorKind(selector) === "method_id") {
     if (catalogName === undefined || catalogName.trim() === "") {
       throw new AddMethodError(
-        "the catalog method has no name to derive a directory name from — pass --name.",
+        `the catalog method has no name to derive a directory name from — pass ${nameFlag}.`,
       );
     }
     return catalogName;
@@ -213,13 +451,13 @@ export function slugSource(selector: ValidateMethodSelector, catalogName?: strin
 
 /** Every name the scaffold derives, in one record the templates read. */
 export interface ScaffoldNames {
-  /** Directory name under `methods/` and `src/generated/`, and the tab id. */
+  /** Directory name under `methods/` and `src/generated/`, and the registry id. */
   slug: string;
   /** `TextStats` — the component, the action names, the output type. */
   pascal: string;
   /** `textStats` — the adapter module's basename. */
   camel: string;
-  /** The tab's visible label. */
+  /** The method's label: its tab, when the app runs several, and its Run button. */
   label: string;
 }
 
@@ -235,26 +473,28 @@ export function scaffoldNames(slug: string, label?: string): ScaffoldNames {
 
 /** Every repo-relative path the gesture touches, derived from the names. */
 export interface ScaffoldPaths {
-  manifestDir: string;
+  /** The method's directory: its bundle, or the manifest naming it. */
+  methodDir: string;
+  /** The manifest's path — written only for a method that lives elsewhere. */
   manifest: string;
   generatedDir: string;
   adapter: string;
   action: string;
   actionTest: string;
   form: string;
-  tabs: string;
+  registry: string;
 }
 
 export function scaffoldPaths(names: ScaffoldNames): ScaffoldPaths {
   return {
-    manifestDir: `methods/${names.slug}`,
+    methodDir: `methods/${names.slug}`,
     manifest: `methods/${names.slug}/${MANIFEST_FILENAME}`,
     generatedDir: `src/generated/${names.slug}`,
     adapter: `src/types/${names.camel}Pipeline.ts`,
     action: `src/actions/run${names.pascal}Pipeline.ts`,
     actionTest: `src/actions/run${names.pascal}Pipeline.test.ts`,
     form: `src/components/${names.pascal}Form.tsx`,
-    tabs: "src/components/ExampleTabs.tsx",
+    registry: "src/components/ExampleTabs.tsx",
   };
 }
 
@@ -442,7 +682,7 @@ function collectFiles(node: InputFormItem, at: string, out: FileInput[]): void {
 /**
  * Every file position a pipe's inputs declare, in descriptor order.
  *
- * Any one of them gives the slice the PDF example's whole path: the browser
+ * Any one of them gives the slice the whole file-input path: the browser
  * encodes through `useFileInputs` (the kernel's list and object controls hand
  * a nested file to the same `onDropFile` seam, at its dotted id), the action
  * gates every position with `checkFileInputs` — which walks this same
@@ -470,11 +710,12 @@ export function hasGatingInput(descriptor: PipeInputFormDescriptor): boolean {
   return descriptor.fields.some((field) => field.gating);
 }
 
-// ── The tab ─────────────────────────────────────────────────────────────────
+// ── The registry ────────────────────────────────────────────────────────────
 
 /**
  * The two markers `src/components/ExampleTabs.tsx` carries, and the scaffold's
- * whole contract with that file.
+ * whole contract with that file. Its `TABS` array is the app's registry: one
+ * entry per method, and the entry is the tab, the panel and the component.
  *
  * The match is on the token alone, not on the full comment line, so the prose
  * after it can be reworded freely; the tokens themselves may not move. An
@@ -489,21 +730,21 @@ function escapeRegExp(value: string): string {
 }
 
 /** One entry of the `TABS` array, and the import that feeds it. */
-export interface TabEntry {
+export interface RegistryEntry {
   id: string;
   label: string;
   componentName: string;
 }
 
 /**
- * Insert a scaffolded tab into `ExampleTabs.tsx` — one import line above the
+ * Register a scaffolded method in `ExampleTabs.tsx` — one import line above the
  * imports anchor, one array entry above the tabs anchor.
  *
  * Pure over the source text: the orchestration does this in memory during its
  * read-only half, so a missing anchor or a duplicate id is a refusal before
  * anything is written.
  */
-export function insertTab(source: string, entry: TabEntry): string {
+export function registerMethod(source: string, entry: RegistryEntry, nameFlag = "--name"): string {
   const lines = source.split("\n");
   const importsAt = lines.findIndex((line) => line.includes(IMPORTS_ANCHOR));
   const tabsAt = lines.findIndex((line) => line.includes(TABS_ANCHOR));
@@ -523,13 +764,13 @@ export function insertTab(source: string, entry: TabEntry): string {
   if (new RegExp(`\\bid:\\s*"${escapeRegExp(entry.id)}"`).test(source)) {
     throw new AddMethodError(
       `src/components/ExampleTabs.tsx already has a tab with id "${entry.id}". ` +
-        "Pass --name to scaffold under a different name.",
+        `Pass ${nameFlag} to scaffold under a different name.`,
     );
   }
   if (new RegExp(`\\b${escapeRegExp(entry.componentName)}\\b`).test(source)) {
     throw new AddMethodError(
       `src/components/ExampleTabs.tsx already mentions ${entry.componentName}. ` +
-        "Pass --name to scaffold under a different name.",
+        `Pass ${nameFlag} to scaffold under a different name.`,
     );
   }
 
@@ -550,10 +791,18 @@ export function insertTab(source: string, entry: TabEntry): string {
 
 // ── The emitted files ───────────────────────────────────────────────────────
 
+/**
+ * Where the scaffolded action finds its method: the selector a manifest holds,
+ * or the bundle files under `methods/<slug>/`.
+ */
+export type ScaffoldSource =
+  | { kind: "selector"; selector: ValidateMethodSelector }
+  | { kind: "files" };
+
 /** Everything the templates read, derived once by the read-only half. */
 export interface ScaffoldPlan {
   names: ScaffoldNames;
-  selector: ValidateMethodSelector;
+  source: ScaffoldSource;
   pipe: ChosenPipe;
   binding: OutputBinding;
   files: FileInput[];
@@ -566,11 +815,21 @@ export function renderManifest(selector: ValidateMethodSelector): string {
   return `${JSON.stringify(selector, null, 2)}\n`;
 }
 
-/** How the selector reads as a TypeScript constant pair: the name and the literal. */
-function selectorConstant(selector: ValidateMethodSelector): { name: string; value: string } {
+/**
+ * How the emitted code names the selector: the constant, and the manifest field
+ * it is read from. The value itself is never copied into a source file — the
+ * action and its test import the manifest — so editing `method.json` and running
+ * `npm run codegen` moves the run and the generated contract together.
+ */
+function selectorConstant(selector: ValidateMethodSelector): { name: string; field: string } {
   return selectorKind(selector) === "method_ref"
-    ? { name: "METHOD_REF", value: JSON.stringify(selector.method_ref) }
-    : { name: "METHOD_ID", value: JSON.stringify(selector.method_id) };
+    ? { name: "METHOD_REF", field: "method_ref" }
+    : { name: "METHOD_ID", field: "method_id" };
+}
+
+/** `import MANIFEST from "@methods/<slug>/method.json";` — the one copy of the selector. */
+function manifestImport(names: ScaffoldNames): string {
+  return `import MANIFEST from "@methods/${names.slug}/method.json";`;
 }
 
 /**
@@ -589,13 +848,17 @@ export function renderAdapter(plan: ScaffoldPlan): string {
   const { names, binding } = plan;
   const outputType = `${names.pascal}Output`;
   const parseName = `parse${names.pascal}Output`;
+  const origin =
+    plan.source.kind === "files"
+      ? `the bundle in \`${scaffoldPaths(names).methodDir}/\``
+      : `the method \`${scaffoldPaths(names).manifest}\` names`;
   const header = [
     "// Scaffolded by `make add-method` — yours to edit from here on.",
     "//",
-    "// The output shape is NOT written here: `npm run codegen` projects it from the",
-    `// method \`${scaffoldPaths(names).manifest}\` names, and this module is the`,
-    "// thin adapter over that projection. If you find yourself declaring fields,",
-    "// the method already declares them.",
+    "// The output shape is NOT written here: `npm run codegen` projects it from",
+    `// ${origin}, and this module is the thin`,
+    "// adapter over that projection. If you find yourself declaring fields, the",
+    "// method already declares them.",
     "",
   ];
 
@@ -662,21 +925,66 @@ export function renderAdapter(plan: ScaffoldPlan): string {
 }
 
 /**
+ * How the emitted action names its method, in both halves of the file: the
+ * imports it needs, the constant it declares, and the fields `buildOptions`
+ * spreads into the run options.
+ *
+ * Neither form copies the method into the source file. A selector is read from
+ * the manifest — so editing `method.json` and running `npm run codegen` moves
+ * the run and the generated contract together — and a bundle is read from its
+ * directory at request time, so an edit to the files and a regeneration do the
+ * same.
+ */
+function methodReference(plan: ScaffoldPlan): {
+  imports: string[];
+  declaration: string[];
+  describe: string[];
+} {
+  const { names, source } = plan;
+  if (source.kind === "files") {
+    return {
+      imports: ['import { loadMethodBundles } from "@/lib/loadBundle";'],
+      describe: [
+        "// The method's bundle is every `.mthds` file under",
+        `// \`${scaffoldPaths(names).methodDir}/\`, read at request time rather than copied`,
+        "// here, so the run always sends the bundle the generated tree was projected",
+        "// from: edit the files, then run `npm run codegen`.",
+      ],
+      declaration: [`const METHOD_DIR = ${JSON.stringify(names.slug)};`],
+    };
+  }
+  const constant = selectorConstant(source.selector);
+  return {
+    imports: [manifestImport(names)],
+    describe: [
+      "// The method is NOT copied into this repo: it lives where",
+      `// \`${scaffoldPaths(names).manifest}\` says. The selector is read from that manifest`,
+      "// rather than copied here, so the run always names the method the generated tree",
+      "// was projected from: to move to another version, edit the manifest and run",
+      "// `npm run codegen`.",
+    ],
+    declaration: [`const ${constant.name} = MANIFEST.${constant.field};`],
+  };
+}
+
+/**
  * `src/actions/run<Pascal>Pipeline.ts` — the Server Action trio.
  *
- * Identical in shape to the four hand-written ones but for the run selector: a
- * scaffolded method lives elsewhere, so `buildOptions` sends the same
- * `method_ref` / `method_id` the tree was projected from instead of inline
- * `mthds_contents`, and there is no bundle loader.
+ * A selector-sourced method lives elsewhere, so `buildOptions` sends the same
+ * `method_ref` / `method_id` the tree was projected from. A bundle-sourced one
+ * sends the bundle itself, as `mthds_contents`, read through the one generic
+ * loader. Everything else — the gate, the file path, the exports — is the
+ * same for both.
  */
 export function renderAction(plan: ScaffoldPlan): string {
-  const { names, selector, pipe, files } = plan;
+  const { names, source, pipe, files } = plan;
   const outputType = `${names.pascal}Output`;
   const parseName = `parse${names.pascal}Output`;
-  const constant = selectorConstant(selector);
+  const reference = methodReference(plan);
   const hasFiles = files.length > 0;
 
   const imports = [
+    ...reference.imports,
     `import { ${hasFiles ? "INPUT_FORM, " : ""}PIPE_IO_CONTRACTS } from "@/generated/${names.slug}/contracts";`,
     `import { ${parseName}, type ${outputType} } from "@/types/${names.camel}Pipeline";`,
     'import { executeBlockingRun, type BlockingOutcome } from "@/lib/blockingRun";',
@@ -691,7 +999,7 @@ export function renderAction(plan: ScaffoldPlan): string {
   ];
   if (hasFiles) {
     imports.splice(
-      2,
+      reference.imports.length + 2,
       0,
       'import { getPipelexClient } from "@/lib/pipelexClient";',
       'import { MAX_PDF_BYTES, checkFileInputs } from "@/lib/fileEncoding";',
@@ -706,11 +1014,8 @@ export function renderAction(plan: ScaffoldPlan): string {
     "",
     "// Scaffolded by `make add-method` — yours to edit from here on.",
     "//",
-    "// The method is NOT copied into this repo: it lives where",
-    `// \`${scaffoldPaths(names).manifest}\` says, and the run names the same selector the`,
-    "// generated tree was projected from. To move to another version of it, edit that",
-    "// manifest and run `npm run codegen`.",
-    `const ${constant.name} = ${constant.value};`,
+    ...reference.describe,
+    ...reference.declaration,
     `const PIPE_CODE = ${JSON.stringify(pipe.code)};`,
   ];
   if (hasFiles) {
@@ -735,16 +1040,28 @@ export function renderAction(plan: ScaffoldPlan): string {
   }
   head.push("");
 
-  const gateName = hasFiles ? "gateInputs" : "gateRunInputs";
   const body: string[] = [];
 
   if (hasFiles) {
+    // What `prepareInputs` is told the method is, and what the run is sent.
+    const closure =
+      source.kind === "files"
+        ? {
+            load: ["  const bundles = await loadMethodBundles(METHOD_DIR);"],
+            prepare: "    files: bundles.map((content) => ({ content })),",
+            run: "    mthds_contents: bundles,",
+          }
+        : {
+            load: [],
+            prepare: `    ${selectorConstant(source.selector).field}: ${selectorConstant(source.selector).name},`,
+            run: `    ${selectorConstant(source.selector).field}: ${selectorConstant(source.selector).name},`,
+          };
     body.push(
       "/** Media types the file input(s) accept. Widen it if your method takes more. */",
       `const ALLOWED_MIMES = ${JSON.stringify(allowedMimesFor(files))};`,
       "",
       "/**",
-      " * Shape gate, then file gate, in that order — the PDF example's pattern.",
+      " * Shape gate, then file gate, in that order.",
       " *",
       " * The kernel gate proves the shape a contract can declare; `checkFileInputs`",
       " * proves what it cannot: that the `url` at every file position the descriptor",
@@ -780,13 +1097,14 @@ export function renderAction(plan: ScaffoldPlan): string {
       "async function buildOptions(",
       "  inputs: Record<string, unknown>,",
       "): Promise<PipelexStartOptions> {",
+      ...closure.load,
       "  const prepared = await getPipelexClient().prepareInputs({",
-      `    ${constant.name === "METHOD_REF" ? "method_ref" : "method_id"}: ${constant.name},`,
+      closure.prepare,
       "    pipe_ref: PIPE_REF,",
       "    inputs,",
       "  });",
       "  return {",
-      `    ${constant.name === "METHOD_REF" ? "method_ref" : "method_id"}: ${constant.name},`,
+      closure.run,
       "    pipe_code: PIPE_CODE,",
       "    inputs: prepared.inputs,",
       "  };",
@@ -794,19 +1112,30 @@ export function renderAction(plan: ScaffoldPlan): string {
       "",
     );
   } else {
+    const run =
+      source.kind === "files"
+        ? "    mthds_contents: await loadMethodBundles(METHOD_DIR),"
+        : `    ${selectorConstant(source.selector).field}: ${selectorConstant(source.selector).name},`;
     body.push(
       "/**",
       " * SDK options shared by both paths — `execute` and `start` take the same shape.",
       " *",
-      " * `PipelexStartOptions` is the protocol's run arguments plus the run extensions;",
-      " * the selector below is one of those, which is what lets this action name a",
-      " * method that lives elsewhere instead of shipping a bundle inline.",
+      ...(source.kind === "files"
+        ? [
+            " * The bundle travels inline as `mthds_contents`, every file of it, in the",
+            " * order `npm run codegen` read them.",
+          ]
+        : [
+            " * `PipelexStartOptions` is the protocol's run arguments plus the run extensions;",
+            " * the selector below is one of those, which is what lets this action name a",
+            " * method that lives elsewhere instead of shipping a bundle inline.",
+          ]),
       " */",
       "async function buildOptions(",
       "  inputs: Record<string, unknown>,",
       "): Promise<PipelexStartOptions> {",
       "  return {",
-      `    ${constant.name === "METHOD_REF" ? "method_ref" : "method_id"}: ${constant.name},`,
+      run,
       "    pipe_code: PIPE_CODE,",
       "    inputs,",
       "  };",
@@ -815,13 +1144,12 @@ export function renderAction(plan: ScaffoldPlan): string {
     );
   }
 
-  const gateCall =
-    gateName === "gateRunInputs" ? "gateRunInputs(CONTRACT, data)" : "gateInputs(data)";
+  const gateCall = hasFiles ? "gateInputs(data)" : "gateRunInputs(CONTRACT, data)";
 
   body.push(
     "/**",
     " * BLOCKING path (`POST /v1/execute`). Behind the hosted gateway a synchronous run",
-    " * is cut off at ~30s; flip the example to Durable mode to survive a long one.",
+    " * is cut off at ~30s; switch to Durable mode to survive a long one.",
     " */",
     `export async function run${names.pascal}Blocking(`,
     "  data: Record<string, unknown>,",
@@ -855,18 +1183,28 @@ export function renderAction(plan: ScaffoldPlan): string {
  * day it guessed wrong, so this asserts only what is true without knowing what
  * the method takes: the trust boundary (a gating pipe refuses an empty
  * submission before the SDK is reached), or, for a pipe that gates on nothing,
- * that an empty submission reaches `execute` carrying the selector and the bare
- * pipe code. Everything else the slice does is covered by the shared code's own
- * tests — `useRun`, `RunInputsForm`, `runInputs`, `blockingRun`, `durableRun`.
+ * that an empty submission reaches `execute` carrying the method — its selector
+ * or its bundle — and the bare pipe code. Everything else the slice does is
+ * covered by the shared code's own tests — `useRun`, `RunInputsForm`,
+ * `runInputs`, `blockingRun`, `durableRun`.
  */
 export function renderActionTest(plan: ScaffoldPlan): string {
-  const { names, selector, pipe, files, gating } = plan;
-  const constant = selectorConstant(selector);
-  const selectorField = constant.name === "METHOD_REF" ? "method_ref" : "method_id";
+  const { names, source, pipe, files, gating } = plan;
   const hasFiles = files.length > 0;
 
   const clientMethods = ["execute", "start", "getRunStatus", "getRunResult"];
   if (hasFiles) clientMethods.push("prepareInputs");
+
+  // Only the non-gating test reads the method; an unused import fails tsc.
+  const methodImport = gating
+    ? []
+    : source.kind === "files"
+      ? ['import { loadMethodBundles } from "@/lib/loadBundle";']
+      : [manifestImport(names)];
+  const methodField =
+    source.kind === "files"
+      ? `      mthds_contents: await loadMethodBundles(${JSON.stringify(names.slug)}),`
+      : `      ${selectorConstant(source.selector).field}: MANIFEST.${selectorConstant(source.selector).field},`;
 
   const head = [
     'import { describe, it, expect, vi, beforeEach } from "vitest";',
@@ -877,10 +1215,12 @@ export function renderActionTest(plan: ScaffoldPlan): string {
     `  getPipelexClient: () => ({ ${clientMethods.join(", ")} }),`,
     "}));",
     "",
-    "import {",
-    `  run${names.pascal}Blocking,`,
-    `  start${names.pascal}Run,`,
-    `} from "./run${names.pascal}Pipeline";`,
+    ...methodImport,
+    // The gating test drives both paths; the wiring test drives the blocking one,
+    // and an unused import fails tsc.
+    gating
+      ? `import { run${names.pascal}Blocking, start${names.pascal}Run } from "./run${names.pascal}Pipeline";`
+      : `import { run${names.pascal}Blocking } from "./run${names.pascal}Pipeline";`,
     "",
     "beforeEach(() => {",
     ...clientMethods.map((method) => `  ${method}.mockReset();`),
@@ -889,7 +1229,7 @@ export function renderActionTest(plan: ScaffoldPlan): string {
     "// Scaffolded by `make add-method`, and deliberately fixture-free: a test that",
     "// guessed input values from the method's descriptor would be wrong the day the",
     "// method changes. Add your own cases with real inputs once you know what this",
-    "// method takes — `src/actions/runExtractEntitiesPipeline.test.ts` is the shape.",
+    "// method takes: mock `execute` and `start`, call the action, assert the outcome.",
     `describe("run${names.pascal}Pipeline", () => {`,
   ];
 
@@ -911,15 +1251,19 @@ export function renderActionTest(plan: ScaffoldPlan): string {
       ]
     : [
         "  // This pipe gates on nothing, so an empty submission is a legitimate run and",
-        "  // what is worth pinning is the wiring: the selector and the bare pipe code.",
-        '  it("sends the selector and the bare pipe code to the SDK", async () => {',
+        "  // what is worth pinning is the wiring: the method and the bare pipe code.",
+        `  it(${JSON.stringify(
+          source.kind === "files"
+            ? "sends the bundle and the bare pipe code to the SDK"
+            : "sends the selector and the bare pipe code to the SDK",
+        )}, async () => {`,
         ...(hasFiles
           ? ["    prepareInputs.mockResolvedValueOnce({ inputs: {}, uploads: [] });"]
           : []),
         '    execute.mockResolvedValueOnce({ pipeline_run_id: "run-1", main_stuff: {} });',
         `    await run${names.pascal}Blocking({});`,
         "    expect(execute).toHaveBeenCalledWith({",
-        `      ${selectorField}: ${constant.value},`,
+        methodField,
         `      pipe_code: ${JSON.stringify(pipe.code)},`,
         "      inputs: {},",
         "    });",
@@ -930,8 +1274,8 @@ export function renderActionTest(plan: ScaffoldPlan): string {
 }
 
 /**
- * `src/components/<Pascal>Form.tsx` — the one kernel composition, plus the
- * chrome the four examples share.
+ * `src/components/<Pascal>Form.tsx` — the one kernel composition, plus the run
+ * chrome every method shares.
  *
  * Nothing about the method's IO is written by hand, on either side: the input
  * fields come from its committed input-form descriptor through `useRunInputs`
@@ -944,6 +1288,10 @@ export function renderActionTest(plan: ScaffoldPlan): string {
 export function renderForm(plan: ScaffoldPlan): string {
   const { names, pipe, files } = plan;
   const hasFiles = files.length > 0;
+  // While a file is being encoded its value is unset, and `ready` only speaks
+  // for the inputs the gate refuses empty — so a form holding an optional or
+  // non-gating file input must wait for the encode, or it runs without it.
+  const busy = hasFiles ? "running || encodingIds.size > 0" : "running";
 
   const imports = [
     '"use client";',
@@ -1011,7 +1359,7 @@ export function renderForm(plan: ScaffoldPlan): string {
   const submit = [
     "  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {",
     "    event.preventDefault();",
-    ...(hasFiles ? ["    clearError();"] : []),
+    ...(hasFiles ? ["    if (encodingIds.size > 0) return;", "    clearError();"] : []),
     "    // The action gates the same contract server-side, applying the kernel's",
     "    // rules in full — that is the trust boundary; `ready` below is only UX.",
     "    run(toData());",
@@ -1051,7 +1399,7 @@ export function renderForm(plan: ScaffoldPlan): string {
     "        <ModeToggle value={mode} onChange={setMode} disabled={running} />",
     "        <button",
     '          type="submit"',
-    "          disabled={running || !ready}",
+    `          disabled={${busy} || !ready}`,
     '          className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"',
     "        >",
     `          {running ? "Running…" : ${JSON.stringify(`Run ${names.label.toLowerCase()}`)}}`,
@@ -1100,6 +1448,8 @@ export interface AddMethodDeps {
   repoRoot: string;
   client: AddMethodClient;
   baseUrl: string;
+  /** Where a relative bundle path is resolved from. Defaults to `repoRoot`. */
+  cwd?: string;
 }
 
 /** The parsed command line. */
@@ -1112,8 +1462,8 @@ export interface AddMethodArgs {
 }
 
 const USAGE =
-  "usage: npm run add-method -- <mt_… | github.com/owner/repo[/package][@tag]> " +
-  "[--pipe <pipe_code>] [--name <dir-name>] [--label <tab label>] [--dry-run]";
+  "usage: npm run add-method -- <path/to/bundle | mt_… | github.com/owner/repo[/package][@tag]> " +
+  "[--pipe <pipe_code>] [--name <dir-name>] [--label <label>] [--dry-run]";
 
 /**
  * Parse the command line, refusing an unknown flag and a swallowed value.
@@ -1175,7 +1525,8 @@ async function exists(filePath: string): Promise<boolean> {
  * line past the print width would fail the very first `make all` after being
  * scaffolded. Letting the formatter decide removes a whole class of that. If
  * Prettier cannot be loaded the content is written as-is and the caller is told;
- * a Prettier that loads and then throws is a broken template, and it propagates.
+ * a Prettier that loads and then throws is a broken template, and it propagates
+ * — from the read-only half, before anything is written.
  */
 async function formatEmitted(filePath: string, content: string): Promise<string> {
   let prettier: typeof import("prettier");
@@ -1192,10 +1543,424 @@ async function formatEmitted(filePath: string, content: string): Promise<string>
 }
 
 /** One file the gesture is about to write: where it goes and what goes in it. */
-interface EmittedFile {
-  /** Repo-relative, for the messages. */
+export interface EmittedFile {
+  /** Repo-relative, forward slashes. */
   relative: string;
   content: string;
+}
+
+/** What the catalog says about a stored method. */
+export interface CatalogEntry {
+  name: string;
+  description: string | null;
+}
+
+/**
+ * Everything the write half needs, and everything a caller reads to name an
+ * app after the method — computed by `planAddMethod` with nothing written.
+ */
+export interface AddMethodPlan {
+  names: ScaffoldNames;
+  paths: ScaffoldPaths;
+  scaffold: ScaffoldPlan;
+  contract: PipeIOContract;
+  fetched: FetchedMethod;
+  /** The source `writeGenerated` records in the sidecar: labels and hashes at their final paths. */
+  methodSource: MethodSource;
+  /** Files written under `methods/<name>/` — the manifest, or the copied bundle. Empty in place. */
+  methodFiles: EmittedFile[];
+  /** The bundle already sits in `methods/<name>/`, so that directory is not the gesture's to create. */
+  inPlace: boolean;
+  /** The app files, formatted, then the registry. */
+  emitted: EmittedFile[];
+  /** `ExampleTabs.tsx` as it was read, so the write half can tell whether it moved. */
+  registryBefore: string;
+  /** The stored method's catalog entry, for an id. */
+  catalog: CatalogEntry | null;
+  /** One line naming what was added: the selector, or the bundle and its size. */
+  describe: string;
+  warnings: string[];
+  baseUrl: string;
+}
+
+export interface PlanOptions {
+  /**
+   * The flag a refusal tells the person to pass when no usable name can be
+   * derived. A caller that spends `--name` on something else names its own.
+   */
+  nameFlag?: string;
+}
+
+/**
+ * The read-only half: every fetch, every derivation, every refusal, and every
+ * file rendered and formatted in memory. Throws `AddMethodError` for a refusal
+ * and `ReportedFailure` for one `fetchGenerated` has already printed; returns a
+ * plan the write half can carry out without deciding anything.
+ */
+export async function planAddMethod(
+  args: AddMethodArgs,
+  deps: AddMethodDeps,
+  options: PlanOptions = {},
+): Promise<AddMethodPlan> {
+  const nameFlag = options.nameFlag ?? "--name";
+  const { repoRoot, client, baseUrl } = deps;
+  const inRepo = (relative: string): string => path.join(repoRoot, relative);
+
+  // Refused before anything is fetched: a name that cannot be a directory and
+  // a TypeScript identifier is wrong whatever the method turns out to be.
+  if (args.name !== undefined && !isSlug(args.name)) {
+    throw new AddMethodError(
+      `${nameFlag} "${args.name}" is not kebab-case starting with a letter ` +
+        "(a-z first, then a-z, 0-9 and single dashes).",
+    );
+  }
+
+  const arg = parseMethodArg(args.method, (value) =>
+    existsSync(path.resolve(deps.cwd ?? repoRoot, expandHome(value))),
+  );
+  let catalog: CatalogEntry | null = null;
+  let methodFiles: EmittedFile[];
+  let fetched: FetchedMethod | null;
+  let names: ScaffoldNames;
+  let paths: ScaffoldPaths;
+  let methodSource: MethodSource;
+  let scaffoldSource: ScaffoldSource;
+  let describe: string;
+  let inPlace = false;
+  let pipe: ChosenPipe | null = null;
+  const warnings: string[] = [];
+
+  if (arg.kind === "selector") {
+    const { selector } = arg;
+    const unsupported = await assertSelectorSupport(
+      client,
+      baseUrl,
+      new Set([selectorKind(selector)]),
+    );
+    if (unsupported !== null) throw new AddMethodError(unsupported);
+
+    // A stored method's catalog name is both the slug's source and the default
+    // label — a person chose it. A published address has no such name.
+    if (selectorKind(selector) === "method_id") {
+      let method;
+      try {
+        method = await client.getMethod(selector.method_id!);
+      } catch (error) {
+        const explained = explainSelectorFailure(error, selector);
+        if (explained !== null) throw new AddMethodError(explained);
+        throw error;
+      }
+      catalog = { name: method.name, description: method.description ?? null };
+      warnings.push(
+        "a method_id is scoped to your key's organization, so `npm run codegen` on this " +
+          "slice needs a key of that same org. A published address (method_ref) is the " +
+          "portable form.",
+      );
+    }
+
+    const slug = args.name ?? kebabCase(slugSource(selector, catalog?.name, nameFlag), nameFlag);
+    names = scaffoldNames(slug, args.label ?? catalog?.name);
+    paths = scaffoldPaths(names);
+    await refuseCollisions(inRepo, paths, { inPlace: false, nameFlag });
+
+    const manifest = renderManifest(selector);
+    methodFiles = [{ relative: paths.manifest, content: manifest }];
+    methodSource = {
+      name: names.slug,
+      kind: "selector",
+      selector,
+      sourceHashes: { [paths.manifest]: hashSource(manifest) },
+    };
+    scaffoldSource = { kind: "selector", selector };
+    describe = describeSelector(selector);
+
+    // The same fetch-and-guard half `npm run codegen` runs, so a scaffolded
+    // tree is the tree a regeneration would write — and every codegen refusal
+    // (an unresolvable selector, an escaping artifact path, a missing view)
+    // happens here, having written nothing.
+    fetched = await fetchGenerated(client, methodSource, inRepo(paths.generatedDir), baseUrl);
+  } else {
+    const bundle = await readBundle(arg.path, deps.cwd ?? repoRoot, repoRoot);
+    if (bundle.inPlace !== null) {
+      if (!isSlug(bundle.inPlace)) {
+        throw new AddMethodError(
+          `methods/${bundle.inPlace}/ is not a name the scaffold can build identifiers from — ` +
+            "rename the directory to kebab-case starting with a letter.",
+        );
+      }
+      if (args.name !== undefined && args.name !== bundle.inPlace) {
+        throw new AddMethodError(
+          `${nameFlag} "${args.name}" disagrees with the directory the bundle sits in, ` +
+            `methods/${bundle.inPlace}/. A bundle in methods/ is named by its directory — ` +
+            `drop ${nameFlag}, or rename the directory.`,
+        );
+      }
+    }
+
+    // The files are sent under the labels they were read by, so a diagnostic
+    // names the file the person pointed at. The label does not reach the
+    // artifacts: the crate is the same whatever the files are called.
+    const pending: MethodSource = {
+      name: bundle.inPlace ?? bundle.display,
+      kind: "files",
+      files: bundle.files.map((file) => ({ content: file.content, source: file.label })),
+      sourceHashes: {},
+    };
+    // The tree's directory is not known until the pipe is, and only the
+    // containment test reads it — which asks the same question of any directory.
+    const provisionalOut = inRepo(`src/generated/${bundle.inPlace ?? "_"}`);
+    fetched = await fetchGenerated(client, pending, provisionalOut, baseUrl);
+    if (fetched === null) throw new ReportedFailure();
+
+    // A bundle's slug is the domain of the pipe it runs, so the pipe comes first.
+    pipe = choosePipe(
+      fetched.contracts.pipeIoContracts,
+      fetched.contracts.defaultPipeRef,
+      args.pipe,
+    );
+    const slug = bundle.inPlace ?? args.name ?? kebabCase(pipe.domain, nameFlag);
+    names = scaffoldNames(slug, args.label);
+    paths = scaffoldPaths(names);
+    inPlace = bundle.inPlace !== null;
+    await refuseCollisions(inRepo, paths, { inPlace, nameFlag });
+
+    const placed = bundle.files.map((file) => ({
+      relative: `${paths.methodDir}/${file.relative}`,
+      content: file.content,
+    }));
+    methodFiles = inPlace ? [] : placed;
+    methodSource = {
+      name: names.slug,
+      kind: "files",
+      files: placed.map((file) => ({ content: file.content, source: file.relative })),
+      sourceHashes: Object.fromEntries(
+        placed.map((file) => [file.relative, hashSource(file.content)]),
+      ),
+    };
+    scaffoldSource = { kind: "files" };
+    const count = `${bundle.files.length} .mthds file${bundle.files.length === 1 ? "" : "s"}`;
+    describe = inPlace
+      ? `bundle ${bundle.display} (${count}, in place)`
+      : `bundle ${bundle.display} (${count}, copied to ${paths.methodDir}/)`;
+  }
+
+  if (fetched === null) throw new ReportedFailure();
+
+  pipe ??= choosePipe(
+    fetched.contracts.pipeIoContracts,
+    fetched.contracts.defaultPipeRef,
+    args.pipe,
+  );
+  const contract = contractFor(fetched.contracts.pipeIoContracts, pipe);
+  const descriptor = descriptorFor(fetched.contracts.inputForm, pipe);
+  const scaffold: ScaffoldPlan = {
+    names,
+    source: scaffoldSource,
+    pipe,
+    binding: bindOutput(contract, fetched.report.artifacts),
+    files: fileInputsOf(descriptor),
+    gating: hasGatingInput(descriptor),
+  };
+
+  const registryBefore = await readFile(inRepo(paths.registry), "utf-8");
+  const registryAfter = registerMethod(
+    registryBefore,
+    { id: names.slug, label: names.label, componentName: `${names.pascal}Form` },
+    nameFlag,
+  );
+
+  // Formatted here, not in the write half: a formatter that throws must do so
+  // while nothing has been written.
+  const emitted: EmittedFile[] = [];
+  for (const [relative, content] of [
+    [paths.adapter, renderAdapter(scaffold)],
+    [paths.action, renderAction(scaffold)],
+    [paths.actionTest, renderActionTest(scaffold)],
+    [paths.form, renderForm(scaffold)],
+    [paths.registry, registryAfter],
+  ] as const) {
+    emitted.push({ relative, content: await formatEmitted(inRepo(relative), content) });
+  }
+
+  return {
+    names,
+    paths,
+    scaffold,
+    contract,
+    fetched,
+    methodSource,
+    methodFiles,
+    inPlace,
+    emitted,
+    registryBefore,
+    catalog,
+    describe,
+    warnings,
+    baseUrl,
+  };
+}
+
+/**
+ * Refuse a slice that would land on anything already there.
+ *
+ * A bundle scaffolded in place owns its method directory already, and may have
+ * been through `npm run codegen` by hand: its generated tree is purely derived,
+ * so it is regenerated rather than refused. Everything else is one-shot.
+ */
+async function refuseCollisions(
+  inRepo: (relative: string) => string,
+  paths: ScaffoldPaths,
+  { inPlace, nameFlag }: { inPlace: boolean; nameFlag: string },
+): Promise<void> {
+  const guarded = [
+    ...(inPlace ? [] : [paths.methodDir, paths.generatedDir]),
+    paths.adapter,
+    paths.action,
+    paths.actionTest,
+    paths.form,
+  ];
+  for (const relative of guarded) {
+    if (await exists(inRepo(relative))) {
+      throw new AddMethodError(
+        `${relative} already exists — the gesture is one-shot and never overwrites.\n` +
+          "  To refresh a slice that is already here, edit its method and run\n" +
+          '  `npm run codegen`. To start over, remove the slice first (see "Removing a\n' +
+          `  method" in docs/add-method.md), or pass ${nameFlag} to scaffold beside it.`,
+      );
+    }
+  }
+}
+
+/** Print what the plan will do — the same lines whether or not it is a rehearsal. */
+export function printPlan(plan: AddMethodPlan): void {
+  const { scaffold, contract, names } = plan;
+  console.log(`add-method: ${plan.describe}, via ${plan.baseUrl}`);
+  console.log(`  pipe:   ${scaffold.pipe.ref}`);
+  console.log(
+    `  output: ${contract.output.concept_ref}` +
+      `${scaffold.binding.plural ? " (plural — a list of the concept)" : ""}`,
+  );
+  if (scaffold.files.length > 0) {
+    console.log(`  files:  ${scaffold.files.map((file) => file.path).join(", ")}`);
+  }
+  console.log(`  entry:  ${JSON.stringify(names.label)} (id ${names.slug})`);
+}
+
+/** Every path the write half touches, in the order it writes them, for the report. */
+function plannedPaths(plan: AddMethodPlan): string[] {
+  const { paths } = plan;
+  return [
+    ...plan.methodFiles.map((file) => file.relative),
+    `${paths.generatedDir}/  (types.ts, binder.ts, contracts.ts, codegen.lock, sources.json)`,
+    ...plan.emitted.map(
+      (file) =>
+        `${file.relative}${file.relative === paths.registry ? "  (one import, one entry)" : ""}`,
+    ),
+  ];
+}
+
+/**
+ * The write half. Writes the method directory, the generated tree, the app
+ * files and the registry edit, in that order — and on any failure removes what
+ * it created and restores the registry, then rethrows as a refusal saying so.
+ * What existed before the gesture (a bundle scaffolded in place, its
+ * regenerated tree) is left where it was, and the refusal says which.
+ *
+ * "Created" is taken literally: a directory is recorded only when this run's
+ * own `mkdir` made it, and removed only once it is empty again, so a file
+ * another run put there meanwhile survives the rollback. The one directory
+ * removed with its contents is a generated tree this run made, whose files
+ * `writeGenerated` writes without naming them here.
+ */
+export async function writeAddMethod(plan: AddMethodPlan, deps: AddMethodDeps): Promise<void> {
+  const inRepo = (relative: string): string => path.join(deps.repoRoot, relative);
+  const { paths } = plan;
+  const created: { target: string; kind: "file" | "dir" | "tree" }[] = [];
+  let registryWritten = false;
+  // An in-place bundle's tree may already exist: the run rewrites it rather
+  // than creating it, so the rollback cannot take it back, only report it.
+  let rewriting = false;
+  let regenerated = false;
+
+  // `mkdir` names the outermost directory it made, so everything from there
+  // down to `dir` is this run's, and nothing above it is.
+  const makeDir = async (dir: string, kind: "dir" | "tree" = "dir"): Promise<void> => {
+    const first = await mkdir(dir, { recursive: true });
+    if (first === undefined) return;
+    const chain: string[] = [];
+    for (let current = dir; ; current = path.dirname(current)) {
+      chain.unshift(current);
+      if (current === first || current === path.dirname(current)) break;
+    }
+    for (const target of chain) created.push({ target, kind: target === dir ? kind : "dir" });
+  };
+
+  // Create-only: a file that appeared since the plan is refused, never
+  // replaced — and, never having been this run's, never removed either.
+  const writeNew = async (relative: string, content: string): Promise<void> => {
+    const target = inRepo(relative);
+    await makeDir(path.dirname(target));
+    try {
+      await writeFile(target, content, { encoding: "utf-8", flag: "wx" });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | null)?.code !== "EEXIST") {
+        await rm(target, { force: true });
+      }
+      throw error;
+    }
+    created.push({ target, kind: "file" });
+  };
+
+  try {
+    if (!plan.inPlace) {
+      await makeDir(inRepo(paths.methodDir));
+      for (const file of plan.methodFiles) await writeNew(file.relative, file.content);
+    }
+
+    const outDir = inRepo(paths.generatedDir);
+    const recorded = created.length;
+    await makeDir(outDir, "tree");
+    if (created.length === recorded) {
+      if (!plan.inPlace) {
+        throw new AddMethodError(
+          `${paths.generatedDir}/ appeared after the plan was made — run the gesture again.`,
+        );
+      }
+      rewriting = true;
+    }
+    await writeGenerated(outDir, plan.fetched, plan.methodSource);
+    regenerated = rewriting;
+
+    for (const file of plan.emitted) {
+      if (file.relative !== paths.registry) await writeNew(file.relative, file.content);
+    }
+
+    const registry = plan.emitted.find((file) => file.relative === paths.registry)!;
+    if ((await readFile(inRepo(paths.registry), "utf-8")) !== plan.registryBefore) {
+      throw new AddMethodError(
+        `${paths.registry} changed after the plan was made — run the gesture again.`,
+      );
+    }
+    registryWritten = true;
+    await writeFile(inRepo(paths.registry), registry.content, "utf-8");
+  } catch (error) {
+    for (const { target, kind } of created.reverse()) {
+      if (kind === "dir") await rmdir(target).catch(() => {});
+      else await rm(target, { recursive: kind === "tree", force: true });
+    }
+    if (registryWritten) await writeFile(inRepo(paths.registry), plan.registryBefore, "utf-8");
+    const reason = error instanceof Error ? error.message : String(error);
+    const kept = regenerated
+      ? ` — except ${paths.generatedDir}/, which existed before and was regenerated in place; ` +
+        "it is kept, exactly as `npm run codegen` writes it for these sources"
+      : rewriting
+        ? ` — except ${paths.generatedDir}/, which existed before and may be partly rewritten; ` +
+          "`npm run codegen` regenerates it whole"
+        : "";
+    throw new AddMethodError(
+      `writing the slice failed, and everything this run had created was removed${kept}: ${reason}`,
+    );
+  }
 }
 
 /**
@@ -1209,6 +1974,7 @@ export async function runAddMethod(argv: readonly string[], deps?: AddMethodDeps
   try {
     return await runAddMethodInner(argv, deps);
   } catch (error) {
+    if (error instanceof ReportedFailure) return EXIT_FAILED;
     if (error instanceof AddMethodError) {
       console.error(`add-method: ${error.message}`);
       return EXIT_FAILED;
@@ -1218,183 +1984,60 @@ export async function runAddMethod(argv: readonly string[], deps?: AddMethodDeps
   }
 }
 
-function resolveDeps(deps?: AddMethodDeps): AddMethodDeps {
-  if (deps !== undefined) return deps;
-
-  loadEnvConfig(REPO_ROOT, false, { info: () => {}, error: console.error });
+/**
+ * The deps a real run uses: `.env.local` loaded, the base URL and the key
+ * checked, and the same client `npm run codegen` constructs. A relative bundle
+ * path is resolved from the directory the command was typed in — `npm run`
+ * moves to the package root and records the original as `INIT_CWD`.
+ */
+export function resolveDeps(repoRoot: string = REPO_ROOT): AddMethodDeps {
+  loadEnvConfig(repoRoot, false, { info: () => {}, error: console.error });
   const baseUrl = process.env.PIPELEX_BASE_URL ?? DEFAULT_API_BASE_URL;
-  assertSecureBaseUrl(baseUrl);
+  try {
+    assertSecureBaseUrl(baseUrl);
+  } catch (error) {
+    throw new AddMethodError(error instanceof Error ? error.message : String(error));
+  }
   if (!process.env.PIPELEX_API_KEY) {
     throw new AddMethodError("PIPELEX_API_KEY is not set — add it to .env.local.");
   }
   // Constructed bare, exactly as `generate.mts` does: the `@/` alias is a
   // tsconfig path mapping Node's resolver never reads, and the client picks up
   // the same environment natively, so this IS the same client.
-  return { repoRoot: REPO_ROOT, client: new PipelexApiClient(), baseUrl };
+  return {
+    repoRoot,
+    client: new PipelexApiClient(),
+    baseUrl,
+    cwd: process.env.INIT_CWD ?? process.cwd(),
+  };
 }
 
 async function runAddMethodInner(argv: readonly string[], deps?: AddMethodDeps): Promise<number> {
   const args = parseArgs(argv);
-  const { repoRoot, client, baseUrl } = resolveDeps(deps);
-  const inRepo = (relative: string): string => path.join(repoRoot, relative);
-
-  // ── Read-only half: nothing below writes until the plan is complete ──
-  const selector = parseMethodArg(args.method);
-
-  const unsupported = await assertSelectorSupport(
-    client,
-    baseUrl,
-    new Set([selectorKind(selector)]),
-  );
-  if (unsupported !== null) throw new AddMethodError(unsupported);
-
-  // A stored method's catalog name is both the slug's source and the tab's
-  // default label — a person chose it. A published address has no such name.
-  let catalogName: string | undefined;
-  if (selectorKind(selector) === "method_id") {
-    const method = await client.getMethod(selector.method_id!);
-    catalogName = method.name;
-  }
-
-  const slug = args.name === undefined ? kebabCase(slugSource(selector, catalogName)) : args.name;
-  if (!SLUG_PATTERN.test(slug)) {
-    throw new AddMethodError(`--name "${slug}" is not kebab-case (a-z, 0-9 and single dashes).`);
-  }
-  const names = scaffoldNames(slug, args.label ?? catalogName);
-  const paths = scaffoldPaths(names);
-
-  for (const relative of [
-    paths.manifestDir,
-    paths.generatedDir,
-    paths.adapter,
-    paths.action,
-    paths.actionTest,
-    paths.form,
-  ]) {
-    if (await exists(inRepo(relative))) {
-      throw new AddMethodError(
-        `${relative} already exists — the gesture is one-shot and never overwrites.\n` +
-          `  To refresh a slice that is already here, edit ${paths.manifest} and run\n` +
-          "  `npm run codegen`. To start over, remove the slice first (see the README's\n" +
-          '  "Remove an example" checklist), or pass --name to scaffold beside it.',
-      );
-    }
-  }
-
-  const manifestContent = renderManifest(selector);
-  const source: MethodSource = {
-    name: names.slug,
-    kind: "selector",
-    selector,
-    sourceHashes: { [paths.manifest]: hashSource(manifestContent) },
-  };
-
-  // The same fetch-and-guard half `npm run codegen` runs, so a scaffolded tree
-  // is the tree a regeneration would write — and every codegen refusal (an
-  // unresolvable selector, an escaping artifact path, a missing input_form
-  // view) happens here, having written nothing.
-  const outDir = inRepo(paths.generatedDir);
-  const fetched: FetchedMethod | null = await fetchGenerated(client, source, outDir, baseUrl);
-  if (fetched === null) return EXIT_FAILED;
-
-  const pipe = choosePipe(
-    fetched.contracts.pipeIoContracts,
-    fetched.contracts.defaultPipeRef,
-    args.pipe,
-  );
-  const contract = contractFor(fetched.contracts.pipeIoContracts, pipe);
-  const descriptor = descriptorFor(fetched.contracts.inputForm, pipe);
-  const plan: ScaffoldPlan = {
-    names,
-    selector,
-    pipe,
-    binding: bindOutput(contract, fetched.report.artifacts),
-    files: fileInputsOf(descriptor),
-    gating: hasGatingInput(descriptor),
-  };
-
-  const tabsSource = await readFile(inRepo(paths.tabs), "utf-8");
-  const tabsUpdated = insertTab(tabsSource, {
-    id: names.slug,
-    label: names.label,
-    componentName: `${names.pascal}Form`,
-  });
-
-  const emitted: EmittedFile[] = [
-    { relative: paths.adapter, content: renderAdapter(plan) },
-    { relative: paths.action, content: renderAction(plan) },
-    { relative: paths.actionTest, content: renderActionTest(plan) },
-    { relative: paths.form, content: renderForm(plan) },
-    { relative: paths.tabs, content: tabsUpdated },
-  ];
-
-  const warnings: string[] = [];
-  if (selectorKind(selector) === "method_id") {
-    warnings.push(
-      "a method_id is scoped to your key's organization, so `npm run codegen` on this " +
-        "slice needs a key of that same org. A published address (method_ref) is the " +
-        "portable form.",
-    );
-  }
-
-  // ── The plan, printed either way ──
-  console.log(`add-method: ${describeSelector(selector)}, via ${baseUrl}`);
-  console.log(`  pipe:   ${pipe.ref}`);
-  console.log(
-    `  output: ${contract.output.concept_ref}` +
-      `${plan.binding.plural ? " (plural — a list of the concept)" : ""}`,
-  );
-  if (plan.files.length > 0) {
-    console.log(`  files:  ${plan.files.map((file) => file.path).join(", ")}`);
-  }
-  console.log(`  tab:    ${JSON.stringify(names.label)} (id ${names.slug})`);
+  const resolved = deps ?? resolveDeps();
+  const plan = await planAddMethod(args, resolved);
+  printPlan(plan);
 
   if (args.dryRun) {
     console.log("\nWould write:");
-    for (const relative of [paths.manifest, `${paths.generatedDir}/ (the generated tree)`]) {
-      console.log(`  ${relative}`);
-    }
-    for (const file of emitted) {
-      console.log(
-        `  ${file.relative}${file.relative === paths.tabs ? " (one import, one tab)" : ""}`,
-      );
-    }
-    for (const warning of warnings) console.log(`\n! ${warning}`);
+    for (const line of plannedPaths(plan)) console.log(`  ${line}`);
+    for (const warning of plan.warnings) console.log(`\n! ${warning}`);
     console.log("\nNothing was written (--dry-run).");
     return EXIT_OK;
   }
 
-  // ── Write half ──
-  await mkdir(inRepo(paths.manifestDir), { recursive: true });
-  await writeFile(inRepo(paths.manifest), manifestContent, "utf-8");
-  await writeGenerated(outDir, fetched, source);
-  for (const file of emitted) {
-    await mkdir(path.dirname(inRepo(file.relative)), { recursive: true });
-    await writeFile(
-      inRepo(file.relative),
-      await formatEmitted(inRepo(file.relative), file.content),
-      "utf-8",
-    );
-  }
+  await writeAddMethod(plan, resolved);
 
   console.log("\nWrote:");
-  console.log(`  ${paths.manifest}`);
-  console.log(
-    `  ${paths.generatedDir}/  (types.ts, binder.ts, contracts.ts, codegen.lock, sources.json)`,
-  );
-  for (const file of emitted) {
-    console.log(
-      `  ${file.relative}${file.relative === paths.tabs ? "  (one import, one tab)" : ""}`,
-    );
-  }
-  for (const warning of warnings) console.log(`\n! ${warning}`);
+  for (const line of plannedPaths(plan)) console.log(`  ${line}`);
+  for (const warning of plan.warnings) console.log(`\n! ${warning}`);
   console.log(
     [
       "",
       "Next:",
       "  1. `make all` — the slice compiles, lints and tests with the rest of the app.",
-      `  2. Open the tab and run it. The form and the result view both come from the`,
-      `     method's contract; ${paths.form} is where you replace either with your own.`,
+      `  2. \`make dev\` and run it. The form and the result view both come from the`,
+      `     method's contract; ${plan.paths.form} is where you replace either with your own.`,
     ].join("\n"),
   );
   return EXIT_OK;
