@@ -13,6 +13,7 @@
 // re-fetched. The one thing read from the real repo is `ExampleTabs.tsx`: the
 // anchor test exists precisely to fail the day a template edit moves an anchor.
 
+import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -34,6 +35,7 @@ import {
   hasGatingInput,
   humanize,
   IMPORTS_ANCHOR,
+  inSentence,
   kebabCase,
   looksLikePath,
   parseArgs,
@@ -43,11 +45,14 @@ import {
   readBundle,
   registerMethod,
   renderManifest,
+  respellAcronyms,
   runAddMethod,
   scaffoldNames,
   scaffoldPaths,
   slugSource,
+  spelledWords,
   TABS_ANCHOR,
+  WRITE_LOCK_FILENAME,
   writeAddMethod,
   type ScaffoldPlan,
 } from "./add-method.mts";
@@ -174,6 +179,16 @@ const RECEIPTS_DIR = path.join(
   "receipt-review",
 );
 
+/** The error a promise rejects with, failing the test when it resolves instead. */
+async function refusalOf(pending: Promise<unknown>): Promise<Error> {
+  const outcome = await pending.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  if (!(outcome instanceof Error)) throw new Error("expected a rejection");
+  return outcome;
+}
+
 describe("readBundle", () => {
   let app: string;
   let outside: string;
@@ -266,7 +281,27 @@ describe("readBundle", () => {
   it("refuses a symlink inside the bundle rather than follow or skip it", async () => {
     await put(outside, "cv/main.mthds");
     await symlink(path.join(outside, "cv", "main.mthds"), path.join(outside, "cv", "link.mthds"));
-    await expect(readBundle("cv", outside, app)).rejects.toThrow(AddMethodError);
+
+    const refusal = await refusalOf(readBundle("cv", outside, app));
+
+    expect(refusal).toBeInstanceOf(AddMethodError);
+    expect(refusal.message).toMatch(/a symlink at .*link\.mthds — the path given, and everything/);
+    // The codegen scripts' wording names methods/, where this bundle is not.
+    expect(refusal.message).not.toContain("methods/");
+  });
+
+  it("refuses a bundle named through a symlink, whether it links a file or a directory", async () => {
+    await put(outside, "notes.txt", "not a bundle\n");
+    await put(outside, "cv/main.mthds");
+    await symlink(path.join(outside, "notes.txt"), path.join(outside, "x.mthds"));
+    await symlink(path.join(outside, "cv"), path.join(outside, "linked"));
+
+    for (const given of ["x.mthds", "linked", "linked/"]) {
+      const refusal = await refusalOf(readBundle(given, outside, app));
+      expect(refusal).toBeInstanceOf(AddMethodError);
+      expect(refusal.message).toContain(`refusing a symlink at "${given}"`);
+      expect(refusal.message).not.toContain("methods/");
+    }
   });
 });
 
@@ -304,6 +339,44 @@ describe("the name derivations", () => {
       label: "Text stats",
     });
     expect(scaffoldNames("text-stats", "Word counts").label).toBe("Word counts");
+  });
+
+  it("keeps an acronym's capitals where the method spells them", () => {
+    // `cv_screening` derived "Cv screening" while the method's own description
+    // said "score a batch of CVs against it".
+    const prose = "Score a batch of CVs against a hiring scorecard, one PDF at a time.";
+    expect(respellAcronyms(humanize("cv-screening"), prose)).toBe("CV screening");
+    expect(respellAcronyms("Cvs", prose)).toBe("CVs");
+    expect(respellAcronyms("Pdfs", prose)).toBe("PDFs");
+  });
+
+  it("respells a derived label only, and records which it was rather than comparing", () => {
+    // `--label "Cv screening"` on a `cv-screening` method is a CHOSEN label
+    // that happens to equal the derived one, so a value comparison would have
+    // respelled it and broken the promise that a chosen label is kept.
+    expect(scaffoldNames("cv-screening", "Cv screening").label).toBe("Cv screening");
+    expect(scaffoldNames("cv-screening").label).toBe(humanize("cv-screening"));
+  });
+
+  it("takes only a word spelled with an INTERIOR capital, not one opening a sentence", () => {
+    // Every sentence starts with a capital, so a rule reading those would
+    // respell "Score" and say nothing about how the author spells anything.
+    expect(respellAcronyms(humanize("score-cvs"), "Score a batch of CVs.")).toBe("Score CVs");
+    expect(spelledWords("Score a batch of CVs.")).toEqual(
+      new Map([
+        ["cvs", "CVs"],
+        ["cv", "CV"],
+      ]),
+    );
+  });
+
+  it("lower-cases a label inside a sentence, but never an acronym", () => {
+    expect(inSentence("Text stats")).toBe("text stats");
+    expect(inSentence("CV screening")).toBe("CV screening");
+  });
+
+  it("leaves a label alone when the method spells nothing its own way", () => {
+    expect(respellAcronyms("Text stats", "Count the words in a text.")).toBe("Text stats");
   });
 
   it("takes the slug from the package, and the repo when the address names none", () => {
@@ -811,6 +884,21 @@ describe("renderForm", () => {
     expect(source).toContain("useRunInputs(CONTRACT, DESCRIPTOR)");
     expect(source).toContain("<RunInputsForm");
     for (const tag of ["<textarea", "<input", "<select"]) expect(source).not.toContain(tag);
+  });
+
+  it("hands the run id to the status card and the error display", () => {
+    // A durable run's id is the only handle on it once the page is closed, and
+    // the scaffold writes every form, so the chrome gets it here or nowhere.
+    const source = renderForm(TEXT_STATS_PLAN);
+    expect(source).toContain("runId={state.runId}");
+    expect(source).toContain("<ErrorDisplay error={state.error} runId={state.runId} />");
+  });
+
+  it("names the method on its Run button, keeping an acronym's capitals", () => {
+    expect(renderForm(TEXT_STATS_PLAN)).toContain('"Run text stats"');
+    expect(
+      renderForm({ ...TEXT_STATS_PLAN, names: scaffoldNames("cv-screening", "CV screening") }),
+    ).toContain('"Run CV screening"');
   });
 
   it("renders the result from the output contract, not from a hand-written view", () => {
@@ -1376,6 +1464,114 @@ describe("runAddMethod", () => {
       "// stale\n",
     );
   });
+
+  it("refuses to write while another run holds the lock, so its tree survives", async () => {
+    // A bundle in place with no tree yet: the case where a run that made the
+    // tree and then failed would remove it, after a second run had rewritten
+    // it and succeeded.
+    await mkdir(path.join(root, "methods/receipts"), { recursive: true });
+    for (const name of ["concepts.mthds", "main.mthds"]) {
+      await writeFile(
+        path.join(root, "methods/receipts", name),
+        await readFile(path.join(RECEIPTS_DIR, name), "utf-8"),
+        "utf-8",
+      );
+    }
+    const args = { method: "methods/receipts", dryRun: false };
+    const first = await planAddMethod(args, deps(receiptsClient()));
+    const second = await planAddMethod(args, deps(receiptsClient()));
+
+    // The first run pauses in the writer's check, its tree already on disk.
+    let reached!: () => void;
+    const paused = new Promise<void>((resolve) => (reached = resolve));
+    let resume!: () => void;
+    const gate = new Promise<void>((resolve) => (resume = resolve));
+    (runCodegenCheck as unknown as Mock).mockImplementationOnce(async () => {
+      reached();
+      await gate;
+      return { drifts: [], isCurrent: true };
+    });
+    const writing = writeAddMethod(first, deps(receiptsClient()));
+    await paused;
+    const during = await written();
+    expect(during).toContain(WRITE_LOCK_FILENAME);
+    expect(during).toContain("src/generated/receipts/types.ts");
+
+    const refusal = await refusalOf(writeAddMethod(second, deps(receiptsClient())));
+    expect(refusal.message).toContain(
+      `another \`make add-method\` (pid ${process.pid}) is writing in this app`,
+    );
+    // A live pid may be a reused one, so the refusal still names the file.
+    expect(refusal.message).toContain(`left ${WRITE_LOCK_FILENAME} behind`);
+    expect(await written()).toEqual(during);
+
+    resume();
+    await writing;
+    const after = await written();
+    expect(after).toContain("src/generated/receipts/types.ts");
+    expect(after).not.toContain(WRITE_LOCK_FILENAME);
+  });
+
+  it("refuses a lock left by a run that is gone, naming it, until it is removed", async () => {
+    const plan = await planAddMethod(
+      { method: RECEIPTS_DIR, dryRun: false },
+      deps(receiptsClient()),
+    );
+    const gone = spawnSync(process.execPath, ["-e", ""]).pid;
+    await writeFile(path.join(root, WRITE_LOCK_FILENAME), `${gone}\n`, "utf-8");
+    const before = await written();
+
+    const refusal = await refusalOf(writeAddMethod(plan, deps(receiptsClient())));
+
+    expect(refusal.message).toContain(`held by pid ${gone}, which is no longer running`);
+    expect(refusal.message).toContain(`remove ${WRITE_LOCK_FILENAME}`);
+    expect(await written()).toEqual(before);
+
+    await rm(path.join(root, WRITE_LOCK_FILENAME));
+    await writeAddMethod(plan, deps(receiptsClient()));
+    expect(await written()).toContain("src/generated/receipt-review/types.ts");
+    expect(await written()).not.toContain(WRITE_LOCK_FILENAME);
+  });
+
+  it("reads a lock holding no pid as one being taken or released, not as stale", async () => {
+    const plan = await planAddMethod(
+      { method: RECEIPTS_DIR, dryRun: false },
+      deps(receiptsClient()),
+    );
+    await writeFile(path.join(root, WRITE_LOCK_FILENAME), "", "utf-8");
+    const before = await written();
+
+    const refusal = await refusalOf(writeAddMethod(plan, deps(receiptsClient())));
+
+    expect(refusal.message).toContain(`is taking or releasing ${WRITE_LOCK_FILENAME}`);
+    expect(refusal.message).not.toContain("stopped");
+    expect(await written()).toEqual(before);
+  });
+
+  it.each(["methods", "src/generated"])(
+    "refuses a symlinked %s before fetching anything, writing nothing through it",
+    async (relative) => {
+      const elsewhere = await mkdtemp(path.join(tmpdir(), "add-method-elsewhere-"));
+      try {
+        await rm(path.join(root, relative), { recursive: true });
+        await symlink(elsewhere, path.join(root, relative));
+        const client = receiptsClient();
+        const errors: string[] = [];
+        vi.spyOn(console, "error").mockImplementation(
+          (line: unknown) => void errors.push(String(line)),
+        );
+
+        expect(await runAddMethod([RECEIPTS_DIR], deps(client))).toBe(1);
+
+        expect(errors.join("\n")).toContain("refusing a symlink at");
+        expect(client.validateFiles).not.toHaveBeenCalled();
+        expect(client.codegen).not.toHaveBeenCalled();
+        expect(await readdir(elsewhere)).toEqual([]);
+      } finally {
+        await rm(elsewhere, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("scaffolds a directory whose name reads like an address when it exists", async () => {
     const dotted = path.join(root, "bundles.v2/receipt-review");

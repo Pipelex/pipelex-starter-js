@@ -2,9 +2,15 @@ import type { PipelineError } from "@/lib/errors";
 
 interface ErrorDisplayProps {
   error: PipelineError;
+  /**
+   * The run this failure belongs to, when one had started. A run that failed
+   * is the one a person most needs to look up, and a durable run's id is the
+   * only handle on it once the page is closed.
+   */
+  runId?: string | null;
 }
 
-export function ErrorDisplay({ error }: ErrorDisplayProps) {
+export function ErrorDisplay({ error, runId }: ErrorDisplayProps) {
   return (
     <div
       role="alert"
@@ -49,6 +55,12 @@ export function ErrorDisplay({ error }: ErrorDisplayProps) {
             </a>
           )}
         </div>
+      )}
+
+      {runId && (
+        <p className="text-xs text-red-700">
+          Run <span className="select-all font-mono">{runId}</span>
+        </p>
       )}
 
       <details className="text-xs text-red-700">

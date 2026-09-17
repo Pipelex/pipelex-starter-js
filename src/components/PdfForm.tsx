@@ -157,10 +157,17 @@ export function PdfForm() {
       </form>
 
       {running && (
-        <RunStatus status={state.status} elapsedMs={state.elapsedMs} health={state.health} />
+        <RunStatus
+          status={state.status}
+          elapsedMs={state.elapsedMs}
+          health={state.health}
+          runId={state.runId}
+        />
       )}
       {fileError && <ErrorDisplay error={fileError} />}
-      {!fileError && state.phase === "error" && <ErrorDisplay error={state.error} />}
+      {!fileError && state.phase === "error" && (
+        <ErrorDisplay error={state.error} runId={state.runId} />
+      )}
       {state.phase === "done" && (
         <>
           <RunResult field={RESULT_FIELD} value={state.output} name="document_summary" />

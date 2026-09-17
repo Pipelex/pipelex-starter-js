@@ -9,6 +9,14 @@ const nextConfig = {
       bodySizeLimit: "12mb",
     },
   },
+  // `next dev` logs every Server Function call with its arguments, and a file
+  // input reaches its Server Action as a base64 `data:` URL — so every document
+  // dropped into the PDF or image example was printed whole into the dev
+  // server's log. Only the object form turns that one log off: `logging: false`
+  // would silence the fetch logs too.
+  logging: {
+    serverFunctions: false,
+  },
   async headers() {
     return [
       {

@@ -224,11 +224,63 @@ const WRITER_OWNED: ReadonlySet<string> = new Set([
   ...DERIVED_ARTIFACTS,
 ]);
 
+/**
+ * What the method says about itself in prose, read from the validate report's
+ * `bundle_blueprint` — which the SDK types as opaque on purpose, so every field
+ * is checked rather than assumed.
+ *
+ * Written into no artifact. It is there for a caller that describes an app
+ * after its method, and a missing value is simply `null`: such a caller has a
+ * fallback.
+ * For a bundle of several files the blueprint is the file that declares the
+ * domain's description and main pipe, so a pipe declared in another file has
+ * no entry in `pipeDescriptions`.
+ */
+export interface MethodProse {
+  /** The domain's own `description`. */
+  description: string | null;
+  /** Each pipe's `description`, keyed by qualified ref (`domain.pipe_code`). */
+  pipeDescriptions: Record<string, string>;
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+/** Read `MethodProse` out of an opaque blueprint, tolerating any shape. */
+export function readMethodProse(blueprint: unknown): MethodProse {
+  const record = (value: unknown): Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const fields = record(blueprint);
+  const domain = nonEmptyString(fields.domain);
+  const pipeDescriptions: Record<string, string> = {};
+  if (domain !== null) {
+    for (const [code, pipe] of Object.entries(record(fields.pipe))) {
+      const description = nonEmptyString(record(pipe).description);
+      if (description !== null) pipeDescriptions[`${domain}.${code}`] = description;
+    }
+  }
+  return { description: nonEmptyString(fields.description), pipeDescriptions };
+}
+
+/**
+ * Everything the method says about itself, as one string to read spellings out
+ * of. Order is the domain's description first, then each pipe's, so the word a
+ * caller sees first is the one the method leads with.
+ */
+export function methodVocabulary(prose: MethodProse): string {
+  return [prose.description ?? "", ...Object.values(prose.pipeDescriptions)].join(" ");
+}
+
 /** The three `/v1/validate` payloads `contracts.ts` is rendered from. */
 export interface ValidateArtifacts {
   pipeIoContracts: PipeIOContracts;
   inputForm: InputForm;
   outputForm: OutputForm;
+  /** The method's own prose, for a caller naming an app after it. Written into no artifact. */
+  prose: MethodProse;
   /**
    * The report's own entry pipe, carried through for the scaffold's pipe rule
    * (`make add-method`) and written into no artifact.
@@ -299,6 +351,7 @@ export async function fetchValidateArtifacts(
       pipeIoContracts: response.pipe_io_contracts,
       inputForm: response.input_form,
       outputForm: response.output_form,
+      prose: readMethodProse(response.bundle_blueprint),
       defaultPipeRef: response.default_pipe_ref ?? null,
     };
   } catch (error) {
