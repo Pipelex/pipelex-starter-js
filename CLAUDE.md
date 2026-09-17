@@ -244,7 +244,7 @@ Text inputs are plain strings. File inputs (PDFs, images) take one extra step, d
 
 **To add a pipeline, run `make add-method METHOD=<path to a bundle | mt_… | address>`** — do not follow the checklist below by hand. A bundle (a `.mthds` file or a directory of them, written with `/mthds-build`) is copied into `methods/<name>/`, or scaffolded in place when it is already there; a catalog id or a published address gets a `methods/<name>/method.json` manifest. Either way the gesture writes the generated tree, the adapter, the action trio, an action test, the form and the tab entry, renders and formats all of it before writing anything, and refuses rather than overwriting what already exists. `src/components/TextStatsForm.tsx` and its siblings are one such slice, committed untouched. [`docs/add-method.md`](docs/add-method.md) is the reference.
 
-The checklist below is what the gesture automates, and what the four demo tabs were written by. Follow it by hand only to understand a slice or to build one the gesture cannot:
+The checklist below is what the gesture automates, and what the demo tabs were written by. Follow it by hand only to understand a slice or to build one the gesture cannot:
 
 1. Create `methods/<name>/main.mthds` (use `/mthds-build`).
 2. Run `npm run codegen`. It writes `src/generated/<name>/` — the zod schemas, the binders, the IO contracts, the lock, and the sources sidecar — for every concept that method declares. Commit that tree alongside the bundle.

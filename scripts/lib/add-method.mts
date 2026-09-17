@@ -1,7 +1,7 @@
 /**
  * `make add-method` — scaffold a method into this app.
  *
- * A method reaches the app in one of three forms, and every form ends in the
+ * A method reaches the app in one of several forms, and every form ends in the
  * same slice: the generated tree, the Server Action trio, the typed narrower,
  * the form, a test and the registry entry, written by the same projections so
  * no app file is written by hand.
@@ -380,7 +380,7 @@ const SLUG_PATTERN = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 
 /**
  * `text_stats` → `text-stats`, `CV screening` → `cv-screening`, `Test-1` →
- * `test-1`. The result is a directory name, a registry id, and the stem of four
+ * `test-1`. The result is a directory name, a registry id, and the stem of the
  * source files and of the identifiers in them, so it is validated rather than
  * merely produced: a name that cannot be one of those — `3D model`, whose slug
  * would start with a digit — is a refusal here, not a broken import later.
@@ -973,7 +973,7 @@ function methodReference(plan: ScaffoldPlan): {
  * A selector-sourced method lives elsewhere, so `buildOptions` sends the same
  * `method_ref` / `method_id` the tree was projected from. A bundle-sourced one
  * sends the bundle itself, as `mthds_contents`, read through the one generic
- * loader. Everything else — the gate, the file path, the three exports — is the
+ * loader. Everything else — the gate, the file path, the exports — is the
  * same for both.
  */
 export function renderAction(plan: ScaffoldPlan): string {

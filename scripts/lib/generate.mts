@@ -394,7 +394,7 @@ export async function fetchGenerated(
     return null;
   }
 
-  // The writer owns three names in the tree — the lock, the sidecar and every
+  // The writer owns names of its own in the tree — the lock, the sidecar and every
   // derived artifact — and writes each after the server's artifacts, so a
   // server artifact landing on one of them would be silently overwritten:
   // `writeTree` returns normally, the sidecar records our content, and the lock

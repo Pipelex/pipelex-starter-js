@@ -947,7 +947,7 @@ describe("runAddMethod", () => {
     return found.sort();
   }
 
-  it("writes the manifest, the tree and the four app files, and edits the registry", async () => {
+  it("writes the manifest, the tree and the app files, and edits the registry", async () => {
     expect(await runAddMethod([TEXT_STATS_REF], deps())).toBe(0);
 
     expect(await written()).toEqual([

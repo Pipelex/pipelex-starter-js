@@ -1,6 +1,6 @@
 # `make add-method`: adding a method to the app as a tab
 
-`make add-method` is how a method reaches this app without anyone writing the files around it. It fetches the method's projection from the Pipelex API and writes everything a tab needs — the method's directory, the generated tree, the typed narrower, the Server Action trio, a test, the form and the tab entry — the same slice the four demo tabs were written with by hand.
+`make add-method` is how a method reaches this app without anyone writing the files around it. It fetches the method's projection from the Pipelex API and writes everything a tab needs — the method's directory, the generated tree, the typed narrower, the Server Action trio, a test, the form and the tab entry — the same slice the demo tabs were written with by hand.
 
 ```bash
 make add-method METHOD=path/to/cv_screening/                        # a bundle
@@ -8,7 +8,7 @@ make add-method METHOD=github.com/Pipelex/methods/text_stats@v0.1.1  # a publish
 make add-method METHOD=mt_ca0aa9d3-61ac-4db1-8b46-fb0cc75787df       # a method in your catalog
 ```
 
-The template ships the output of the second command as its fifth tab, "Text stats", committed untouched, so you have something to diff your own run against.
+The template ships the output of the second command as one of its tabs, "Text stats", committed untouched, so you have something to diff your own run against.
 
 ## The gesture
 
@@ -21,13 +21,13 @@ The template ships the output of the second command as its fifth tab, "Text stat
 
 It is out of `make all` for the same reason `codegen` and `test-e2e` are: it needs a key and a network.
 
-`METHOD` is the one required argument, and it is one of three forms:
+`METHOD` is the one required argument, and it takes one of these forms:
 
 - **A bundle** — a path to a `.mthds` file, or to a directory holding several (at any depth). The files are copied into `methods/<name>/`, keeping their paths relative to what you named, and the action sends them inline as `mthds_contents`. A path inside `methods/<name>/` — the directory or any file in it — scaffolds that directory **in place**, all of its `.mthds` files, since that is what `npm run codegen` reads. A relative path is read from the directory the command was typed in (for `make`, the app's root), and `~/` is your home directory.
 - **A catalog id** — `mt_…`, a method saved under your key's organization on [app.pipelex.com](https://app.pipelex.com). Sent as `method_id`.
 - **An address** — `github.com/<owner>/<repo>[/<package>][@<tag>]`, a published MTHDS package, with or without an `https://` prefix. Sent as `method_ref`, normalized to the bare form.
 
-An argument that names a file or a directory that exists is a path, whatever it looks like, so a directory called `bundles.v2` or `mt_drafts` is read as one. For a name that exists nowhere, the grammar decides: an address always starts with its host, and a host has a dot in it, so the argument is read as a path when it ends in `.mthds`, starts with `/`, `./`, `../` or `~/`, or has no dot in its first segment (`bundles/cv`); `mt_…` is a catalog id; everything else is parsed as an address, and refused naming all three forms when it is not one. A catalog id or an address the API cannot find is a refusal quoting the API's message.
+An argument that names a file or a directory that exists is a path, whatever it looks like, so a directory called `bundles.v2` or `mt_drafts` is read as one. For a name that exists nowhere, the grammar decides: an address always starts with its host, and a host has a dot in it, so the argument is read as a path when it ends in `.mthds`, starts with `/`, `./`, `../` or `~/`, or has no dot in its first segment (`bundles/cv`); `mt_…` is a catalog id; everything else is parsed as an address, and refused naming every form when it is not one. A catalog id or an address the API cannot find is a refusal quoting the API's message.
 
 A bundle is refused when the path does not exist, when a file is not a `.mthds` file, when a directory holds none, when it contains a symlink or a file that is not UTF-8, when the directory contains this app, when it names `methods/` itself or a file sitting directly in it (no method is read from there), and when a method directory in place also holds a `method.json`.
 
@@ -56,7 +56,7 @@ src/components/TextStatsForm.tsx        # useRunInputs + RunInputsForm + useRun 
 src/components/ExampleTabs.tsx          # one import line, one tab entry
 ```
 
-For a bundle, `methods/<name>/` holds the copied `.mthds` files instead of a manifest — or nothing new at all, for a bundle already there — and the rest is the same file set. That is exactly what the four demo tabs have, written by hand: `src/lib/loadBundle.ts` gains nothing either way, because every bundle-sourced action, hand-written or scaffolded, reads its files through the one `loadMethodBundles(name)`.
+For a bundle, `methods/<name>/` holds the copied `.mthds` files instead of a manifest — or nothing new at all, for a bundle already there — and the rest is the same file set. That is exactly what the demo tabs have, written by hand: `src/lib/loadBundle.ts` gains nothing either way, because every bundle-sourced action, hand-written or scaffolded, reads its files through the one `loadMethodBundles(name)`.
 
 **Nothing is written until everything has been fetched, derived and formatted.** The gesture runs in two halves: a read-only half that parses the argument, reads the bundle or shakes hands with the API, fetches the projection and the contracts, chooses the pipe, binds the output, derives every name, checks every collision, locates the anchors in `ExampleTabs.tsx` and renders every file in memory; and a write half that runs only once all of that has passed. Every refusal happens in the first half, with nothing on disk changed. `--dry-run` stops at the boundary and prints the plan.
 
@@ -90,7 +90,7 @@ It sits under `methods/` rather than beside the generated tree, and that placeme
 
 ## One-shot, on purpose
 
-The gesture never overwrites. Run it for a name that already exists and it refuses, naming the collision and the two ways forward: `npm run codegen` to refresh the tree, or [removing the method](#removing-a-method) to start over. A `--force` that rewrote the app files would delete work you had done in them to save you an `rm`, and the four files it writes are explicitly yours to edit from the moment they land — each carries a header saying so.
+The gesture never overwrites. Run it for a name that already exists and it refuses, naming the collision and the two ways forward: `npm run codegen` to refresh the tree, or [removing the method](#removing-a-method) to start over. A `--force` that rewrote the app files would delete work you had done in them to save you an `rm`, and the app files it writes are explicitly yours to edit from the moment they land — each carries a header saying so.
 
 The refresh is therefore always `npm run codegen`, and it refreshes only the generated tree. A bundle scaffolded in place is the one exception to "never overwrites" on the generated side: if you had already run `npm run codegen` on it, its tree is regenerated rather than refused, because nothing in a generated tree is yours to lose. It does not re-derive the action, the narrower, the form or the tab: those are yours now, and a method change that alters what they need — a renamed output concept, say — surfaces as a type error against the regenerated tree, which is the loud failure you want.
 
@@ -100,7 +100,7 @@ Two escapes if you actually want a second slice of the same method: `--name` sca
 
 Everything comes from one kebab-case slug.
 
-- **The slug** is `--name` when given; otherwise the domain of the chosen pipe for a bundle, the catalog method's `name` for an id (a person chose it) and the address's last path segment for a ref — the package, falling back to the repository for an address naming no package. A bundle in place is named by its directory, which must itself be a usable slug, and a `--name` that disagrees with it is refused. It is kebab-cased (`text_stats` → `text-stats`, `CV screening` → `cv-screening`) and validated: a name that cannot be a directory, a tab id and the stem of four source files is a refusal here, not a broken import later. It must start with a letter, because it also becomes TypeScript identifiers — `3D model` is refused and needs `--name`, before anything is fetched or written.
+- **The slug** is `--name` when given; otherwise the domain of the chosen pipe for a bundle, the catalog method's `name` for an id (a person chose it) and the address's last path segment for a ref — the package, falling back to the repository for an address naming no package. A bundle in place is named by its directory, which must itself be a usable slug, and a `--name` that disagrees with it is refused. It is kebab-cased (`text_stats` → `text-stats`, `CV screening` → `cv-screening`) and validated: a name that cannot be a directory, a tab id and the stem of the slice's source files is a refusal here, not a broken import later. It must start with a letter, because it also becomes TypeScript identifiers — `3D model` is refused and needs `--name`, before anything is fetched or written.
 - **`TextStats`** (Pascal) names the component, the three actions and the output type; **`textStats`** (camel) names the adapter module; **`Text stats`** (humanized) is the fallback tab label.
 - **The tab id** is the slug.
 
@@ -113,7 +113,7 @@ A published package can carry several pipes, so the pipe is chosen by a rule tha
 3. The only pipe, when the method declares exactly one.
 4. Otherwise a refusal listing the pipes and asking for `PIPE`.
 
-The chosen ref is split at its last dot: the domain and the code are what `requireContract` and `requireInputForm` take, and the action sends the bare `pipe_code` beside the selector or the bundle, which is what the four demo actions do.
+The chosen ref is split at its last dot: the domain and the code are what `requireContract` and `requireInputForm` take, and the action sends the bare `pipe_code` beside the selector or the bundle, which is what the demo actions do.
 
 ## The output: a typed narrower, a generic view
 
@@ -156,7 +156,7 @@ The scaffold inserts one import line directly above the first and one array entr
 
 ## The handshake, and the base URL
 
-A bundle needs no handshake: it travels inline, and the base URL only has to serve `/v1/codegen` and `/v1/validate`'s form views. A selector is resolved **server-side**, so the API has to forward it. `GET /v1/version`'s `extensions` array is the SDK's documented handshake for that, and the three keyed scripts — `add-method`, `codegen` and `codegen:verify` — ask it once per run whenever a selector is involved, before anything is fetched or written. A missing extension is a refusal naming the base URL, the missing kind and what does advertise it, rather than the bare `403` an env-scoped key otherwise produces.
+A bundle needs no handshake: it travels inline, and the base URL only has to serve `/v1/codegen` and `/v1/validate`'s form views. A selector is resolved **server-side**, so the API has to forward it. `GET /v1/version`'s `extensions` array is the SDK's documented handshake for that, and the keyed scripts — `add-method`, `codegen` and `codegen:verify` — ask it once per run whenever a selector is involved, before anything is fetched or written. A missing extension is a refusal naming the base URL, the missing kind and what does advertise it, rather than the bare `403` an env-scoped key otherwise produces.
 
 Two cases deliberately **proceed** rather than refuse, because in both the handshake has no verdict to give and the real call's own error is the better message: the handshake itself failing, and a response that advertises no capabilities at all.
 

@@ -2,7 +2,7 @@
 
 # ── Arguments ──────────────────────────────────────────────────────────────
 # A gesture takes its values as make variables (`make add-method METHOD=…
-# NAME=…`) and hands them to a script as flags. Three rules keep that faithful:
+# NAME=…`) and hands them to a script as flags. These rules keep that faithful:
 #
 #   - Only a value given on the command line counts. A variable of the same name
 #     exported by the shell (NAME is common in the wild) is not a request, so

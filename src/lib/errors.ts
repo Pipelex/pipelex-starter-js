@@ -566,8 +566,8 @@ function classifyBundleMissing(err: unknown): PipelineError {
   const e = err as NodeJS.ErrnoException;
   return {
     kind: "bundle_load_failed",
-    title: "Pipeline bundle not found",
-    message: `Could not read the .mthds bundle from disk (${e.code ?? "fs error"}). The starter ships with methods/extract-entities/main.mthds — make sure it's still there.`,
+    title: "Method bundle not found",
+    message: `Could not read the .mthds bundle from disk (${e.code ?? "fs error"}). Each method reads its bundle from its own directory under methods/ — make sure the .mthds files are still there.`,
     details: `${e.name}: ${e.message}`,
   };
 }
