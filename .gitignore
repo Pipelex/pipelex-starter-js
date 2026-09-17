@@ -37,6 +37,9 @@ test-results/
 # pipelex / mthds tooling artifacts (traces, caches)
 .pipelex/
 
+# make add-method's write lock, present only while a run writes
+/.add-method.lock
+
 # claude code local settings (per-user, never commit)
 .claude/settings.local.json
 

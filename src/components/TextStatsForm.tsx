@@ -71,9 +71,14 @@ export function TextStatsForm() {
       </form>
 
       {running && (
-        <RunStatus status={state.status} elapsedMs={state.elapsedMs} health={state.health} />
+        <RunStatus
+          status={state.status}
+          elapsedMs={state.elapsedMs}
+          health={state.health}
+          runId={state.runId}
+        />
       )}
-      {state.phase === "error" && <ErrorDisplay error={state.error} />}
+      {state.phase === "error" && <ErrorDisplay error={state.error} runId={state.runId} />}
       {state.phase === "done" && (
         <>
           {/* The result, rendered from the method's own output contract — the

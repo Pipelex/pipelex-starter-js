@@ -352,6 +352,8 @@ export class NonUtf8FileError extends Error {
  */
 export class SymlinkRefusedError extends Error {
   readonly filePath: string;
+  /** `a symlink` or `a special file`, for a caller that words its own refusal. */
+  readonly kind: string;
 
   constructor(filePath: string, kind: string) {
     super(
@@ -360,6 +362,7 @@ export class SymlinkRefusedError extends Error {
     );
     this.name = "SymlinkRefusedError";
     this.filePath = filePath;
+    this.kind = kind;
   }
 }
 

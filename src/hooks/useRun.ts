@@ -24,8 +24,10 @@ export type RunHealth = "reconnecting" | "retrying";
  * The unified run state machine, identical for both execution modes:
  * `idle → running → (done | error)`. In `running`, `status` is the durable
  * coarse run status (null in blocking — there is no per-tick status),
- * `elapsedMs` is a smooth wall-clock counter, and `health` is null while
- * polling cleanly or names why we're in a resilient/retrying state.
+ * `elapsedMs` is a smooth wall-clock counter, `health` is null while polling
+ * cleanly or names why we're in a resilient/retrying state, and `runId` is the
+ * durable run's id once it has one. The id rides the error state too: the run a
+ * user saw fail is the run they need to look up.
  */
 export type RunState<T> =
   | { phase: "idle" }
@@ -35,9 +37,20 @@ export type RunState<T> =
       status: string | null;
       elapsedMs: number;
       health: RunHealth | null;
+      /**
+       * The durable run's id, once `start` has returned one — `null` in
+       * blocking mode, which has no run to poll, and for the moment between
+       * the submit and that answer.
+       */
+      runId: string | null;
     }
   | { phase: "done"; output: T; usage: UsageReport }
-  | { phase: "error"; error: PipelineError };
+  | {
+      phase: "error";
+      error: PipelineError;
+      /** The run this error belongs to, when one had started. */
+      runId: string | null;
+    };
 
 export interface UseRunConfig<TInput, TOutput> {
   /** Which path to drive. Forms own this as state and pass it in. */
@@ -138,13 +151,18 @@ export function useRun<TInput, TOutput>(
       const intervalMs = cfgRef.current.intervalMs ?? DEFAULT_INTERVAL_MS;
       const maxDurationMs = cfgRef.current.maxDurationMs ?? DEFAULT_MAX_DURATION_MS;
 
-      setState({ phase: "running", mode, status: null, elapsedMs: 0, health: null });
+      setState({ phase: "running", mode, status: null, elapsedMs: 0, health: null, runId: null });
       startTicker();
+
+      // Held outside the state so a failure carries it however the run ended:
+      // `fail` is called from timers and rejected promises, where the previous
+      // state is not in hand.
+      let runId: string | null = null;
 
       const fail = (error: PipelineError) => {
         if (!isCurrent()) return;
         clearTimers();
-        setState({ phase: "error", error });
+        setState({ phase: "error", error, runId });
       };
       const succeed = (output: TOutput, usage: UsageReport) => {
         if (!isCurrent()) return;
@@ -253,6 +271,8 @@ export function useRun<TInput, TOutput>(
             fail(outcome.error);
             return;
           }
+          runId = outcome.runId;
+          setState((prev) => (prev.phase === "running" ? { ...prev, runId } : prev));
           void pollOnce(outcome.runId); // first tick immediately
         })
         .catch((err) => fail(classifyTransportError(err)));

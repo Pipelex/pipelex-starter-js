@@ -54,6 +54,14 @@ export async function startDurableRun(
   try {
     const options = await buildOptions();
     const { pipeline_run_id } = await getPipelexClient().start(options);
+    // The one line this module writes, and the rule against console writes is
+    // about DIAGNOSTICS: a run id is not one. It is the only handle on a run
+    // once the page is closed — a run started from an inline bundle has no
+    // catalog id, so `listRuns` cannot find it by method — and without it a run
+    // a user watched hang cannot be looked up in the back office, with
+    // `getRunDetail`, or by the workshop's `mthds_run_status`.
+    // eslint-disable-next-line no-console
+    console.info(`[pipelex] run started: ${pipeline_run_id}`);
     return { ok: true, runId: pipeline_run_id };
   } catch (err) {
     return { ok: false, error: classifyPipelineError(err, readClassifyEnv()) };

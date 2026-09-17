@@ -26,6 +26,7 @@
  *     tree IS the tree a regeneration would write), then the app files and the
  *     registry edit. A failure part-way removes everything the half created and
  *     restores the registry, so a re-run meets no collision of its own making.
+ *     All of it runs under a lock file that refuses a second run meanwhile.
  *
  * The gesture is one-shot: re-running it for a name that already exists is a
  * refusal, not an overwrite. `npm run codegen` is the refresh — after editing a
@@ -37,8 +38,9 @@
  * point it at a temporary copy of the tree. The two halves are exported
  * separately, so a caller can plan, act on the plan, and only then write.
  */
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { access, mkdir, readFile, rm, rmdir, stat, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -58,13 +60,19 @@ import {
 } from "@pipelex/sdk";
 
 import { assertSelectorSupport, explainSelectorFailure } from "./api.mts";
-import { fetchGenerated, writeGenerated, type FetchedMethod } from "./generate.mts";
+import {
+  fetchGenerated,
+  methodVocabulary,
+  writeGenerated,
+  type FetchedMethod,
+} from "./generate.mts";
 import {
   assertSecureBaseUrl,
   hashSource,
   MANIFEST_FILENAME,
   NonUtf8FileError,
   readTextFile,
+  refuseSymlinkRoot,
   REPO_ROOT,
   selectorKind,
   describeSelector,
@@ -244,6 +252,20 @@ function isInside(root: string, candidate: string): boolean {
 }
 
 /**
+ * The refusal for a bundle path that is not a regular file or directory,
+ * worded for a path anywhere: the codegen scripts' own wording names
+ * `methods/` and `src/generated/`, which is wrong for a bundle outside both.
+ * It promises what `readBundle` checks and no more — the path named and
+ * everything under a bundle directory, not the directories above the path.
+ */
+function notRegularRefusal(where: string, kind: string): string {
+  return (
+    `refusing ${kind} at ${where} — the path given, and everything under a bundle ` +
+    "directory, must be a regular file or a directory. Point at the files themselves."
+  );
+}
+
+/**
  * Read every `.mthds` file under `dir`, refusing what the codegen scripts
  * refuse: a symlink or special file anywhere below it, and a file that is not
  * UTF-8. Both are refusals rather than skips, because a bundle that silently
@@ -258,7 +280,9 @@ async function readBundleDir(
   try {
     treePaths = await walk(dir);
   } catch (error) {
-    if (error instanceof SymlinkRefusedError) throw new AddMethodError(error.message);
+    if (error instanceof SymlinkRefusedError) {
+      throw new AddMethodError(notRegularRefusal(error.filePath, error.kind));
+    }
     throw error;
   }
   const bundlePaths = treePaths.filter((relative) => relative.endsWith(".mthds"));
@@ -299,14 +323,19 @@ export async function readBundle(given: string, cwd: string, repoRoot: string): 
   const resolved = path.resolve(cwd, expandHome(given));
   const methodsRoot = path.join(repoRoot, "methods");
 
+  // `lstat`, not `stat`: the path itself is held to the rule its entries are,
+  // so a `.mthds` link to some other file is refused rather than read.
   let info;
   try {
-    info = await stat(resolved);
+    info = await lstat(resolved);
   } catch {
     throw new AddMethodError(
       `"${given}" is not a file or a directory (looked for ${resolved}).\n` +
         `  METHOD is ${METHOD_ARG_FORMS}.`,
     );
+  }
+  if (info.isSymbolicLink()) {
+    throw new AddMethodError(notRegularRefusal(`"${given}"`, "a symlink"));
   }
 
   if (path.relative(methodsRoot, resolved) === "") {
@@ -423,6 +452,66 @@ export function camelCase(slug: string): string {
 export function humanize(slug: string): string {
   const words = slug.split("-").join(" ");
   return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * The words a method spells with a capital after their first letter — `CVs`,
+ * `PDF`, `PostgreSQL`, `REST`.
+ *
+ * That interior capital is what tells an acronym or a brand from an ordinary
+ * word that happens to open a sentence: taking every capitalized word would
+ * make "Build a hiring scorecard" turn a `build` slug into "Build", which says
+ * nothing about how the author spells anything.
+ */
+export function spelledWords(prose: string): Map<string, string> {
+  const spellings = new Map<string, string>();
+  const plurals = new Map<string, string>();
+  for (const word of prose.match(/[A-Za-z][A-Za-z0-9]*/g) ?? []) {
+    if (!/[A-Z]/.test(word.slice(1))) continue;
+    const lower = word.toLowerCase();
+    if (!spellings.has(lower)) spellings.set(lower, word);
+    // A method writing "CVs" spells "cv" too, and one writing "CV" spells
+    // "cvs" — a derived word is singular or plural by the slug's grammar, not
+    // by the prose's.
+    if (word.endsWith("s")) {
+      const singular = word.slice(0, -1);
+      if (!plurals.has(singular.toLowerCase())) plurals.set(singular.toLowerCase(), singular);
+    } else if (!plurals.has(`${lower}s`)) {
+      plurals.set(`${lower}s`, `${word}s`);
+    }
+  }
+  for (const [lower, word] of plurals) if (!spellings.has(lower)) spellings.set(lower, word);
+  return spellings;
+}
+
+/**
+ * A label inside a sentence — `Run text stats`, `Run CV screening`.
+ *
+ * Every word is lower-cased except one carrying an interior capital, which is
+ * an acronym or a brand and is spelled the way it is spelled wherever it sits.
+ * A flat `toLowerCase()` put "Run cv screening" on the button of a demo whose
+ * method writes "CVs".
+ */
+export function inSentence(label: string): string {
+  return label.replace(/[A-Za-z][A-Za-z0-9]*/g, (word) =>
+    /[A-Z]/.test(word.slice(1)) ? word : word.toLowerCase(),
+  );
+}
+
+/**
+ * Give back `text` with every word the method spells its own way respelled —
+ * `Cv screening` → `CV screening`.
+ *
+ * The gesture asks nothing, by design, so a derived label is the only one a
+ * method gets unless its author passes `--label`. Deriving it word by word from
+ * a kebab slug lower-cases an acronym the method itself capitalizes: a
+ * `cv_screening` domain became "Cv screening" while the method's own
+ * description said "score a batch of CVs".
+ */
+export function respellAcronyms(text: string, prose: string): string {
+  const spellings = spelledWords(prose);
+  if (spellings.size === 0) return text;
+  return text.replace(/[A-Za-z][A-Za-z0-9]*/g, (word) => spellings.get(word.toLowerCase()) ?? word);
 }
 
 /**
@@ -1402,19 +1491,30 @@ export function renderForm(plan: ScaffoldPlan): string {
     `          disabled={${busy} || !ready}`,
     '          className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"',
     "        >",
-    `          {running ? "Running…" : ${JSON.stringify(`Run ${names.label.toLowerCase()}`)}}`,
+    `          {running ? "Running…" : ${JSON.stringify(`Run ${inSentence(names.label)}`)}}`,
     "        </button>",
     "      </form>",
     "",
     "      {running && (",
-    "        <RunStatus status={state.status} elapsedMs={state.elapsedMs} health={state.health} />",
+    "        <RunStatus",
+    "          status={state.status}",
+    "          elapsedMs={state.elapsedMs}",
+    "          health={state.health}",
+    "          runId={state.runId}",
+    "        />",
     "      )}",
     ...(hasFiles
       ? [
           "      {fileError && <ErrorDisplay error={fileError} />}",
-          '      {!fileError && state.phase === "error" && <ErrorDisplay error={state.error} />}',
+          '      {!fileError && state.phase === "error" && (',
+          "        <ErrorDisplay error={state.error} runId={state.runId} />",
+          "      )}",
         ]
-      : ['      {state.phase === "error" && <ErrorDisplay error={state.error} />}']),
+      : [
+          '      {state.phase === "error" && (',
+          "        <ErrorDisplay error={state.error} runId={state.runId} />",
+          "      )}",
+        ]),
     '      {state.phase === "done" && (',
     "        <>",
     "          {/* The result, rendered from the method's own output contract — the",
@@ -1615,6 +1715,18 @@ export async function planAddMethod(
     );
   }
 
+  // The codegen scripts refuse a symlinked `methods/` or `src/generated/`, and
+  // the write half writes into both: refused here, before anything is fetched,
+  // rather than written through and refused by `make check` afterwards.
+  for (const root of ["methods", path.join("src", "generated")]) {
+    try {
+      await refuseSymlinkRoot(inRepo(root));
+    } catch (error) {
+      if (error instanceof SymlinkRefusedError) throw new AddMethodError(error.message);
+      throw error;
+    }
+  }
+
   const arg = parseMethodArg(args.method, (value) =>
     existsSync(path.resolve(deps.cwd ?? repoRoot, expandHome(value))),
   );
@@ -1622,6 +1734,8 @@ export async function planAddMethod(
   let methodFiles: EmittedFile[];
   let fetched: FetchedMethod | null;
   let names: ScaffoldNames;
+  /** Whether the label came from `--label` or a catalog name, rather than the slug. */
+  let labelChosen = false;
   let paths: ScaffoldPaths;
   let methodSource: MethodSource;
   let scaffoldSource: ScaffoldSource;
@@ -1659,7 +1773,9 @@ export async function planAddMethod(
     }
 
     const slug = args.name ?? kebabCase(slugSource(selector, catalog?.name, nameFlag), nameFlag);
-    names = scaffoldNames(slug, args.label ?? catalog?.name);
+    const chosenLabel = args.label ?? catalog?.name;
+    labelChosen = (chosenLabel?.trim() ?? "") !== "";
+    names = scaffoldNames(slug, chosenLabel);
     paths = scaffoldPaths(names);
     await refuseCollisions(inRepo, paths, { inPlace: false, nameFlag });
 
@@ -1719,6 +1835,7 @@ export async function planAddMethod(
       args.pipe,
     );
     const slug = bundle.inPlace ?? args.name ?? kebabCase(pipe.domain, nameFlag);
+    labelChosen = (args.label?.trim() ?? "") !== "";
     names = scaffoldNames(slug, args.label);
     paths = scaffoldPaths(names);
     inPlace = bundle.inPlace !== null;
@@ -1745,6 +1862,19 @@ export async function planAddMethod(
   }
 
   if (fetched === null) throw new ReportedFailure();
+
+  // An acronym the method spells keeps its capitals, and only a DERIVED label
+  // is touched: a label somebody passed, or a catalog name somebody chose, is
+  // already the spelling they wanted. Which one it is, is RECORDED rather than
+  // read back off the value - `--label "Cv screening"` on a `cv-screening`
+  // method is a chosen label that equals the derived one, and respelling it
+  // would break the promise this reads.
+  if (!labelChosen) {
+    names = {
+      ...names,
+      label: respellAcronyms(names.label, methodVocabulary(fetched.contracts.prose)),
+    };
+  }
 
   pipe ??= choosePipe(
     fetched.contracts.pipeIoContracts,
@@ -1859,20 +1989,94 @@ function plannedPaths(plan: AddMethodPlan): string[] {
   ];
 }
 
+/** The app's write lock, at its root and ignored by git. */
+export const WRITE_LOCK_FILENAME = ".add-method.lock";
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: the process exists, it is only someone else's.
+    return (error as NodeJS.ErrnoException | null)?.code === "EPERM";
+  }
+}
+
+/**
+ * Hold the app's write lock while `body` runs, its rollback included.
+ *
+ * Two runs writing into one checkout at once can undo each other: a run whose
+ * own `mkdir` made a generated tree removes that tree when it fails, even after
+ * a second run has rewritten it and finished. So the write half runs under a
+ * lock file created exclusively, holding its owner's pid, and a second run is
+ * refused before it writes anything. The lock is removed only by the run that
+ * made it. One left behind by a run that was killed is never broken on its own
+ * — two runs breaking it at once would each believe they held it — so the
+ * refusal says whether its owner is still running and names the file. A lock
+ * with no pid in it yet, or already gone, is one being taken or released.
+ */
+async function withWriteLock<T>(repoRoot: string, body: () => Promise<T>): Promise<T> {
+  const lockPath = path.join(repoRoot, WRITE_LOCK_FILENAME);
+  const stamp = `${process.pid}\n${randomUUID()}\n`;
+  try {
+    await writeFile(lockPath, stamp, { encoding: "utf-8", flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code !== "EEXIST") throw error;
+    // Empty or gone: the file is created before its stamp is written, and
+    // removed when its run ends, so another run is taking or releasing it.
+    const held = await readFile(lockPath, "utf-8").catch(() => "");
+    const pid = Number(held.split("\n")[0]);
+    if (!(Number.isSafeInteger(pid) && pid > 0)) {
+      throw new AddMethodError(
+        `another \`make add-method\` is taking or releasing ${WRITE_LOCK_FILENAME}. Nothing ` +
+          "was written: run again in a moment, and if it is refused the same way while no " +
+          `other run is going on, remove ${WRITE_LOCK_FILENAME}.`,
+      );
+    }
+    // A live pid may be a reused one, so this refusal names the file too.
+    if (isRunning(pid)) {
+      throw new AddMethodError(
+        `another \`make add-method\` (pid ${pid}) is writing in this app. Nothing was ` +
+          `written: run again once it has finished. If pid ${pid} is not a ` +
+          `\`make add-method\` run, a run that was stopped left ${WRITE_LOCK_FILENAME} behind ` +
+          "and its pid has been reused: remove the file and run again.",
+      );
+    }
+    throw new AddMethodError(
+      `${WRITE_LOCK_FILENAME} is held by pid ${pid}, which is no longer running, so a run ` +
+        "was stopped before it could remove it. Nothing was written: if no other " +
+        `\`make add-method\` is running, remove ${WRITE_LOCK_FILENAME} and run again.`,
+    );
+  }
+  try {
+    return await body();
+  } finally {
+    if ((await readFile(lockPath, "utf-8").catch(() => "")) === stamp) {
+      await rm(lockPath, { force: true });
+    }
+  }
+}
+
 /**
  * The write half. Writes the method directory, the generated tree, the app
  * files and the registry edit, in that order — and on any failure removes what
  * it created and restores the registry, then rethrows as a refusal saying so.
  * What existed before the gesture (a bundle scaffolded in place, its
- * regenerated tree) is left where it was, and the refusal says which.
+ * regenerated tree) is left where it was, and the refusal says which. All of
+ * it, the rollback included, runs under the app's write lock.
  *
  * "Created" is taken literally: a directory is recorded only when this run's
  * own `mkdir` made it, and removed only once it is empty again, so a file
  * another run put there meanwhile survives the rollback. The one directory
  * removed with its contents is a generated tree this run made, whose files
- * `writeGenerated` writes without naming them here.
+ * `writeGenerated` writes without naming them here; the lock is what keeps
+ * another run from writing into it meanwhile.
  */
 export async function writeAddMethod(plan: AddMethodPlan, deps: AddMethodDeps): Promise<void> {
+  await withWriteLock(deps.repoRoot, () => writeSlice(plan, deps));
+}
+
+async function writeSlice(plan: AddMethodPlan, deps: AddMethodDeps): Promise<void> {
   const inRepo = (relative: string): string => path.join(deps.repoRoot, relative);
   const { paths } = plan;
   const created: { target: string; kind: "file" | "dir" | "tree" }[] = [];

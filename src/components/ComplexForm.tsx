@@ -76,9 +76,14 @@ export function ComplexForm() {
       </form>
 
       {running && (
-        <RunStatus status={state.status} elapsedMs={state.elapsedMs} health={state.health} />
+        <RunStatus
+          status={state.status}
+          elapsedMs={state.elapsedMs}
+          health={state.health}
+          runId={state.runId}
+        />
       )}
-      {state.phase === "error" && <ErrorDisplay error={state.error} />}
+      {state.phase === "error" && <ErrorDisplay error={state.error} runId={state.runId} />}
       {state.phase === "done" && (
         <>
           <RunResult field={RESULT_FIELD} value={state.output} name="extraction_brief" />
