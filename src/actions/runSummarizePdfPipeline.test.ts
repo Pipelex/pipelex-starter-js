@@ -45,10 +45,12 @@ const DATA = { document: { url: PDF_DATA_URL, filename: "invoice.pdf" } };
 // What the kernel's gate puts on the wire, and hands straight to prepareInputs:
 // the explicit `{concept, content}` envelope. `prepareInputs` interprets its
 // `content` exactly as it would a bare value, classifies it as a file from the
-// method's declared `document = Document` signature (pipe_ref defaults to
-// main_pipe), and preserves the envelope on output — verified live.
+// method's declared `document = Document` signature, and preserves the envelope
+// on output — verified live. The qualified `pipe_ref` is stated rather than
+// left to `main_pipe`; a bare pipe code is refused.
 const PREPARE_CALL = {
   files: [{ content: "DUMMY_BUNDLE_TOML" }],
+  pipe_ref: "summarize_pdf.summarize_pdf",
   inputs: {
     document: {
       concept: "native.Document",
@@ -180,6 +182,7 @@ describe("the paste-a-URL escape hatch", () => {
     expect(result).toEqual({ ok: true, runId: "run-1" });
     expect(prepareInputs).toHaveBeenCalledWith({
       files: [{ content: "DUMMY_BUNDLE_TOML" }],
+      pipe_ref: "summarize_pdf.summarize_pdf",
       inputs: {
         document: {
           concept: "native.Document",
