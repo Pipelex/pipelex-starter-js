@@ -17,6 +17,8 @@ import type { PipelineError } from "@/lib/errors";
 import type { StartOptions } from "@pipelex/sdk";
 
 const PIPE_CODE = "summarize_pdf";
+/** `prepareInputs` keys on the qualified ref — a bare pipe code is refused. */
+const PIPE_REF = "summarize_pdf.summarize_pdf";
 
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "summarize_pdf", PIPE_CODE);
 // The file gate walks the same wire descriptor the browser rendered the form
@@ -57,7 +59,12 @@ function gatePdfInputs(
  * fat inline base64. It takes the kernel's explicit `{concept, content}`
  * envelope as readily as a bare value — verified live against the hosted API —
  * and preserves the envelope on output, so the gate's payload goes straight in.
- * `pipe_ref` is omitted, so it defaults to the closure's `main_pipe`.
+ * `pipe_ref` names the pipe rather than leaving it to the closure's `main_pipe`.
+ * Since SDK 0.19.0 a validation report stating `default_pipe_ref: null` is the
+ * server saying it determined no entry pipe, and preparation refuses there
+ * instead of falling back — so the ref is stated, exactly as `make add-method`
+ * scaffolds it. It is the qualified `<domain>.<pipe_code>` form; a bare pipe
+ * code is refused.
  *
  * On failure `prepareInputs` throws *before any run starts* (a typed
  * `InputPreparationError` — see `classifyInputPreparationError`). Because this
@@ -70,6 +77,7 @@ async function buildOptions(inputs: Record<string, unknown>): Promise<StartOptio
   const bundles = await loadMethodBundles("summarize-pdf");
   const prepared = await getPipelexClient().prepareInputs({
     files: bundles.map((content) => ({ content })),
+    pipe_ref: PIPE_REF,
     inputs,
   });
   return { pipe_code: PIPE_CODE, mthds_contents: bundles, inputs: prepared.inputs };
