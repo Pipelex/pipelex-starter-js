@@ -26,25 +26,56 @@ require = @$(if $(call given,$(1)),:,echo "$(2)"; exit 2)
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+	@echo "The servers listen on "$(call shq,$(host_shown))", port "$(call shq,$(port_shown))" — loopback only, unless APP_HOST says otherwise."
+	@echo "APP_HOST=0.0.0.0 opens them to your network, where anyone can run methods on your API key. APP_PORT=4301 moves them."
 
-# ── The app port ───────────────────────────────────────────────────────────
+# ── Where the app listens ──────────────────────────────────────────────────
 # Declared once here and exported, so package.json's `dev`/`start` scripts and
-# playwright.config.ts all read the same number. Each of them still defaults to
-# 4300 on its own, so `npm run dev` outside make keeps working. Override it to
-# run this checkout beside one that already holds the port:
+# playwright.config.ts all read the same host and port. Each of them still
+# falls back to 127.0.0.1 and 4300 on its own, so `npm run dev` outside make
+# keeps working.
+#
+# APP_HOST is loopback by default because the app must not be reachable from
+# the network. Its Server Actions run methods with the PIPELEX_API_KEY in the
+# server's environment, and nothing authenticates the browser that calls them,
+# so anyone who can reach the server runs methods billed to that key. `next`
+# given no host binds every interface, which is why the scripts always pass
+# one. Widen it only on a network you trust — for a container, or to open the
+# app on another device:
+#
+#     make dev APP_HOST=0.0.0.0
+#
+# APP_PORT moves the port, to run this checkout beside one that already holds
+# it:
 #
 #     make run APP_PORT=4301
 #
-# The name is deliberately not `PORT`. That one is ambient — hosting platforms,
-# other dev servers and shell profiles all export it — and inheriting it would
-# move this server without saying so.
+# The names are deliberately not `HOST`, `HOSTNAME` or `PORT`. Those are
+# ambient — the shell sets HOSTNAME to the machine's name, and hosting
+# platforms, other dev servers and shell profiles export the others — and
+# inheriting one would widen or move this server without saying so.
+APP_HOST ?= 127.0.0.1
 APP_PORT ?= 4300
-export APP_PORT
+export APP_HOST APP_PORT
+
+# The host and port as they were set, a blank one meaning the default, as an
+# empty value does in the scripts. `value` keeps a `$` in them from being
+# expanded by make. The host is for messages only; the port is also what
+# port-check looks up, since a blank one would hand lsof `-iTCP:`, which it
+# rejects, and the check would pass without looking.
+host_shown = $(or $(strip $(value APP_HOST)),127.0.0.1)
+port_shown = $(or $(strip $(value APP_PORT)),4300)
+# What of that host is not loopback: nothing for 127.x.x.x, ::1 or localhost.
+# Next takes an IPv6 host bare, so `[::1]` is not a spelling of loopback here.
+exposed = $(filter-out 127.% ::1 localhost,$(host_shown))
+# Said each time a server is about to listen beyond this machine.
+warn-exposed = @$(if $(exposed),echo "Warning: APP_HOST="$(call shq,$(host_shown))" opens this server beyond this machine. Anyone who can reach it runs methods billed to your PIPELEX_API_KEY.",:)
 
 # `next dev` refuses a taken port with a bare EADDRINUSE naming the port and
 # nothing else. In this workspace every branch gets its own worktree and each
 # one runs `make run` on the same port, so the holder is routinely ANOTHER
-# checkout of this same app — which answers on http://localhost:4300 and looks
+# checkout of this same app — which answers on http://127.0.0.1:4300 and looks
 # entirely right in a browser. Name the holder rather than print a stack trace.
 #
 # ALLOW_OWN=1 accepts a server started from this directory and still refuses a
@@ -54,21 +85,24 @@ export APP_PORT
 # branch's app and report it green.
 port-check:
 	@command -v lsof >/dev/null 2>&1 || exit 0; \
-	pid=$$(lsof -nP -iTCP:$(APP_PORT) -sTCP:LISTEN -t 2>/dev/null | head -1); \
+	pid=$$(lsof -nP -iTCP:$(port_shown) -sTCP:LISTEN -t 2>/dev/null | head -1); \
 	if [ -z "$$pid" ]; then exit 0; fi; \
 	cwd=$$(lsof -a -p $$pid -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1); \
 	if [ "$$cwd" = "$(CURDIR)" ]; then \
 		if [ -n "$(ALLOW_OWN)" ]; then exit 0; fi; \
-		echo "Port $(APP_PORT) is already served by this checkout (pid $$pid)."; \
-		echo "Open http://localhost:$(APP_PORT), or stop that server first."; \
+		addr=$$(lsof -nP -a -p $$pid -iTCP:$(port_shown) -sTCP:LISTEN -Fn 2>/dev/null | sed -n 's/^n//p' | head -1); \
+		case "$$addr" in ""|\**) url=127.0.0.1:$(port_shown) ;; *) url=$$addr ;; esac; \
+		echo "Port $(port_shown) is already served by this checkout (pid $$pid, listening on $${addr:-an unknown address})."; \
+		echo "Open http://$$url, or stop that server first."; \
 		exit 1; \
 	fi; \
-	echo "Port $(APP_PORT) is held by pid $$pid, running in $${cwd:-an unknown directory}."; \
+	echo "Port $(port_shown) is held by pid $$pid, running in $${cwd:-an unknown directory}."; \
 	echo "That is not this checkout ($(CURDIR)) — it is serving a different app."; \
 	echo "Leave it alone and use another port, e.g. APP_PORT=4301 on this target."; \
 	exit 1
 
-run: port-check ## Start dev server
+run: port-check ## Start the dev server on 127.0.0.1:4300 (APP_HOST=, APP_PORT= to change)
+	$(warn-exposed)
 	npm run dev
 
 dev: run ## Alias for run
@@ -76,7 +110,8 @@ dev: run ## Alias for run
 build: ## Production build
 	npm run build
 
-start: port-check ## Start production server
+start: port-check ## Start the production server on 127.0.0.1:4300 (APP_HOST=, APP_PORT= to change)
+	$(warn-exposed)
 	npm run start
 
 lint: ## Run ESLint
