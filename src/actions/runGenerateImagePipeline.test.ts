@@ -25,7 +25,13 @@ const IMAGE_CONTENT = { url: "https://cdn.pipelex.com/x.png", mime_type: "image/
 const PARSED = { url: "https://cdn.pipelex.com/x.png", mime_type: "image/png" };
 
 // Blocking execute returns a PipelexExecuteResult with the resolved `main_stuff`.
-const BLOCKING_RESPONSE = { pipeline_run_id: "run-1", main_stuff: IMAGE_CONTENT };
+const BLOCKING_RESPONSE = {
+  pipeline_run_id: "run-1",
+  main_stuff: IMAGE_CONTENT,
+  // The runner always sends `pipe_output`; the SDK's `resultsFromExecute` lifts
+  // the extension fields off it, so a double stands in with an empty one.
+  pipe_output: {},
+};
 
 // The schema-shaped data dict the form hands the action (`rjsfDataFromRunValues`):
 // a `native.Text` input is `{ text }` in schema shape.
@@ -74,7 +80,11 @@ describe("runGenerateImageBlocking", () => {
   });
 
   it("classifies a missing image URL as bad_image_output", async () => {
-    execute.mockResolvedValueOnce({ pipeline_run_id: "run-1", main_stuff: { caption: "no url" } });
+    execute.mockResolvedValueOnce({
+      pipeline_run_id: "run-1",
+      main_stuff: { caption: "no url" },
+      pipe_output: {},
+    });
     const result = await runGenerateImageBlocking(DATA);
     expect(result.ok).toBe(false);
     if (result.ok) return;
