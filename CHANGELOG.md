@@ -1,5 +1,56 @@
 # Changelog
 
+## [v0.5.0] - 2026-09-22
+
+### Highlights
+
+- **Nothing about a method's IO is hand-written any more.** Each tab's form and result view are rendered by `@pipelex/mthds-form` from the contracts `npm run codegen` commits, and the Server Actions gate their inputs with the same kernel the browser uses.
+- **`make add-method` turns a method into a tab in one command** — from a bundle, a catalog id or a published address — and the new "Text stats" tab is its untouched output.
+
+### Added
+
+- **Input forms rendered from each method's contract**: `npm run codegen` asks `POST /v1/validate` for the pipe IO contracts and the `input_form` and `output_form` views and commits them as `src/generated/<method>/contracts.ts`, and every tab derives its fields, labels, controls and required-ness from `INPUT_FORM` through `<RunInputsForm>` and `useRunInputs(CONTRACT, DESCRIPTOR, seed?)`. Add an input to a bundle, regenerate, and it appears with no component edit; `docs/input-form.md` is the reference.
+- **Results rendered from each method's output contract**: each tab builds `RESULT_FIELD = requireResultField(OUTPUT_FORM, CONTRACT, …)` and renders `<RunResult>`, the kernel's `<StuffViewer>` inside a labelled section, so nothing inspects a payload to decide how to lay it out.
+- **A server-side input gate that shares the browser's rules**: every Server Action opens with `gateRunInputs(CONTRACT, data)` from `src/lib/runInputs.ts`, the kernel's own gate and a strict superset of the readiness rule that lights the Run button, and a test runs both sides over one table of inputs. `requireContract` and `requireInputForm` throw on a missed lookup instead of rendering an empty form with a live Run button.
+- **`make add-method`**: `METHOD=<bundle path | mt_… | address>` scaffolds a new tab — the method directory, its generated tree, a narrower, the Server Action trio, an action test, a form and the tab entry — rendering and formatting every file before writing any, refusing rather than overwriting, and holding a lock so two runs cannot interleave. `DRY_RUN=1` prints the plan and `PIPE=`, `NAME=` and `LABEL=` override the derived choices; `docs/add-method.md` is the reference.
+- **Selector-sourced methods, `methods/<name>/method.json`**: a method directory holds either `.mthds` bundles or exactly one `method_ref` or `method_id` selector naming a method that lives elsewhere, and codegen, `codegen:check` and `sources.json` treat both kinds alike. The keyed scripts read `GET /v1/version` first and refuse with the base URL and the missing capability named instead of surfacing a bare `403`.
+- **Two new examples, "Complex inputs" and "Text stats"**: `methods/complex-form/` takes a required text, an optional structured input and a plural text input, so its form shows a nested card, an enum and a repeater while its component names no input; `methods/text-stats/` names the published `github.com/Pipelex/methods/text_stats@v0.1.1`, and its tab is `make add-method`'s output committed untouched, so every `make all` compiles and tests what the scaffold emits.
+- **`wireListOutput` for plural outputs**: the runtime renders a list output as a `{ items }` envelope on the blocking path and as a bare array on the durable path, so a plural narrower parses `z.array(<Code>Schema)` over `wireListOutput(results, <Code>Schema)`, which unwraps the envelope when it sees one. It expires once the runtime settles on one rendering.
+- **`useFileInputs`, the file seam**: drop, size early-exit, encode and write-back of a `FileValue` at the field's path, extracted from `PdfForm` so any form with a file input composes it.
+- **A drift gate for `contracts.ts`**: the file carries no codegen stamp, so its SHA-256 rides in `sources.json`'s `derived` map for `codegen:check`, and `codegen:verify` re-fetches `/v1/validate` and compares the rendered bytes. `npm run codegen` also refuses a server artifact that would land on a file it writes itself.
+- **A durable run shows its id**: the status card and the error display print the run id, selectable in one click, and the server logs it when the run starts, so a run started from a local bundle can be looked up afterwards.
+
+### Changed
+
+- **Server Actions take the method's schema-shaped input dict (Breaking)**: `runExtractEntitiesBlocking("some text")` becomes `runExtractEntitiesBlocking({ text: { text: "some text" } })` and the PDF trio takes `{ document: { url, filename } }`, with inputs travelling as `{concept, content}` envelopes. The hand-written per-input guards are deleted in favour of the gate.
+- **One bundle loader, `loadMethodBundles(name)` (Breaking)**: it replaces the per-demo loaders and reads every `.mthds` file of `methods/<name>/` in the order `npm run codegen` projects them, on every platform, so a bundle split across several files runs as it was generated.
+- **The committed trees are regenerated on engine `0.56.0` (Breaking)**: `contracts.ts` carries `json_schema` on each output contract, which the `mthds` protocol types now require, and every crate fingerprint is unchanged. Regeneration currently needs `PIPELEX_BASE_URL=https://api-dev.pipelex.com`, because `api.pipelex.com` serves neither form view nor `method_ref`; `codegen:check` stays offline, so `make all` needs no key.
+- **Tailwind 4**: the form kernel is written in v4's vocabulary, which a v3 build compiles to nothing. `tailwind.config.ts` is retired for `@source`, `@theme inline` and `tw-animate-css` in `src/app/globals.css`, `@pipelex/mthds-form/theme.css` supplies the stock tokens a host overrides, and `src/app/globals.test.ts` compiles the stylesheet so a lost `@source` or a double-wrapped `hsl(hsl(…))` token fails `make test`.
+- **The PDF example uses the kernel's dropzone**, including "paste a URL instead", so a document can be an `https://` or `pipelex-storage://` reference with no upload; the kernel shuts every way into the value while a file encodes.
+- **The file gate checks the scheme before the bytes**: `checkFileInputs` accepts only `data:`, `https://` and `pipelex-storage://` — any other string would be read by `prepareInputs` as a server-side file path — and finds every file position by walking the method's wire descriptor, so a plural or nested file input is gated like a top-level one.
+- **`blockingRun` and `durableRun` take `PipelexStartOptions`**, so an action can name a method by `method_ref` or `method_id`.
+- **`ExampleTabs` is data-driven**: `TABS` carries each example's component, `// add-method:imports` and `// add-method:tabs` mark where `make add-method` inserts, and the tab row wraps on narrow screens.
+- **The dev server port is `APP_PORT`, default `4300`**: it moved off `4100`, which the `pipelex-server` local stack holds, and a `port-check` before `run`, `start` and the e2e targets names the checkout already serving the port instead of printing a bare `EADDRINUSE`, and stops e2e from silently reusing another checkout's server.
+- **`make use-local` and `make use-npm` cover `@pipelex/mthds-form`** alongside `@pipelex/sdk`, in one install.
+- **`@pipelex/sdk` `^0.20.1` (was `^0.13.0`) and `@pipelex/mthds-form` `^0.8.0`**: the blocking path adapts its response through the SDK's `resultsFromExecute`, so every `RunResults` field, `working_memory` included, reads the same in both modes, and the PDF action names the `pipe_ref` that `prepareInputs` now requires.
+
+### Fixed
+
+- **A PDF between roughly 3.2 MB and the 8 MB cap crashed the Server Action**: the base64 shape check was a backtracking regex that overflowed V8's stack, which also made `file_too_large` unreachable. The check is now linear, and size is tested before shape.
+- **The dev server no longer logs uploaded files**: `next.config.js` sets `logging.serverFunctions: false`, so a file input's base64 `data:` URL is no longer printed with every Server Action call.
+- **`make help` lists the e2e targets again**: its pattern allowed no digits, so `test-e2e` and `test-e2e-ui` never matched.
+- **The `bump-mthds-form` skill names the seams this template actually imports**, rather than a hand-rolled gate it no longer has.
+
+### Removed
+
+- **The hand-written result components (Breaking)**: `EntityResult`, `PdfSummaryResult` and `ImageResult` are gone, replaced by `<RunResult>`. The narrowers in `src/types/` are untouched, and a bespoke view is still open to an output that earns one.
+
+### Security
+
+- **The app's servers listen on loopback by default (Breaking)**: `make dev`, `make start`, `npm run dev` and `npm run start` bind `127.0.0.1`, because anyone who could reach the server ran methods billed to the developer's `PIPELEX_API_KEY`. `make dev APP_HOST=0.0.0.0` widens it, and the Makefile warns whenever a server starts beyond loopback.
+- **Next.js `^16.3.5`**: `next` and `eslint-config-next` move past the critical remote-code-execution advisories GHSA-p293-qw3h-jr36 and GHSA-2xp9-vwfh-vxw4, and the re-lock leaves `npm audit` clean.
+- **The result view keeps its own URL policy**: `scrubResultUrls` (`src/lib/resultUrls.ts`) removes any file URL the kernel would paint, link or frame that is not `https:` or a PNG, JPEG or WebP `data:` URL, and `<RunResult>` says what it removed. It is a stopgap until `@pipelex/mthds-form` narrows its own policy, and does not cover Markdown inside a `native.Text` result.
+
 ## [v0.4.0] - 2026-08-21
 
 ### Added

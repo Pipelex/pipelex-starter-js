@@ -7,6 +7,8 @@ interface RunStatusProps {
   elapsedMs: number;
   /** Why we're in a resilient/retrying poll state, or null when polling cleanly. */
   health: RunHealth | null;
+  /** The durable run's id, or null in blocking mode and before `start` answers. */
+  runId: string | null;
 }
 
 /**
@@ -46,7 +48,7 @@ function statusLabel(status: string): string {
  * `aria-live="polite"` announces progress to assistive tech without stealing
  * focus.
  */
-export function RunStatus({ status, elapsedMs, health }: RunStatusProps) {
+export function RunStatus({ status, elapsedMs, health, runId }: RunStatusProps) {
   const seconds = (elapsedMs / 1000).toFixed(1);
   return (
     <div
@@ -67,6 +69,19 @@ export function RunStatus({ status, elapsedMs, health }: RunStatusProps) {
           </span>
         </p>
         {health && <p className="text-xs text-blue-700">{HEALTH_NOTES[health]}</p>}
+        {/* The run id, where a person can read and copy it: a run started from
+            an inline bundle has no catalog id, so once this page is closed the
+            id is the only way back to it — in the back office, through the
+            API, or in the dev server's log, which prints the same line.
+            `aria-live="off"` keeps it out of the announcement while leaving it
+            in the accessibility tree: inside this polite region it would
+            otherwise be read out as a run id's worth of hexadecimal the moment
+            it arrives. `select-all` makes one click take the whole id. */}
+        {runId && (
+          <p aria-live="off" className="text-xs text-blue-700">
+            Run <span className="select-all font-mono">{runId}</span>
+          </p>
+        )}
       </div>
     </div>
   );

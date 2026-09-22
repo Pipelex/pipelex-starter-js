@@ -43,7 +43,7 @@ test.describe("offline-API error display", () => {
   test("renders structured error with title, recovery hint, and details", async ({ page }) => {
     await page.goto("/");
 
-    await page.getByLabel("Input text").fill("Apple announced new products today.");
+    await page.getByRole("textbox", { name: "Text" }).fill("Apple announced new products today.");
     await page.getByRole("button", { name: /extract entities/i }).click();
 
     // Next.js renders its own role="alert" route announcer, so scope to ours

@@ -32,7 +32,7 @@ async function flush(ms = 0) {
 }
 
 function submitForm() {
-  const form = screen.getByLabelText(/image prompt/i).closest("form");
+  const form = screen.getByRole("button", { name: /generate image/i }).closest("form");
   if (!form) throw new Error("form not found");
   fireEvent.submit(form);
 }
@@ -66,8 +66,54 @@ describe("ImageForm", () => {
     submitForm();
 
     await flush();
-    expect(screen.getByRole("img", { name: /generated image/i })).toBeInTheDocument();
+    // The kernel's image arm paints the file with no storage resolver
+    // configured, which is why this template renders a hosted image without
+    // wiring `<ResultEnvProvider>`. This payload carries only `url`, so it is
+    // the fallback arm; the preference itself is the next test.
+    expect(screen.getByRole("img")).toHaveAttribute("src", IMAGE.url);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    // The action receives the schema-shaped dict, keyed by the contract's own
+    // input name. Two slips this catches and nothing else does: sending the
+    // raw run-values instead of `toData()`, and seeding under a key the
+    // contract does not declare (which ships an empty box and a dead Run
+    // button — every other test here submits the form element directly, so a
+    // disabled button never fails them).
+    expect(start).toHaveBeenCalledWith({
+      image_prompt: { text: expect.stringContaining("friendly robot") },
+    });
+  });
+
+  it("paints the signed public_url, not the storage reference beside it", async () => {
+    // The one kernel behaviour this template's docs promise outright — "every
+    // file these examples produce paints unaided". It is true only because the
+    // file arm prefers `public_url`, and a hosted run returns a `pipelex-storage://`
+    // URI as `url`, which resolves nowhere in a browser. Without this case a
+    // dependency bump could reverse the preference and every image would go
+    // blank with `make all` still green.
+    start.mockResolvedValueOnce({ ok: true, runId: "run-1" });
+    poll.mockResolvedValueOnce({
+      ok: true,
+      state: "completed",
+      output: {
+        url: "pipelex-storage://org/assets/abc.bin",
+        public_url: "https://cdn.example/pub.png",
+        mime_type: "image/png",
+      },
+      usage: USAGE,
+    });
+
+    render(<ImageForm />);
+    submitForm();
+
+    await flush();
+    expect(screen.getByRole("img")).toHaveAttribute("src", "https://cdn.example/pub.png");
+  });
+
+  it("seeds the prompt under the contract's declared input name", () => {
+    render(<ImageForm />);
+    const box = screen.getByRole("textbox", { name: /image prompt/i });
+    expect((box as HTMLTextAreaElement | HTMLInputElement).value).toContain("friendly robot");
+    expect(screen.getByRole("button", { name: /generate image/i })).toBeEnabled();
   });
 
   it("blocking mode demonstrates the ~30s cap (execute_timeout error)", async () => {

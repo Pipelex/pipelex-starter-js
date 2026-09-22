@@ -8,6 +8,13 @@
  * This module closes that gap the way the SDK documents: re-run `codegen()` live
  * and compare its `crate_fingerprint` against the committed lock's.
  *
+ * The same gap exists for `contracts.ts`, and for the same reason: it is projected
+ * from `POST /v1/validate` and nothing offline can tell whether that route would
+ * return the same payload today. So this module re-fetches it too and compares
+ * the rendered bytes against the committed file. The re-fetch is close to free —
+ * the client and the closure are already in hand — which is why it is checked
+ * here rather than exempted the way an unverifiable artifact would have to be.
+ *
  * It writes nothing. A mismatch means `npm run codegen` has real work to do; the
  * fix is a deliberate regeneration commit, not a silent rewrite from a checker.
  *
@@ -26,21 +33,49 @@ import {
   runCodegenCheck,
 } from "@pipelex/sdk";
 
+import { assertSelectorSupport, explainSelectorFailure, selectorKindsOf } from "./api.mts";
 import {
   assertSecureBaseUrl,
+  CONTRACTS_FILENAME,
   discoverMethods,
+  ManifestError,
   refuseSymlinkRoot,
   GENERATED_ROOT,
   LOCK_FILENAME,
   METHODS_DIR,
   readGeneratedTree,
+  readTextFile,
+  renderContracts,
   REPO_ROOT,
+  missingViews,
+  VALIDATE_VIEWS,
+  type MethodSource,
 } from "./shared.mts";
 
 const { loadEnvConfig } = nextEnv;
 
 export const EXIT_OK = 0;
 export const EXIT_FAILED = 1;
+
+/**
+ * How a failed call to `route` reads in the console. Both routes this script
+ * calls report the same way, and the status plus the server's own message is
+ * the part that tells a stale commit apart from an expired key.
+ *
+ * A selector method takes the selector-resolution reading of a 404 first: on a
+ * committed tree that used to resolve, "no package at this address any more" is
+ * the whole story, and the server spells it out.
+ */
+function requestDetail(error: unknown, route: string, source: MethodSource): string {
+  if (source.kind === "selector") {
+    const selectorFailure = explainSelectorFailure(error, source.selector);
+    if (selectorFailure !== null) return selectorFailure;
+  }
+  if (error instanceof ApiResponseError) {
+    return `HTTP ${error.status} from ${route} — ${error.serverMessage ?? error.message}`;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
 
 async function runVerifyInner(): Promise<number> {
   loadEnvConfig(REPO_ROOT, false, { info: () => {}, error: console.error });
@@ -57,7 +92,16 @@ async function runVerifyInner(): Promise<number> {
     return EXIT_FAILED;
   }
 
-  const methods = await discoverMethods();
+  let methods: MethodSource[];
+  try {
+    methods = await discoverMethods();
+  } catch (error) {
+    if (error instanceof ManifestError) {
+      console.error(`codegen:verify: ${error.message}`);
+      return EXIT_FAILED;
+    }
+    throw error;
+  }
   if (methods.length === 0) {
     console.error(
       `codegen:verify: no methods found under ${path.relative(REPO_ROOT, METHODS_DIR)}/.`,
@@ -70,6 +114,22 @@ async function runVerifyInner(): Promise<number> {
   await refuseSymlinkRoot(GENERATED_ROOT);
 
   const client = new PipelexApiClient();
+
+  // Same handshake as the writer's, for the same reason: an origin that does not
+  // forward selectors cannot answer the question this script asks about a
+  // selector method, and it should say that once rather than per method.
+  const unsupported = await assertSelectorSupport(
+    client,
+    baseUrl,
+    selectorKindsOf(
+      methods.filter((method) => method.kind === "selector").map((method) => method.selector),
+    ),
+  );
+  if (unsupported !== null) {
+    console.error(`codegen:verify: ${unsupported}`);
+    return EXIT_FAILED;
+  }
+
   console.log(`codegen:verify: ${methods.length} method(s), against ${baseUrl}`);
 
   let failed = false;
@@ -109,11 +169,11 @@ async function runVerifyInner(): Promise<number> {
     let liveFingerprint: string;
     let liveEngine: string;
     try {
-      const response = await client.codegen({
-        files: method.files,
-        kind: "types",
-        target: "ts-zod",
-      });
+      const response = await client.codegen(
+        method.kind === "files"
+          ? { files: method.files, kind: "types", target: "ts-zod" }
+          : { ...method.selector, kind: "types", target: "ts-zod" },
+      );
       if (!response.is_valid) {
         console.error(`\n✗ ${method.name} — the closure does not resolve:`);
         for (const item of response.validation_errors) {
@@ -125,13 +185,7 @@ async function runVerifyInner(): Promise<number> {
       liveFingerprint = response.crate_fingerprint;
       liveEngine = response.engine_version;
     } catch (error) {
-      const detail =
-        error instanceof ApiResponseError
-          ? `HTTP ${error.status} from POST /v1/codegen — ${error.serverMessage ?? error.message}`
-          : error instanceof Error
-            ? error.message
-            : String(error);
-      console.error(`\n✗ ${method.name} — ${detail}`);
+      console.error(`\n✗ ${method.name} — ${requestDetail(error, "POST /v1/codegen", method)}`);
       failed = true;
       continue;
     }
@@ -145,8 +199,59 @@ async function runVerifyInner(): Promise<number> {
       continue;
     }
 
+    // The contracts artifact rides `/v1/validate`, not `/v1/codegen`, so the
+    // crate fingerprint above says nothing about it. Compare the rendered bytes —
+    // with the same `views` opt-in the writer sends, or the render differs on
+    // every tree by the descriptor's absence alone.
+    try {
+      const response =
+        method.kind === "files"
+          ? await client.validateFiles(
+              method.files.map((file) => ({ content: file.content, uri: file.source })),
+              { views: VALIDATE_VIEWS },
+            )
+          : await client.validate(method.selector, false, undefined, undefined, VALIDATE_VIEWS);
+      if (!response.is_valid) {
+        console.error(`\n✗ ${method.name} — the method no longer validates:`);
+        for (const item of response.validation_errors) {
+          console.error(`    ${item.source ?? "?"}: ${item.message}`);
+        }
+        failed = true;
+        continue;
+      }
+      if (!response.input_form || !response.output_form) {
+        console.error(
+          `\n✗ ${method.name} — /v1/validate returned no ` +
+            `${missingViews(response).join(" or ")} view, so the committed ` +
+            `${CONTRACTS_FILENAME} cannot be verified. This base URL serves an API too old ` +
+            `for the wire descriptors — check PIPELEX_BASE_URL.`,
+        );
+        failed = true;
+        continue;
+      }
+      const live = renderContracts(
+        response.pipe_io_contracts,
+        response.input_form,
+        response.output_form,
+      );
+      const committed = await readTextFile(path.join(outDir, CONTRACTS_FILENAME));
+      if (live !== committed) {
+        console.error(
+          `\n✗ ${method.name} — the committed ${CONTRACTS_FILENAME} is not what /v1/validate returns.`,
+        );
+        console.error("    Run `npm run codegen` and commit the result.");
+        failed = true;
+        continue;
+      }
+    } catch (error) {
+      console.error(`\n✗ ${method.name} — ${requestDetail(error, "POST /v1/validate", method)}`);
+      failed = true;
+      continue;
+    }
+
     console.log(
-      `\n✓ ${method.name} — crate ${committedFingerprint.slice(0, 12)} matches the engine`,
+      `\n✓ ${method.name} — crate ${committedFingerprint.slice(0, 12)} matches the engine, ` +
+        `${CONTRACTS_FILENAME} matches /v1/validate`,
     );
     if (liveEngine !== committedEngine) {
       // Not a failure. The stamp carries `engine_version`, so an engine bump

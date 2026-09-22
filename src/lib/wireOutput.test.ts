@@ -1,12 +1,35 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import type { RunResults } from "@pipelex/sdk";
-import { describeSchemaFailure, dropWireNulls, MAX_WIRE_DEPTH, wireOutput } from "./wireOutput";
+import {
+  describeSchemaFailure,
+  dropWireNulls,
+  MAX_WIRE_DEPTH,
+  wireListOutput,
+  wireOutput,
+} from "./wireOutput";
 import { ImageSchema } from "@/generated/generate-image/types";
+
+/**
+ * What the ts-zod emitter projected a non-required concept field as before
+ * pipelex 0.54.0: `.optional()`, which in zod means `| undefined` and *rejects*
+ * `null`. That is the mismatch `dropWireNulls` exists to bridge, and it has to
+ * be built by hand now: the committed schemas are `.nullish()` since the trees
+ * were regenerated on engine 0.56.0 (the pair of tests below records both
+ * halves of that). The helper stays because an older engine is still what some
+ * deployments serve, and regenerating against one brings `.optional()` back.
+ */
+const LEGACY_IMAGE = z.object({
+  url: z.string(),
+  public_url: z.string().optional(),
+  caption: z.string().optional(),
+  width: z.number().int().optional(),
+  height: z.number().int().optional(),
+});
 
 describe("dropWireNulls", () => {
   it("drops a null on an .optional() field so it reads as absent", () => {
-    expect(dropWireNulls({ url: "https://x", caption: null }, ImageSchema)).toEqual({
+    expect(dropWireNulls({ url: "https://x", caption: null }, LEGACY_IMAGE)).toEqual({
       url: "https://x",
     });
   });
@@ -48,13 +71,24 @@ describe("dropWireNulls", () => {
     expect(dropWireNulls(7, ImageSchema)).toBe(7);
   });
 
-  it("is what lets a generated schema accept the runtime's own wire payload", () => {
+  it("is what lets an .optional() schema accept the runtime's own wire payload", () => {
     // The regression this whole helper exists for: the hosted runtime emits
     // `"caption": null` for an unset optional field, and `.optional()` rejects
     // null. Without the normalization the schema rejects a perfectly good run.
     const wire = { url: "https://x/y.png", caption: null, width: null, height: null };
-    expect(ImageSchema.safeParse(wire).success).toBe(false);
-    expect(ImageSchema.safeParse(dropWireNulls(wire, ImageSchema)).success).toBe(true);
+    expect(LEGACY_IMAGE.safeParse(wire).success).toBe(false);
+    expect(LEGACY_IMAGE.safeParse(dropWireNulls(wire, LEGACY_IMAGE)).success).toBe(true);
+  });
+
+  it("is a no-op against today's generated schema, which accepts the null itself", () => {
+    // The workaround's expiry condition, recorded rather than assumed: the
+    // emitter projects a non-required field as `.nullish()` since pipelex
+    // 0.54.0, so the schema accepts the runtime's own payload unaided and the
+    // strip has nothing to do. Deleting the helper waits until no engine this
+    // template can be regenerated against still emits `.optional()`.
+    const wire = { url: "https://x/y.png", caption: null, width: null, height: null };
+    expect(ImageSchema.safeParse(wire).success).toBe(true);
+    expect(dropWireNulls(wire, ImageSchema)).toEqual(wire);
   });
 
   // The reason the walk is schema-guided rather than blind. Inside these shapes a
@@ -97,7 +131,7 @@ describe("wireOutput", () => {
       pipeline_run_id: "run-1",
       main_stuff: { url: "https://x", caption: null },
     };
-    expect(wireOutput(results, ImageSchema)).toEqual({ url: "https://x" });
+    expect(wireOutput(results, LEGACY_IMAGE)).toEqual({ url: "https://x" });
   });
 
   it("reads only main_stuff — a matching pipe_output entry must not rescue it", () => {
@@ -113,6 +147,60 @@ describe("wireOutput", () => {
     const results = { pipeline_run_id: "run-1", main_stuff } as unknown as RunResults;
     expect(wireOutput(results, ImageSchema)).toBe(main_stuff);
     expect(ImageSchema.safeParse(wireOutput(results, ImageSchema)).success).toBe(false);
+  });
+});
+
+describe("wireListOutput", () => {
+  // The two renderings of one ListContent the runtime sends, measured live on
+  // 2026-09-05: `{ items }` from the blocking response and from a durable run
+  // whose concept class the worker could hydrate; a bare array from a durable
+  // run of a method-declared concept, which falls back to the transport dump.
+  it("unwraps the { items: [...] } envelope and normalizes each item", () => {
+    const results = {
+      pipeline_run_id: "run-1",
+      main_stuff: { items: [{ url: "https://a", caption: null }, { url: "https://b" }] },
+    } as unknown as RunResults;
+    expect(wireListOutput(results, LEGACY_IMAGE)).toEqual([
+      { url: "https://a" },
+      { url: "https://b" },
+    ]);
+  });
+
+  it("passes a bare array through, normalizing each item the same way", () => {
+    const results = {
+      pipeline_run_id: "run-1",
+      main_stuff: [{ url: "https://a", caption: null }, { url: "https://b" }],
+    } as unknown as RunResults;
+    expect(wireListOutput(results, LEGACY_IMAGE)).toEqual([
+      { url: "https://a" },
+      { url: "https://b" },
+    ]);
+  });
+
+  it("hands both shapes to the same array schema with the same verdict", () => {
+    const schema = z.array(ImageSchema);
+    const items = [{ url: "https://a" }];
+    const enveloped = { pipeline_run_id: "r", main_stuff: { items } } as unknown as RunResults;
+    const bare = { pipeline_run_id: "r", main_stuff: items } as unknown as RunResults;
+    expect(schema.parse(wireListOutput(enveloped, ImageSchema))).toEqual(
+      schema.parse(wireListOutput(bare, ImageSchema)),
+    );
+  });
+
+  it("leaves anything else untouched so z.array() names what it got", () => {
+    const single = {
+      pipeline_run_id: "r",
+      main_stuff: { url: "https://a" },
+    } as unknown as RunResults;
+    expect(wireListOutput(single, ImageSchema)).toEqual({ url: "https://a" });
+    expect(z.array(ImageSchema).safeParse(wireListOutput(single, ImageSchema)).success).toBe(false);
+
+    // An `items` key that is not an array is a field, not the envelope.
+    const notEnvelope = {
+      pipeline_run_id: "r",
+      main_stuff: { items: "x" },
+    } as unknown as RunResults;
+    expect(wireListOutput(notEnvelope, ImageSchema)).toEqual({ items: "x" });
   });
 });
 

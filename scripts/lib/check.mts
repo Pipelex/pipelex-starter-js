@@ -9,10 +9,12 @@
  *     `@pipelex/sdk` owns that verdict (categories `missing` · `modified` ·
  *     `hand-edited` · `orphan`). Its `detail` strings are printed verbatim so
  *     this report reads identically to `pipelex codegen check`.
- *  2. **Do the trees still match the `.mthds` files they were generated from?**
- *     The lock cannot know — it hashes artifacts, not sources — so the writer
+ *  2. **Do the trees still match the `.mthds` files they were generated from,
+ *     and are the starter's own artifacts intact?** The lock cannot know either
+ *     one — it hashes the artifacts the codegen route returned, not the sources
+ *     behind them and not the files this repo emits itself — so the writer
  *     (`generate.mts`) puts a starter-owned `sources.json` beside each lock and
- *     this module compares it against the bundles on disk.
+ *     `compareSidecar` checks both halves of it against what is on disk.
  *
  * Neither question is "is the tree what the engine would produce today". That one
  * needs the engine, and it is `npm run codegen:verify`.
@@ -32,17 +34,18 @@ import path from "node:path";
 import { CodegenLockError, runCodegenCheck } from "@pipelex/sdk";
 
 import {
-  compareSources,
+  compareSidecar,
   discoverMethods,
   findOrphanTrees,
   GENERATED_ROOT,
   LOCK_FILENAME,
   METHODS_DIR,
+  ManifestError,
   NonUtf8FileError,
   readGeneratedTree,
   REPO_ROOT,
   SymlinkRefusedError,
-  type MethodClosure,
+  type MethodSource,
 } from "./shared.mts";
 
 export const EXIT_CURRENT = 0;
@@ -79,7 +82,7 @@ export function summarizeVerdicts(codes: readonly number[]): VerdictSummary {
 
 /** Check one method's generated tree; print its report and return its exit code. */
 export async function checkMethod(
-  method: MethodClosure,
+  method: MethodSource,
   generatedRoot: string = GENERATED_ROOT,
 ): Promise<number> {
   const outDir = path.join(generatedRoot, method.name);
@@ -139,7 +142,7 @@ export async function checkMethod(
     throw error;
   }
 
-  const stale = await compareSources(outDir, method.sourceHashes);
+  const stale = await compareSidecar(outDir, method.sourceHashes);
 
   if (drifts.length === 0 && stale.length === 0) {
     console.log(
@@ -158,14 +161,19 @@ export async function checkMethod(
 }
 
 async function runCheckInner(): Promise<number> {
-  let methods: MethodClosure[];
+  let methods: MethodSource[];
   try {
     methods = await discoverMethods();
   } catch (error) {
-    if (error instanceof SymlinkRefusedError || error instanceof NonUtf8FileError) {
+    if (
+      error instanceof SymlinkRefusedError ||
+      error instanceof NonUtf8FileError ||
+      error instanceof ManifestError
+    ) {
       // A refusal on the source side: regenerating would ship garbage to the
-      // API (or follow a link out of the closure), so there is no verdict and
-      // no remedy to print beyond the message itself.
+      // API (or follow a link out of the closure), and a manifest that names no
+      // method names nothing to regenerate from. No verdict, and no remedy to
+      // print beyond the message itself.
       console.error(`codegen:check: ${error.message}`);
       return EXIT_NO_VERDICT;
     }

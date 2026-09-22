@@ -7,11 +7,11 @@ Only one seam is Next.js-specific (env loading — step 3); everything else is f
 ## 1. Dependencies
 
 ```bash
-npm install @pipelex/sdk zod
+npm install @pipelex/sdk zod @pipelex/mthds-form
 npm install --save-dev @types/node   # skip if your app already has it
 ```
 
-`@pipelex/sdk` and `zod` are **runtime** dependencies: the SDK makes the API calls, and the generated binders validate run output with zod at request time. `@types/node` is dev-only, and the codegen kit needs it: `tsconfig.scripts.json` sets `"types": ["node"]` and the scripts import `node:` built-ins, so without it the script typecheck fails with TS2688. A Next.js app already ships it; a browser-only app typically does not.
+`@pipelex/sdk` and `zod` are **runtime** dependencies: the SDK makes the API calls, and the generated binders validate run output with zod at request time. `@pipelex/mthds-form` is a runtime dependency too, and it is not optional even if you never render its controls: the codegen kit's writer emits `import type { InputForm, PipeIOContracts } from "@pipelex/mthds-form";` into every generated `contracts.ts`, so without it step 5's first codegen run produces a tree that does not typecheck. The headless core is all the codegen kit and the server gate need. Its React control set (`@pipelex/mthds-form/react`) is a separate, optional choice — if you want the rendered forms as well, [`docs/input-form.md`](input-form.md) covers the composition and the Tailwind setup they require — a **v4** build, and an `@source` directive pointing at the package's bundle. `@types/node` is dev-only, and the codegen kit needs it: `tsconfig.scripts.json` sets `"types": ["node"]` and the scripts import `node:` built-ins, so without it the script typecheck fails with TS2688. A Next.js app already ships it; a browser-only app typically does not.
 
 ## 2. Copy the codegen kit
 
@@ -46,7 +46,9 @@ These pieces of `src/lib/` are the pattern — copy and adapt them:
 - `errors.ts` — `classifyPipelineError`, which turns SDK error classes into a tagged, serializable error model.
 - `serverEnv.ts` — `readClassifyEnv()`, the single `process.env` read both run helpers share, so the two execution paths can't drift on how classification sees the environment.
 - `usageReport.ts` — turns a run's `tokens_usages` into the render-ready cost report both helpers return; it is part of their public return type, not an optional extra.
-- `loadBundle.ts` — `fs.readFile` of the `.mthds` bundles; bundles ship as files, never as inlined TOML strings.
+- `loadBundle.ts` — `loadMethodBundles(name)`, which reads every `.mthds` file of `methods/<name>/` for a run's `mthds_contents`; bundles ship as files, never as inlined TOML strings, and an action holds only its method's directory name.
+- `runInputs.ts` — `requireContract` + `requireInputForm` + `gateRunInputs`, the input gate every entry point opens with. It validates the caller's inputs against the method's own generated `contracts.ts` and returns the `{concept, content}` payload the run expects, so no hand-written per-input guard is needed. Take it even if you build your own inputs rather than using the kernel's controls: a server endpoint is public, and this is half the trust boundary (the shape gate needs only the contract; `requireInputForm` serves the rendering side and the file gate below).
+- `fileEncoding.ts` — **the other half, and only skippable if no method you run takes a file.** `checkFileInputs` takes the pipe's wire descriptor and the _gated_ inputs, walks the descriptor to find every file position (top-level, inside a list, nested in a structured concept — the same walk `prepareInputs` uploads by), and validates what the shape gate cannot: that each file reference uses a scheme you accept, and — for a `data:` URL — its MIME type and its size. This is not a nicety. `client.prepareInputs` resolves any string it does not recognise as `data:`, `http(s)://` or `pipelex-storage://` as a **local filesystem path**, reads it, and uploads it; so a server endpoint that runs only the shape gate and hands the result to `prepareInputs` is an arbitrary server-side file read whose contents come back rendered to the caller. Copy the closed scheme set with it, and read its docstring before widening one.
 
 The `src/types/` convention comes with them: `pipelineError.ts` — the tagged `BadPipelineOutputError` / `BadImageOutputError` classes that `errors.ts` `instanceof`-matches on, so it is part of the module graph, not an optional extra — plus one adapter per method, which re-exports the generated type and wraps the generated binder in a `parseXxx(results)` that translates a `ZodError` into your error model. **Never hand-declare an output shape** — the bundle declares it and codegen projects it.
 
@@ -66,7 +68,3 @@ Commit the generated tree in the same commit as the bundle. From here the conven
 - **Never edit generated files** — wrap them from your adapter layer instead.
 - **Regenerate after every bundle edit** — the offline check's `sources.json` comparison fails your CI gate until you do.
 - **Run the offline check in CI**, and `codegen:verify` before releases (it needs a key; an engine-version difference is a note, not a failure).
-
-## Known caveat
-
-`POST /v1/codegen` is live on `api-dev.pipelex.com`; `api.pipelex.com` still answers `403` pending its deploy, so regeneration currently needs `PIPELEX_BASE_URL=https://api-dev.pipelex.com`. Only regeneration is affected — the offline check needs no server, and the app itself runs against the default hosted URL.

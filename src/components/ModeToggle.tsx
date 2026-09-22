@@ -62,7 +62,7 @@ export function ModeToggle({ value, onChange, disabled }: ModeToggleProps) {
               onKeyDown={(event) => handleKeyDown(event, index)}
               className={
                 selected
-                  ? "rounded-md bg-white px-3 py-1.5 text-xs font-medium text-slate-900 shadow-sm disabled:opacity-50"
+                  ? "rounded-md bg-white px-3 py-1.5 text-xs font-medium text-slate-900 shadow-xs disabled:opacity-50"
                   : "rounded-md px-3 py-1.5 text-xs font-medium text-slate-500 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
               }
             >

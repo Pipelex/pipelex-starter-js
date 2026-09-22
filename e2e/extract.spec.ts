@@ -12,7 +12,7 @@ test("extracts entities from sample text", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("tab", { name: /text entities/i }).click();
 
-  const textarea = page.getByLabel("Input text");
+  const textarea = page.getByRole("textbox", { name: "Text" });
   await textarea.fill(
     "Apple announced new products in Cupertino on March 5th, 2026, with Tim Cook presenting alongside Jony Ive.",
   );

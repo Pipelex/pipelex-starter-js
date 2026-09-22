@@ -7,8 +7,9 @@ import { BadImageOutputError } from "@/types/pipelineError";
 /**
  * The generated `Image` concept, under the name the app already uses. Aliased
  * rather than re-exported as `Image` because that name is a DOM global in a
- * `.tsx` file. Optional fields are `| undefined` (zod's `.optional()`), not
- * `| null` — `??` at the render sites covers both.
+ * `.tsx` file. A non-required field is `| null | undefined` (zod's
+ * `.nullish()`), because the runtime serializes an unset one as an explicit
+ * `null` — `??` at the render sites covers both.
  */
 export type GeneratedImage = Image;
 
@@ -56,7 +57,7 @@ function dataUrlMediaType(url: URL): string {
  *
  * Throws `BadImageOutputError` — distinct from `BadPipelineOutputError` so the
  * error UI can speak to image generation specifically — both when the payload
- * fails the schema and when it carries a URL `<ImageResult>` should not be handed:
+ * fails the schema and when it carries a URL the result view should not be handed:
  * a non-web scheme (`file://`, `pipelex-storage://`, …), which it would otherwise
  * drop straight into an `<img>` and produce a silently-broken image, or a `data:`
  * URL whose media type is not one of the image formats a run returns. On the
@@ -66,7 +67,7 @@ function dataUrlMediaType(url: URL): string {
  * can't save a broken `public_url` and vice-versa.
  *
  * The `data:` rule guards the download link rather than the `<img>`, which is why
- * an *image* type can be refused: `<ImageResult>` renders the same validated
+ * an *image* type can be refused: the result view paints the same validated
  * string in an `<a href={src} download>`, so a payload the browser saves as a
  * file — a `data:text/html`, or an SVG carrying a `<script>` — runs with the
  * privileges of a `file://` origin once opened, where an `<img>` would either
@@ -84,7 +85,7 @@ export function parseGeneratedImage(results: RunResults): GeneratedImage {
     throw new BadImageOutputError(describeSchemaFailure(err, "Image"));
   }
 
-  // `||`, not `??`: `public_url` is `.optional()`, so the schema accepts `""` —
+  // `||`, not `??`: `public_url` is `.nullish()`, so the schema accepts `""` —
   // and an empty string is not nullish, so `??` would let it win over a perfectly
   // good `url` and fail the run on a scheme-less URL. The narrower this replaced
   // ran optional strings through a helper that mapped `""` to null; this is that
