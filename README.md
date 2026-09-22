@@ -50,7 +50,7 @@ make install
 make dev
 ```
 
-Open [http://localhost:4300](http://localhost:4300) and try the example tabs.
+Open [http://127.0.0.1:4300](http://127.0.0.1:4300) and try the example tabs. The server listens on loopback only — see [Where the app listens](#where-the-app-listens).
 
 ## Project structure
 
@@ -184,11 +184,22 @@ Then run `make all`. `tsc` type-checks the co-located tests, so it names most da
 
 **A scaffolded example (`text-stats`) comes apart the same way**, `methods/text-stats/` holding a `method.json` manifest rather than a bundle. Leave the two `add-method:` anchor comments in `ExampleTabs.tsx` in place — `make add-method` inserts at them, and a test fails if they go missing.
 
+## Where the app listens
+
+`make dev` and `make start` listen on `127.0.0.1:4300`, which only this machine can reach. That is deliberate. The app's Server Actions run methods with the `PIPELEX_API_KEY` in the server's environment, and nothing authenticates the browser that calls them, so anyone who can reach the server runs methods billed to your key. Two variables change it, on the command line or from the shell:
+
+| Variable   | Purpose                                                                                          | Default     |
+| ---------- | ------------------------------------------------------------------------------------------------ | ----------- |
+| `APP_HOST` | The interface the server binds. `0.0.0.0` opens it to your network.                              | `127.0.0.1` |
+| `APP_PORT` | The port, to run a second checkout beside one that already holds 4300: `make dev APP_PORT=4301`. | `4300`      |
+
+Widen the host only on a network you trust, for a container or to open the app on another device: `make dev APP_HOST=0.0.0.0`. The Makefile prints a warning each time a server starts beyond loopback. `npm run dev` and `npm run start` read the same two variables and fall back to the same defaults.
+
 ## Make targets
 
 | Target                | Purpose                                                                                                  |
 | --------------------- | -------------------------------------------------------------------------------------------------------- |
-| `make dev`            | Start the Next.js dev server                                                                             |
+| `make dev`            | Start the Next.js dev server on `127.0.0.1:4300` — see [Where the app listens](#where-the-app-listens)   |
 | `make build`          | Production build                                                                                         |
 | `make lint`           | ESLint                                                                                                   |
 | `make format`         | Prettier write                                                                                           |
