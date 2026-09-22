@@ -47,12 +47,15 @@ describe("executeBlockingRun", () => {
     execute.mockResolvedValueOnce({
       pipeline_run_id: "run-1",
       main_stuff: { items: ["Ada"] },
+      // The runner always sends `pipe_output`; an empty one is the faithful
+      // stand-in for a response that carried no extension fields.
+      pipe_output: {},
     });
 
     const result = await executeBlockingRun(async () => OPTIONS, parseFixture);
 
     expect(execute).toHaveBeenCalledWith(OPTIONS);
-    // No `pipe_output` on the response → the usage pair is absent → "unavailable".
+    // Nothing on `pipe_output` → the usage pair is absent → "unavailable".
     expect(result).toEqual({
       ok: true,
       output: { items: ["Ada"] },
@@ -129,6 +132,7 @@ describe("executeBlockingRun", () => {
     execute.mockResolvedValueOnce({
       pipeline_run_id: "run-1",
       main_stuff: { caption: "no url" },
+      pipe_output: {},
     });
     const result = await executeBlockingRun(async () => OPTIONS, parseImageFixture);
     expect(result.ok).toBe(false);

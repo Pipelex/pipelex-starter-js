@@ -38,7 +38,13 @@ const DATA = { text: { text: "entity text" } };
 const WIRE_INPUTS = { text: { concept: "native.Text", content: { text: "entity text" } } };
 
 // Blocking execute returns a PipelexExecuteResult with the resolved `main_stuff`.
-const BLOCKING_RESPONSE = { pipeline_run_id: "run-1", main_stuff: ENTITIES };
+const BLOCKING_RESPONSE = {
+  pipeline_run_id: "run-1",
+  main_stuff: ENTITIES,
+  // The runner always sends `pipe_output`; the SDK's `resultsFromExecute` lifts
+  // the extension fields off it, so a double stands in with an empty one.
+  pipe_output: {},
+};
 // Durable completed result returns the same bare `main_stuff` content.
 const COMPLETED_RESULT = { pipeline_run_id: "run-1", main_stuff: ENTITIES };
 

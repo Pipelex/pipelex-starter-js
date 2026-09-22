@@ -27,7 +27,13 @@ const SUMMARY = { title: "Invoice", doc_type: "invoice", key_points: ["Total $1,
 const PARSED = { title: "Invoice", doc_type: "invoice", key_points: ["Total $1,728"] };
 
 // Blocking execute returns a PipelexExecuteResult with the resolved `main_stuff`.
-const BLOCKING_RESPONSE = { pipeline_run_id: "run-1", main_stuff: SUMMARY };
+const BLOCKING_RESPONSE = {
+  pipeline_run_id: "run-1",
+  main_stuff: SUMMARY,
+  // The runner always sends `pipe_output`; the SDK's `resultsFromExecute` lifts
+  // the extension fields off it, so a double stands in with an empty one.
+  pipe_output: {},
+};
 
 // What `prepareInputs` returns after uploading the PDF: the `document` input
 // rewritten to a `pipelex-storage://` reference (so the run request carries a

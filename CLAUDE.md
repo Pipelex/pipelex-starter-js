@@ -203,7 +203,7 @@ export async function pollExtractEntitiesRun(
 }
 ```
 
-The shared helpers in `src/lib/` own the SDK call + `classifyPipelineError` (server-side, where the SDK error classes still `instanceof`-match): `executeBlockingRun` wraps `client.execute` and **adapts its response onto `RunResults`** (`{ pipeline_run_id, main_stuff }`, reading the SDK-resolved `.main_stuff`) so one narrower serves both modes; `startDurableRun` wraps `client.start`; `pollDurableRun` does one `getRunStatus` (+ `getRunResult` on a terminal status) tick.
+The shared helpers in `src/lib/` own the SDK call + `classifyPipelineError` (server-side, where the SDK error classes still `instanceof`-match): `executeBlockingRun` wraps `client.execute` and **adapts its response onto `RunResults`** through the SDK's own `resultsFromExecute` — the canonical lift of `main_stuff`, the working memory, the graph pair, the three I/O artifacts and the usage pair off the extension-open `pipe_output` onto their declared fields, public since `@pipelex/sdk` 0.20.1 — so one narrower serves both modes and every `RunResults` field reads the same whichever path ran. Do not restate that mapping by hand: a partial copy is what made `working_memory` durable-only for two releases; `startDurableRun` wraps `client.start`; `pollDurableRun` does one `getRunStatus` (+ `getRunResult` on a terminal status) tick.
 
 **One narrower contract — `parseXxx(results: RunResults)`, an adapter over the method's generated binder.** Both modes deliver the output the same way, so the narrower reads one field and hands it straight to the schema projected from the bundle:
 
