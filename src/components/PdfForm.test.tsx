@@ -268,13 +268,12 @@ describe("PdfForm", () => {
   });
 
   it("settles a pasted storage URL's preview instead of spinning forever", async () => {
-    // A non-web scheme is what the kernel hands to the host's `resolveUrl`, and
-    // `pipelex-storage://…` pasted through "paste a URL instead" is the path that
-    // reaches it here. The identity resolver is this template's answer — it has
-    // nothing to sign the URI with — and the kernel judges that answer by its own
-    // URL gate, which refuses the storage scheme. So nothing is painted, and the
-    // preview settles on the kernel's placeholder. Without a resolver the kernel
-    // would spin forever instead, which is what this pins against.
+    // A `pipelex-storage://…` reference pasted through "paste a URL instead" is
+    // one the control holds no local copy of and cannot paint, and this form
+    // passes no `resolveUrl` to exchange it for one it can. So nothing is painted,
+    // and the preview settles on the kernel's placeholder. Kernel 0.10.0 showed a
+    // spinner forever here unless a resolver was passed, which is what this pins
+    // against.
     render(<PdfForm />);
     fireEvent.click(screen.getByRole("button", { name: /paste a url instead/i }));
     fireEvent.change(screen.getByRole("textbox", { name: /link to the file/i }), {

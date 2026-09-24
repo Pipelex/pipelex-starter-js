@@ -32,24 +32,6 @@ const SAMPLE_PDF_PATH = "/sample-invoice.pdf";
 const DOCUMENT_INPUT = "document";
 
 /**
- * The kernel previews a URL its own gate accepts directly, and a file dropped
- * into the control from its local copy, which it keeps after the upload. A
- * reference it cannot paint it asks the host to resolve first, and what reaches
- * it here is a `pipelex-storage://…/x.pdf` reference the control holds no local
- * copy of: the sample shortcut's, which is stored the way a drop is, or one
- * pasted through the control's own "paste a URL instead". This app has nothing
- * to resolve such a reference with, so it hands it straight back. The kernel
- * judges a resolver's answer by the same gate, refuses the storage scheme, and
- * shows its "nothing to show" placeholder. That answer still earns its place:
- * with no resolver at all, kernel 0.10.0 spins forever over a stored reference
- * (reported upstream). A real host would exchange the storage URI for a web URL
- * it can paint here.
- */
-async function resolvePreviewUrl(url: string): Promise<string> {
-  return url;
-}
-
-/**
  * Some drag-drop sources and Windows configurations hand a valid PDF over with
  * an empty `file.type`, and the grant action would refuse that empty type. Re-wrap
  * those so the grant is asked for, and the upload signed for, `application/pdf`.
@@ -143,11 +125,11 @@ export function PdfForm() {
             setValues(next);
           }}
           disabled={running}
-          env={{
-            onDropFile: dropFile,
-            uploadingIds,
-            resolveUrl: resolvePreviewUrl,
-          }}
+          // No `resolveUrl`: this app has nothing to exchange a stored
+          // `pipelex-storage://` reference for, so the preview of one the
+          // control holds no local copy of (the sample's, or a pasted one) shows
+          // the kernel's placeholder. A real host would sign the URI here.
+          env={{ onDropFile: dropFile, uploadingIds }}
         />
         {/* App chrome that writes into the field holds itself to the rule the
             kernel applies to its own controls through `uploadingIds`: no
