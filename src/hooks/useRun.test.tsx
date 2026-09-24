@@ -50,7 +50,7 @@ describe("useRun — blocking", () => {
   it("run → running → done", async () => {
     const blocking = vi
       .fn()
-      .mockResolvedValueOnce({ ok: true, output: { value: "x" }, usage: USAGE });
+      .mockResolvedValueOnce({ ok: true, output: { value: "x" }, usage: USAGE, runId: "run-b" });
     const cfg = makeCfg({ mode: "blocking", blocking });
     const { result } = renderHook(() => useRun(cfg));
 
@@ -58,8 +58,13 @@ describe("useRun — blocking", () => {
     expect(result.current.state.phase).toBe("running");
 
     await flush();
-    // The outcome's usage rides through into the done state.
-    expect(result.current.state).toEqual({ phase: "done", output: { value: "x" }, usage: USAGE });
+    // The outcome's usage and run id ride through into the done state.
+    expect(result.current.state).toEqual({
+      phase: "done",
+      output: { value: "x" },
+      usage: USAGE,
+      runId: "run-b",
+    });
     expect(blocking).toHaveBeenCalledWith("in");
   });
 
@@ -73,7 +78,25 @@ describe("useRun — blocking", () => {
 
     act(() => result.current.run("in"));
     await flush();
-    expect(result.current.state).toMatchObject({ phase: "error", error: { kind: "bad_request" } });
+    expect(result.current.state).toMatchObject({
+      phase: "error",
+      error: { kind: "bad_request" },
+      runId: null,
+    });
+  });
+
+  it("keeps the id of a run that finished but could not be read", async () => {
+    const blocking = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      error: { kind: "bad_response", title: "T", message: "m", details: "d" },
+      runId: "run-unread",
+    });
+    const cfg = makeCfg({ mode: "blocking", blocking });
+    const { result } = renderHook(() => useRun(cfg));
+
+    act(() => result.current.run("in"));
+    await flush();
+    expect(result.current.state).toMatchObject({ phase: "error", runId: "run-unread" });
   });
 
   it("a rejected blocking await becomes a transport error (not a thrown boundary)", async () => {
@@ -88,6 +111,32 @@ describe("useRun — blocking", () => {
       error: { kind: "transport_error" },
     });
   });
+});
+
+describe("useRun — inputs too large to send", () => {
+  // A string whose JSON is past the limit: files aside, this is what a form
+  // carries when a long text is pasted into it.
+  const LONG_TEXT = "x".repeat(1_100_000);
+
+  for (const mode of ["blocking", "durable"] as const) {
+    it(`refuses them before calling the ${mode} action, saying why`, async () => {
+      const blocking = vi.fn();
+      const start = vi.fn();
+      const cfg = makeCfg({ mode, blocking, start });
+      const { result } = renderHook(() => useRun(cfg));
+
+      act(() => result.current.run(LONG_TEXT));
+      await flush();
+
+      expect(blocking).not.toHaveBeenCalled();
+      expect(start).not.toHaveBeenCalled();
+      expect(result.current.state).toMatchObject({
+        phase: "error",
+        error: { kind: "inputs_too_large" },
+        runId: null,
+      });
+    });
+  }
 });
 
 describe("useRun — durable", () => {
@@ -116,10 +165,12 @@ describe("useRun — durable", () => {
     expect(asRunning(result.current.state).status).toBe("RUNNING");
 
     await flush(2000); // scheduled second poll fires → completed
+    // The id `start` returned stays on the finished run.
     expect(result.current.state).toEqual({
       phase: "done",
       output: { value: "done" },
       usage: USAGE,
+      runId: "run-1",
     });
     expect(start).toHaveBeenCalledWith("in");
   });
@@ -158,7 +209,11 @@ describe("useRun — durable", () => {
     expect(asRunning(result.current.state).health).toBe("retrying");
 
     await flush(1000); // scheduled retry → completed
-    expect(result.current.state).toEqual({ phase: "done", output: { value: "done" } });
+    expect(result.current.state).toEqual({
+      phase: "done",
+      output: { value: "done" },
+      runId: "run-1",
+    });
     expect(poll).toHaveBeenCalledTimes(2);
   });
 
@@ -223,7 +278,11 @@ describe("useRun — durable", () => {
     expect(result.current.state.phase).toBe("running");
 
     await flush(1000); // retry → completed
-    expect(result.current.state).toEqual({ phase: "done", output: { value: "recovered" } });
+    expect(result.current.state).toEqual({
+      phase: "done",
+      output: { value: "recovered" },
+      runId: "run-1",
+    });
   });
 
   it("gives up after a sustained streak of transient poll failures", async () => {

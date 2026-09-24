@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **A finished run keeps its id**: under every tab's result, `<RunDetails>` shows the run's id, selectable with a Copy button, in Blocking mode too, and folds the token-and-cost table into a closed "Usage and cost" disclosure. `useRun`'s `done` state and `BlockingOutcome` carry `runId`, a blocking run that finished but could not be read keeps its id on the error, and the server logs `[pipelex] run finished: <id>` for every blocking run.
+- **`html[data-hydrated]`, a hydration signal for browser scripts**: the root layout sets it once React has hydrated the page, so a script waits for it before clicking, dropping a file or taking a screenshot. The new offline `home` e2e spec waits for it and fails on a hydration error.
+
+### Changed
+
+- **`@pipelex/sdk` 0.23.0**: bumped from 0.20.1, which brings the upload grant (`requestUploadGrant`) and the browser-safe `@pipelex/sdk/upload` entry. The release's breaking changes are confined to the artifact-download helpers, which this app does not use.
+- **A dropped file goes straight to Pipelex storage (Breaking)**: the PDF example asks its new `requestSummarizePdfUpload` Server Action for an upload grant and sends the file from the browser with `uploadWithGrant`, so a run carries a `pipelex-storage://` reference and never the file's bytes, and `make add-method` emits the same grant action for any method with a file input. `src/lib/fileEncoding.ts` becomes `src/lib/fileInputs.ts`, whose `checkFileInputs` now refuses a `data:` URL; `MAX_PDF_BYTES` becomes `MAX_FILE_BYTES`, the platform's 50 MiB; `src/lib/clientFile.ts` is removed and `next.config.js` no longer raises the Server Action body limit. The upload needs an API that serves `POST /v1/upload/grant`, and against one that does not the page says so beside the field as `upload_unavailable`.
+- **Inputs too large to send are refused with their size**: `useRun` measures a run's inputs before calling its action and refuses a set past `MAX_RUN_INPUT_BYTES` as `inputs_too_large`, where Next's body limit used to surface as "Could not reach the server".
+- **The Next.js development badge is off**: `next.config.js` sets `devIndicators: false`; compile and runtime errors still surface.
+
 ## [v0.5.0] - 2026-09-22
 
 ### Highlights

@@ -76,15 +76,16 @@ src/
     wireOutput.ts             # reads main_stuff and readies it for a generated binder
     runInputs.ts              # requireContract + requireInputForm + gateRunInputs — the server-side input gate
     resultField.ts            # requireResultField — the output descriptor + payload schema → one RunField
-    resultUrls.ts             # scrubResultUrls — the result's URL policy, fileEncoding's twin on the way out
+    resultUrls.ts             # scrubResultUrls — the result's URL policy, fileInputs' twin on the way out
     errors.ts                 # classifyPipelineError + PipelineError model
-    fileEncoding.ts           # data-URL MIME + size validation
+    fileInputs.ts             # the grant's type + size gate, and the run's reference gate
+    uploadGrant.ts            # grantFileUpload — the upload grant behind each file method's action
+    runRequest.ts             # a run's inputs against the Server Action body limit
     usageReport.ts            # token usage → the render-ready cost report
-    clientFile.ts             # browser File → base64 data URL
   hooks/
     useRun.ts                 # unified blocking|durable client state machine — the run
     useRunInputs.ts           # form values + readiness + the wire shape — the inputs
-    useFileInputs.ts          # the drop → encode → write-back seam for file inputs
+    useFileInputs.ts          # the drop → grant → upload → write-back seam for file inputs
   components/                 # ExampleTabs + RunInputsForm + RunResult + per-example chrome
   types/                      # thin adapters over src/generated/ — parseXxx(RunResults)
 ```
@@ -102,7 +103,7 @@ The flow, end to end:
 2. The Server Action gates the same contract, applying the kernel's rules in full (a Server Action is a public endpoint; the browser's check is only UX), then names the method — reading its `.mthds` bundle from disk, or passing the selector its `method.json` manifest carries — and calls the SDK (`execute` for blocking, `start` + `getRunStatus`/`getRunResult` for durable) with it and the inputs.
 3. The Pipelex API runs the pipe and returns the main output as `main_stuff` — the same resolved field on both paths.
 4. A `parseXxx(results)` narrower in `src/types/` validates it into a typed shape, using a zod schema generated from the method's own `.mthds` bundle (see [Generated types](#generated-types)).
-5. The hook drives the result: a live-status card while running, then `<RunResult>` — which renders the typed value from the method's own output-form descriptor, so **no result markup is written by hand either** — or a classified `PipelineError` shown by `<ErrorDisplay>`.
+5. The hook drives the result: a live-status card while running, then `<RunResult>` — which renders the typed value from the method's own output-form descriptor, so **no result markup is written by hand either** — or a classified `PipelineError` shown by `<ErrorDisplay>`. Under a finished result, `<RunDetails>` shows the run's id, selectable with a Copy button, in either mode, and keeps the token-and-cost table one click away in a closed "Usage and cost" disclosure. The server logs the same id for every run.
 
 ## Input forms
 
@@ -116,13 +117,15 @@ The full reference — the contract artifact, the server-side gate, the file sea
 
 ### File & image inputs
 
-Text inputs are plain strings. File inputs (the PDF example) go through one extra step:
+Text inputs are plain strings. A file input (the PDF example) is stored the moment it is dropped, straight from the browser to Pipelex storage, so a run carries a reference and never the file:
 
-1. The kernel's dropzone hands the app the dropped `File`; the app reads it into a base64 data URL with `fileToDataUrl` (`src/lib/clientFile.ts`) and writes it back into the form value. `File` objects are **not** serializable across the server boundary — the Server Action only ever receives the resulting `string`.
-2. The Server Action validates the shape against the contract, then the file reference itself (`checkFileInputs` in `src/lib/fileEncoding.ts` — the authoritative scheme, MIME and size gate, which finds every file position by walking the method's own descriptor, so a list of documents or a file nested in a structured input is gated like a single one; the browser's own size check is an early exit that saves an encode, not a gate).
-3. The Server Action hands the input to `client.prepareInputs()`, which reads the method's declared signature, recognizes the input as a file, uploads the bytes to Pipelex storage, and rewrites the input to a small `pipelex-storage://` URI. The run request carries that lightweight reference rather than fat inline base64 — the app never hosts the file itself.
+1. The kernel's dropzone hands the app the dropped `File`. `useFileInputs` sends the file's name, type and size — never its bytes — to the method's grant action (`requestSummarizePdfUpload`), which holds the API key, checks the type and the size (`checkUploadRequest` in `src/lib/fileInputs.ts`, up to the platform's 50 MiB), and asks the API for an **upload grant**: a presigned, create-only `PUT` signed for exactly that file.
+2. The browser sends the `File` itself with the SDK's `uploadWithGrant` (from the browser-safe `@pipelex/sdk/upload`), and writes the grant's `pipelex-storage://` reference into the form once storage has it. The bytes cross neither this app's server nor the API gateway.
+3. The run's Server Action validates the shape against the contract, then the reference itself (`checkFileInputs`, which finds every file position by walking the method's own descriptor, so a list of documents or a file nested in a structured input is gated like a single one), and hands the inputs to `client.prepareInputs()`, which passes the stored reference through.
 
-The kernel's file control also offers "paste a URL instead", so an `https://` or `pipelex-storage://` reference works without any upload at all. Those two schemes and `data:` are the whole accepted set, checked before anything else: the SDK reads an unrecognised string as a path on the server's own disk, so a public Server Action has to refuse by default rather than assume "no bytes" means "nothing to check".
+The kernel's file control also offers "paste a URL instead", so an `https://` or `pipelex-storage://` reference works without any upload at all. Those two schemes are the whole accepted set, checked before anything else: the SDK reads an unrecognised string as a path on the server's own disk, so a public Server Action has to refuse by default rather than assume "no bytes" means "nothing to check". A `data:` URL is refused too, because nothing in the app sends a file inline.
+
+**The upload grant route is served only by a deployment that has it.** The hosted API serves `POST /v1/upload/grant` (verified on 2026-09-24 against both `api.pipelex.com` and `api-dev.pipelex.com`). Against a deployment without it, the PDF example says "File upload isn't available on this API" beside the field instead of storing the file.
 
 Image **outputs** (the image example) come back as a URL — a storage URL or a base64 data URL — which renders directly in an `<img>`.
 
@@ -227,7 +230,9 @@ The happy-path specs (`extract`, `summarize-pdf`, `generate-image`, `text-stats`
 - **They auto-skip without a key.** No `PIPELEX_API_KEY`? Those specs skip cleanly (you'll see them reported as skipped) instead of failing with an auth error — so a fresh fork can run `make test-e2e` before configuring credentials.
 - **`make test-e2e` prompts for confirmation** before spending, since it costs money. The prompt is skipped in CI / non-interactive shells; pass `CONFIRM=1 make test-e2e` to bypass it in scripts.
 - **It is excluded from `make all`.**
-- The remaining spec, `error-display`, tests the offline error UX — it needs **no** key, costs nothing, and runs out of the box.
+- `summarize-pdf` stores the sample PDF through an upload grant, so it also needs a base URL that serves `POST /v1/upload/grant`, which both hosted APIs do.
+- Two specs need **no** key, cost nothing, and run out of the box: `home` renders the page and checks it hydrates cleanly, and `error-display` tests the offline error UX.
+- A script driving the page waits for `html[data-hydrated]`, which the root layout sets once React has hydrated it. Acting earlier, a click or a dropped file never reaches its handler, and a screenshot raises a hydration mismatch of its own making.
 - First-time setup needs the browser binary: `npx playwright install chromium`.
 
 ## Local package development (sibling `pipelex-sdk-js` and `mthds-form` repos)

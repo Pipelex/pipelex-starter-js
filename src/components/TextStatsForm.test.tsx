@@ -106,7 +106,7 @@ describe("TextStatsForm", () => {
   });
 
   it("blocking mode: toggling to Blocking calls the blocking action", async () => {
-    blocking.mockResolvedValueOnce({ ok: true, output: REPORT, usage: USAGE });
+    blocking.mockResolvedValueOnce({ ok: true, output: REPORT, usage: USAGE, runId: "run-b" });
 
     render(<TextStatsForm />);
     fireEvent.change(screen.getByLabelText("Text"), { target: { value: "Some prose." } });

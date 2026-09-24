@@ -12,9 +12,9 @@ import { useRun } from "@/hooks/useRun";
 import { useRunInputs } from "@/hooks/useRunInputs";
 import { requireResultField } from "@/lib/resultField";
 import { requireContract, requireInputForm } from "@/lib/runInputs";
-import { CostReport } from "./CostReport";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { ModeToggle } from "./ModeToggle";
+import { RunDetails } from "./RunDetails";
 import { RunInputsForm } from "./RunInputsForm";
 import { RunResult } from "./RunResult";
 import { RunStatus } from "./RunStatus";
@@ -87,7 +87,7 @@ export function ComplexForm() {
       {state.phase === "done" && (
         <>
           <RunResult field={RESULT_FIELD} value={state.output} name="extraction_brief" />
-          <CostReport usage={state.usage} />
+          <RunDetails runId={state.runId} usage={state.usage} />
         </>
       )}
     </div>

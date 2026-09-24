@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
   pollSummarizePdfRun,
+  requestSummarizePdfUpload,
   runSummarizePdfBlocking,
   startSummarizePdfRun,
 } from "@/actions/runSummarizePdfPipeline";
@@ -13,9 +14,9 @@ import { useRun } from "@/hooks/useRun";
 import { useRunInputs } from "@/hooks/useRunInputs";
 import { requireResultField } from "@/lib/resultField";
 import { requireContract, requireInputForm } from "@/lib/runInputs";
-import { CostReport } from "./CostReport";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { ModeToggle } from "./ModeToggle";
+import { RunDetails } from "./RunDetails";
 import { RunInputsForm } from "./RunInputsForm";
 import { RunResult } from "./RunResult";
 import { RunStatus } from "./RunStatus";
@@ -30,15 +31,16 @@ const SAMPLE_PDF_PATH = "/sample-invoice.pdf";
 const DOCUMENT_INPUT = "document";
 
 /**
- * The kernel previews `http(s):`, `data:` and `blob:` URLs directly — the
- * sample shortcut's `data:` URL included. Anything else it asks the host to
- * resolve first, and the path that reaches it here is a
- * `pipelex-storage://…/x.pdf` pasted through the control's own "paste a URL
- * instead". This template has nothing to resolve such a reference with, so
- * hand it straight back: the kernel then renders its `<object>`, whose
- * "Preview unavailable" child is what a browser shows for a scheme it cannot
- * fetch — which beats no preview at all. A real host would exchange the
- * storage URI for a signed web URL here.
+ * The kernel previews `http(s):`, `data:` and `blob:` URLs directly, and a file
+ * dropped into the control from its local copy, which it keeps after the upload.
+ * Anything else it asks the host to resolve first, and what reaches it here is a
+ * `pipelex-storage://…/x.pdf` reference the control holds no local copy of: the
+ * sample shortcut's, which is stored the way a drop is, or one pasted through
+ * the control's own "paste a URL instead". This app has nothing to resolve such
+ * a reference with, so hand it straight back: the kernel then renders its
+ * `<object>`, whose "Preview unavailable" child is what a browser shows for a
+ * scheme it cannot fetch — which beats no preview at all. A real host would
+ * exchange the storage URI for a web URL it can paint here.
  */
 async function resolvePreviewUrl(url: string): Promise<string> {
   return url;
@@ -46,13 +48,12 @@ async function resolvePreviewUrl(url: string): Promise<string> {
 
 /**
  * Some drag-drop sources and Windows configurations hand a valid PDF over with
- * an empty `file.type`, and `FileReader` then writes that emptiness into the
- * data URL — which the server's MIME gate rejects. Re-wrap those so the encoded
- * URL carries `application/pdf`.
+ * an empty `file.type`, and the grant action would refuse that empty type. Re-wrap
+ * those so the grant is asked for, and the upload signed for, `application/pdf`.
  *
- * This is *encoding*, not validation: the extension test is what keeps it from
- * stamping "PDF" on something that is not one, and the server still checks the
- * MIME it receives.
+ * This is a description fix, not validation: the extension test is what keeps it
+ * from stamping "PDF" on something that is not one, the grant action checks the
+ * type it is given, and storage holds the upload to it.
  */
 function withPdfMime(file: File): File {
   if (file.type || !file.name.toLowerCase().endsWith(".pdf")) return file;
@@ -70,13 +71,19 @@ export function PdfForm() {
     poll: pollSummarizePdfRun,
   });
 
-  // The host side of the kernel's file seam — the encode, the busy set the
-  // kernel reads as `uploadingIds`, the clear-before-await discipline. Shared
-  // with every scaffolded form that declares a file input; the two options are
-  // this example's own: clear the previous run when a new file is selected, and
-  // re-wrap a `.pdf` the browser described with no MIME type.
-  const { dropFile, encodingIds, fileError, clearError, markBusy, reportError, clearFile } =
-    useFileInputs({ setValues, onSelectionStart: reset, prepareFile: withPdfMime });
+  // The host side of the kernel's file seam — the upload straight from the
+  // browser to Pipelex storage through this method's grant action, the busy set
+  // the kernel reads as `uploadingIds`, the clear-before-await discipline. Shared
+  // with every scaffolded form that declares a file input; the last two options
+  // are this example's own: clear the previous run when a new file is selected,
+  // and re-wrap a `.pdf` the browser described with no MIME type.
+  const { dropFile, uploadingIds, fileError, clearError, markBusy, reportError, clearFile } =
+    useFileInputs({
+      setValues,
+      requestUpload: requestSummarizePdfUpload,
+      onSelectionStart: reset,
+      prepareFile: withPdfMime,
+    });
 
   const running = state.phase === "running";
 
@@ -87,7 +94,7 @@ export function PdfForm() {
     // trip first, and a slow or failing fetch would otherwise leave the
     // previous PDF selected and submittable the whole time.
     clearFile(DOCUMENT_INPUT);
-    // Busy for the fetch as well as the encode. Without this the field is
+    // Busy for the fetch as well as the upload. Without this the field is
     // writable while the sample is still downloading, so a PDF the user picks
     // meanwhile would be overwritten when the older sample request lands.
     markBusy(DOCUMENT_INPUT, true);
@@ -109,6 +116,7 @@ export function PdfForm() {
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (uploadingIds.size > 0) return;
     clearError();
     run(toData());
   }
@@ -130,18 +138,18 @@ export function PdfForm() {
           disabled={running}
           env={{
             onDropFile: dropFile,
-            uploadingIds: encodingIds,
+            uploadingIds,
             resolveUrl: resolvePreviewUrl,
           }}
         />
         {/* App chrome that writes into the field holds itself to the rule the
             kernel applies to its own controls through `uploadingIds`: no
             writes while the value is still resolving. The span covers this
-            shortcut's own fetch as well as any encode. */}
+            shortcut's own fetch as well as the upload. */}
         <button
           type="button"
           onClick={handleUseSample}
-          disabled={running || encodingIds.size > 0}
+          disabled={running || uploadingIds.size > 0}
           className="text-xs font-medium text-blue-700 underline disabled:opacity-50"
         >
           Use sample PDF
@@ -149,7 +157,7 @@ export function PdfForm() {
         <ModeToggle value={mode} onChange={setMode} disabled={running} />
         <button
           type="submit"
-          disabled={running || !ready}
+          disabled={running || uploadingIds.size > 0 || !ready}
           className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {running ? "Summarizing…" : "Summarize PDF"}
@@ -171,7 +179,8 @@ export function PdfForm() {
       {state.phase === "done" && (
         <>
           <RunResult field={RESULT_FIELD} value={state.output} name="document_summary" />
-          <CostReport usage={state.usage} />
+          {/* The run's id, which a user quotes, and what it cost, folded away. */}
+          <RunDetails runId={state.runId} usage={state.usage} />
         </>
       )}
     </div>
