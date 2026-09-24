@@ -17,8 +17,13 @@ test("renders the heading and the tabs, and hydrates cleanly", async ({ page }, 
   await page.goto("/");
   await page.waitForSelector("html[data-hydrated]");
 
-  await expect(page.getByRole("heading", { level: 1, name: "Pipelex Starter" })).toBeVisible();
-  await expect(page).toHaveTitle("Pipelex Starter");
+  // The name is the project's own, which `/bootstrap` rewrites in the layout and
+  // the page but not here, so the spec only asks that the two agree.
+  const heading = page.getByRole("heading", { level: 1 });
+  await expect(heading).toBeVisible();
+  const name = (await heading.innerText()).trim();
+  expect(name).not.toBe("");
+  await expect(page).toHaveTitle(name);
   await expect(page.getByRole("tab", { name: /pdf summary/i })).toBeVisible();
   // The first tab's form is live: its controls rendered from the method's contract.
   await expect(page.locator("form").first()).toBeVisible();
