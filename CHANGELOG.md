@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **`@pipelex/sdk` 0.23.0**: bumped from 0.20.1, which brings the upload grant (`requestUploadGrant`) and the browser-safe `@pipelex/sdk/upload` entry. The release's breaking changes are confined to the artifact-download helpers, which this app does not use.
+
 ## [v0.5.0] - 2026-09-22
 
 ### Highlights
