@@ -39,7 +39,7 @@ const SAMPLE_TEXT =
  */
 export function ComplexForm() {
   const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR, {
-    text: SAMPLE_TEXT,
+    initialValues: { text: SAMPLE_TEXT },
   });
   const [mode, setMode] = useState<ExecutionMode>(DEFAULT_EXECUTION_MODE);
   const { state, run } = useRun({

@@ -568,6 +568,8 @@ export interface ScaffoldPaths {
   manifest: string;
   generatedDir: string;
   adapter: string;
+  /** The media types its file inputs accept — written only for a method that takes a file. */
+  uploads: string;
   action: string;
   actionTest: string;
   form: string;
@@ -580,6 +582,7 @@ export function scaffoldPaths(names: ScaffoldNames): ScaffoldPaths {
     manifest: `methods/${names.slug}/${MANIFEST_FILENAME}`,
     generatedDir: `src/generated/${names.slug}`,
     adapter: `src/types/${names.camel}Pipeline.ts`,
+    uploads: `src/types/${names.camel}Uploads.ts`,
     action: `src/actions/run${names.pascal}Pipeline.ts`,
     actionTest: `src/actions/run${names.pascal}Pipeline.test.ts`,
     form: `src/components/${names.pascal}Form.tsx`,
@@ -1059,6 +1062,34 @@ function methodReference(plan: ScaffoldPlan): {
 }
 
 /**
+ * `src/types/<camel>Uploads.ts` — the media types the method's file inputs
+ * accept, written only for a method that takes a file.
+ *
+ * A module of its own because both halves read the list and neither can hold
+ * it. The upload action lives in a `"use server"` file, which may export async
+ * functions only, and the form is a client component the action must not
+ * import. So the action refuses a grant for any other type, the form narrows
+ * each file input to these formats through `useRunInputs`, and the dropzone can
+ * no longer offer a file the action would then refuse.
+ */
+export function renderUploads(plan: ScaffoldPlan): string {
+  return [
+    "// Scaffolded by `make add-method` — yours to edit from here on.",
+    "",
+    "/**",
+    " * Media types the file input(s) accept. Widen it if your method takes more.",
+    " *",
+    ` * The one list both halves read: \`request${plan.names.pascal}Upload\` refuses a grant for any`,
+    " * other type, and the form narrows each file input to the formats among these,",
+    " * so the dropzone offers exactly what the action grants. The form can offer only",
+    " * a format the form kernel knows for the input's kind.",
+    " */",
+    `export const ALLOWED_MIMES = ${JSON.stringify(allowedMimesFor(plan.files))};`,
+    "",
+  ].join("\n");
+}
+
+/**
  * `src/actions/run<Pascal>Pipeline.ts` — the Server Action trio.
  *
  * A selector-sourced method lives elsewhere, so `buildOptions` sends the same
@@ -1096,6 +1127,7 @@ export function renderAction(plan: ScaffoldPlan): string {
       'import { MAX_FILE_BYTES, checkFileInputs, type UploadRequest } from "@/lib/fileInputs";',
       'import { grantFileUpload, type GrantOutcome } from "@/lib/uploadGrant";',
       'import type { PipelineError } from "@/lib/errors";',
+      `import { ALLOWED_MIMES } from "@/types/${names.camel}Uploads";`,
     );
   }
 
@@ -1149,9 +1181,6 @@ export function renderAction(plan: ScaffoldPlan): string {
             run: `    ${selectorConstant(source.selector).field}: ${selectorConstant(source.selector).name},`,
           };
     body.push(
-      "/** Media types the file input(s) accept. Widen it if your method takes more. */",
-      `const ALLOWED_MIMES = ${JSON.stringify(allowedMimesFor(files))};`,
-      "",
       "/**",
       " * Shape gate, then file gate, in that order.",
       " *",
@@ -1434,6 +1463,7 @@ export function renderForm(plan: ScaffoldPlan): string {
     'import { useRunInputs } from "@/hooks/useRunInputs";',
     'import { requireResultField } from "@/lib/resultField";',
     'import { requireContract, requireInputForm } from "@/lib/runInputs";',
+    ...(hasFiles ? [`import { ALLOWED_MIMES } from "@/types/${names.camel}Uploads";`] : []),
     'import { ErrorDisplay } from "./ErrorDisplay";',
     'import { ModeToggle } from "./ModeToggle";',
     'import { RunDetails } from "./RunDetails";',
@@ -1453,7 +1483,17 @@ export function renderForm(plan: ScaffoldPlan): string {
     `const RESULT_FIELD = requireResultField(OUTPUT_FORM, CONTRACT, ${JSON.stringify(pipe.domain)}, ${JSON.stringify(pipe.code)});`,
     "",
     `export function ${names.pascal}Form() {`,
-    "  const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR);",
+    ...(hasFiles
+      ? [
+          "  // Each file input is narrowed to the media types the upload action grants,",
+          "  // so the dropzone never offers a file the action would refuse.",
+          "  const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR, {",
+          "    allowedMimes: ALLOWED_MIMES,",
+          "  });",
+        ]
+      : [
+          "  const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR);",
+        ]),
     "  const [mode, setMode] = useState<ExecutionMode>(DEFAULT_EXECUTION_MODE);",
     "  // `useRun` presents one state machine and dispatches to the blocking or",
     "  // durable Server Actions by `mode`. The form never branches on mode itself.",
@@ -1944,6 +1984,7 @@ export async function planAddMethod(
   const emitted: EmittedFile[] = [];
   for (const [relative, content] of [
     [paths.adapter, renderAdapter(scaffold)],
+    ...(scaffold.files.length > 0 ? ([[paths.uploads, renderUploads(scaffold)]] as const) : []),
     [paths.action, renderAction(scaffold)],
     [paths.actionTest, renderActionTest(scaffold)],
     [paths.form, renderForm(scaffold)],
@@ -1985,6 +2026,7 @@ async function refuseCollisions(
   const guarded = [
     ...(inPlace ? [] : [paths.methodDir, paths.generatedDir]),
     paths.adapter,
+    paths.uploads,
     paths.action,
     paths.actionTest,
     paths.form,

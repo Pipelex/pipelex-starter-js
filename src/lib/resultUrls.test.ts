@@ -1,13 +1,23 @@
 import { describe, it, expect } from "vitest";
-import type { RunField } from "@pipelex/mthds-form";
+import { DOCUMENT_FORMATS, IMAGE_FORMATS, type RunField } from "@pipelex/mthds-form";
 import { isRenderableResultUrl, scrubResultUrls } from "./resultUrls";
 import { requireResultField } from "./resultField";
 import { requireContract } from "./runInputs";
 import { OUTPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/generate-image/contracts";
 
-const IMAGE_FIELD: RunField = { kind: "image", name: "output", required: true };
+const IMAGE_FIELD: RunField = {
+  kind: "image",
+  name: "output",
+  required: true,
+  formats: IMAGE_FORMATS,
+};
 
-const DOCUMENT_FIELD: RunField = { kind: "document", name: "output", required: true };
+const DOCUMENT_FIELD: RunField = {
+  kind: "document",
+  name: "output",
+  required: true,
+  formats: DOCUMENT_FORMATS,
+};
 
 describe("isRenderableResultUrl", () => {
   it.each([
@@ -120,7 +130,7 @@ describe("scrubResultUrls", () => {
       required: true,
       fields: [
         { kind: "text", name: "title", required: true },
-        { kind: "image", name: "cover", required: true },
+        { kind: "image", name: "cover", required: true, formats: IMAGE_FORMATS },
       ],
     };
     const { value, refused } = scrubResultUrls(field, {
@@ -144,7 +154,7 @@ describe("scrubResultUrls", () => {
       kind: "list",
       name: "output",
       required: true,
-      item: { kind: "image", name: "item", required: true },
+      item: { kind: "image", name: "item", required: true, formats: IMAGE_FORMATS },
     };
     const { value, refused } = scrubResultUrls(field, [
       { url: "https://ok.example/1.png" },
@@ -163,6 +173,7 @@ describe("scrubResultUrls", () => {
       kind: "image",
       name: "output",
       required: true,
+      formats: IMAGE_FORMATS,
       contentKey: "content",
     };
     const { value, refused } = scrubResultUrls(field, {

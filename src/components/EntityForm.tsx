@@ -36,7 +36,7 @@ const SAMPLE_TEXT =
 
 export function EntityForm() {
   const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR, {
-    text: SAMPLE_TEXT,
+    initialValues: { text: SAMPLE_TEXT },
   });
   const [mode, setMode] = useState<ExecutionMode>(DEFAULT_EXECUTION_MODE);
   // `useRun` presents one state machine and dispatches to the blocking or
