@@ -12,7 +12,7 @@ The template's [`webapp-js/docs/chrome-lineage.md`](https://github.com/Pipelex/p
 
 ## What the chrome is
 
-- **The run chrome**: `src/hooks/` (`useRun`, `useRunInputs`, `useFileInputs`), the run helpers in `src/lib/` (`blockingRun`, `durableRun`, `wireOutput`, `errors`, `serverEnv`, `runInputs`, `runRequest`, `resultField`, `resultUrls`, `fileInputs`, `uploadGrant`, `usageReport`, `loadBundle`, `pipelexClient`), the shared components (`RunInputsForm`, `RunResult`, `RunStatus`, `RunDetails`, `ModeToggle`, `CostReport`, `ErrorDisplay`, `HydrationMark`), `src/types/pipelineError.ts` and `src/config.ts`, with their tests, and the `HydrationMark` mount in `src/app/layout.tsx`.
+- **The run chrome**: `src/hooks/` (`useRun`, `useRunInputs`, `useFileInputs`), the run helpers in `src/lib/` (`blockingRun`, `durableRun`, `wireOutput`, `errors`, `serverEnv`, `runInputs`, `runRequest`, `resultField`, `fileInputs`, `uploadGrant`, `usageReport`, `loadBundle`, `pipelexClient`), the shared components (`RunInputsForm`, `RunResult`, `RunStatus`, `RunDetails`, `ModeToggle`, `CostReport`, `ErrorDisplay`, `HydrationMark`), `src/types/pipelineError.ts` and `src/config.ts`, with their tests, and the `HydrationMark` mount in `src/app/layout.tsx`.
 - **The codegen kit**: everything under `scripts/`, including the `make add-method` scaffold and its tests and fixtures.
 - **The configuration**: the `Makefile`'s gestures and argument handling, `next.config.js`, `tsconfig*.json`, `vitest.config.mts`, and the ESLint, Prettier and Playwright configurations.
 
