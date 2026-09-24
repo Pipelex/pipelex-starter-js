@@ -787,14 +787,18 @@ export function buildClientTimeoutError(elapsedMs: number): PipelineError {
  * body before the action ran, and the browser would only see a rejected call.
  */
 export function buildInputsTooLargeError(bytes: number, maxBytes: number): PipelineError {
-  const megabytes = (n: number) => {
-    const value = n / 1_000_000;
+  const megabytes = (tenths: number) => {
+    const value = tenths / 10;
     return Number.isInteger(value) ? String(value) : value.toFixed(1);
   };
+  // The size rounds up and the limit rounds down, so an input only just past
+  // the limit still reads as larger than it (1.1 MB, never 1.0 MB).
+  const size = megabytes(Math.ceil(bytes / 100_000));
+  const limit = megabytes(Math.floor(maxBytes / 100_000));
   return {
     kind: "inputs_too_large",
     title: "The inputs are too large to send",
-    message: `The inputs come to ${megabytes(bytes)} MB, and the starter sends at most ${megabytes(maxBytes)} MB in one run. Files don't count toward it: the limit is on text and other values typed or pasted into the form.`,
+    message: `The inputs come to ${size} MB, and the starter sends at most ${limit} MB in one run. Files don't count toward it: the limit is on text and other values typed or pasted into the form.`,
     hint: { summary: "Shorten the longest text and run again." },
     details: `inputs_too_large: ${bytes} bytes, limit ${maxBytes} bytes`,
   };

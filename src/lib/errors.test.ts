@@ -585,11 +585,20 @@ describe("buildInputsTooLargeError", () => {
     const result = buildInputsTooLargeError(1_534_000, 1_000_000);
     expect(result.kind).toBe("inputs_too_large");
     expect(result.title).toMatch(/too large/i);
-    expect(result.message).toContain("1.5 MB");
+    expect(result.message).toContain("1.6 MB");
     expect(result.message).toContain("at most 1 MB");
     expect(result.message).toMatch(/Files don't count/);
     expect(result.details).toBe("inputs_too_large: 1534000 bytes, limit 1000000 bytes");
   });
+
+  it.each([1_000_001, 1_020_000, 1_049_999])(
+    "never prints a size equal to the limit for %i bytes, just past it",
+    (bytes) => {
+      const result = buildInputsTooLargeError(bytes, 1_000_000);
+      expect(result.message).toContain("come to 1.1 MB");
+      expect(result.message).toContain("at most 1 MB");
+    },
+  );
 });
 
 describe("classifyTransportError", () => {

@@ -230,7 +230,7 @@ The happy-path specs (`extract`, `summarize-pdf`, `generate-image`, `text-stats`
 - **They auto-skip without a key.** No `PIPELEX_API_KEY`? Those specs skip cleanly (you'll see them reported as skipped) instead of failing with an auth error — so a fresh fork can run `make test-e2e` before configuring credentials.
 - **`make test-e2e` prompts for confirmation** before spending, since it costs money. The prompt is skipped in CI / non-interactive shells; pass `CONFIRM=1 make test-e2e` to bypass it in scripts.
 - **It is excluded from `make all`.**
-- `summarize-pdf` stores the sample PDF through an upload grant, so it also needs a base URL that serves `POST /v1/upload/grant` (`api-dev.pipelex.com` today).
+- `summarize-pdf` stores the sample PDF through an upload grant, so it also needs a base URL that serves `POST /v1/upload/grant`, which both hosted APIs do.
 - Two specs need **no** key, cost nothing, and run out of the box: `home` renders the page and checks it hydrates cleanly, and `error-display` tests the offline error UX.
 - A script driving the page waits for `html[data-hydrated]`, which the root layout sets once React has hydrated it. Acting earlier, a click or a dropped file never reaches its handler, and a screenshot raises a hydration mismatch of its own making.
 - First-time setup needs the browser binary: `npx playwright install chromium`.
