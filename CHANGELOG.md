@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **The keyed scripts run against the production API**: `npm run codegen`, `npm run codegen:verify` and `make add-method` no longer need `PIPELEX_BASE_URL=https://api-dev.pipelex.com`, because `api.pipelex.com` now serves the form views codegen needs and resolves both catalog ids and package addresses. A `.env.local` or shell that set it for them can drop the line.
+
 ## [v0.6.0] - 2026-09-24
 
 ### Highlights
