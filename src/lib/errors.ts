@@ -479,11 +479,14 @@ function classifyLifecycleUnavailable(
 
 /**
  * Classify an SDK input-preparation failure (`prepareInputs` / `uploadFile`) into
- * a single `upload_failed` kind with subclass-tailored copy — a method with a file input
- * uploads the file to Pipelex storage before the run, and that upload can fail in
- * a few distinct, actionable ways. Mirrors `classifyServerError`'s switch: branch
- * on the concrete subclass, then fall back to the base `InputPreparationError` so
- * any future subclass is still classified (never `unknown`).
+ * a single `upload_failed` kind with subclass-tailored copy. A run carries stored or
+ * `https://` references only, which `prepareInputs` passes through untouched, so on
+ * the run path what arrives here is the base `InputPreparationError`: a method
+ * signature that did not resolve, a validate report without the `input_form` view,
+ * a pipe ref it could not match. The upload subclasses are kept for a caller that
+ * prepares a local file. Mirrors `classifyServerError`'s switch: branch on the
+ * concrete subclass, then fall back to the base `InputPreparationError` so any
+ * future subclass is still classified (never `unknown`).
  */
 function classifyInputPreparationError(
   err: InputPreparationError,
@@ -526,13 +529,14 @@ function classifyInputPreparationError(
     };
   }
 
-  // InvalidLocalSourceError, UploadTransportError, a malformed data URL (the base
-  // InputPreparationError), or any future subclass — a generic upload failure.
+  // The base InputPreparationError (the method's signature or the API's validate
+  // report), InvalidLocalSourceError, UploadTransportError, or any future subclass.
+  // Its own message is the only thing that names the cause, so it goes in details.
   return {
     kind: "upload_failed",
-    title: "Preparing the file for upload failed",
+    title: "Preparing the inputs failed",
     message:
-      "The starter couldn't upload the file to Pipelex storage before running the pipeline. The technical details below should help track it down.",
+      "The starter couldn't prepare the method's inputs before running it. Files are already stored by then, so the cause is usually the method's signature, or an API that doesn't serve what preparation needs. The technical details below name it.",
     details,
   };
 }

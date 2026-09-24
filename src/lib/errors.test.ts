@@ -525,15 +525,19 @@ describe("classifyPipelineError — input-preparation (upload) errors", () => {
     ]) {
       const result = classifyPipelineError(err, CLOUD_ENV);
       expect(result.kind).toBe("upload_failed");
-      expect(result.title).toMatch(/Preparing the file/i);
+      expect(result.title).toMatch(/Preparing the inputs/i);
     }
   });
 
-  it("falls back to generic upload_failed for the base InputPreparationError (e.g. a malformed data URL)", () => {
-    const err = new InputPreparationError("Malformed data URL payload (invalid base64)");
+  it("frames the base InputPreparationError as a preparation failure, not a failed upload", () => {
+    const err = new InputPreparationError(
+      "Cannot prepare inputs: the method signature did not resolve",
+    );
     const result = classifyPipelineError(err, CLOUD_ENV);
     expect(result.kind).toBe("upload_failed");
-    expect(result.details).toContain("Malformed data URL");
+    expect(result.title).toBe("Preparing the inputs failed");
+    expect(result.message).not.toMatch(/upload/i);
+    expect(result.details).toContain("the method signature did not resolve");
   });
 });
 
