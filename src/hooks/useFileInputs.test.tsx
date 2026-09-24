@@ -8,7 +8,7 @@ vi.mock("@pipelex/sdk/upload", () => ({
   uploadWithGrant: (...args: unknown[]) => uploadWithGrant(...args),
 }));
 
-import { uploadTimeoutMs, useFileInputs } from "./useFileInputs";
+import { useFileInputs } from "./useFileInputs";
 
 const GRANT = {
   uri: "pipelex-storage://org_1/assets/abc.jpg",
@@ -59,9 +59,7 @@ describe("useFileInputs", () => {
       content_type: "image/jpeg",
       size: file.size,
     });
-    expect(uploadWithGrant).toHaveBeenCalledWith(GRANT, file, {
-      signal: expect.any(AbortSignal),
-    });
+    expect(uploadWithGrant).toHaveBeenCalledWith(GRANT, file);
     expect(firstReceipt(state.values)).toEqual({ url: GRANT.uri, filename: "receipt.jpg" });
     expect(onSelectionStart).toHaveBeenCalledOnce();
     expect(hook.result.current.fileError).toBeNull();
@@ -165,13 +163,5 @@ describe("useFileInputs", () => {
     await act(() => hook.result.current.dropFile("receipts.0", receipt()));
 
     expect(hook.result.current.fileError).toMatchObject({ kind: "transport_error" });
-  });
-});
-
-describe("uploadTimeoutMs", () => {
-  it("allows a minute plus a second per 128 KiB", () => {
-    expect(uploadTimeoutMs(0)).toBe(60_000);
-    expect(uploadTimeoutMs(128 * 1024)).toBe(61_000);
-    expect(uploadTimeoutMs(50 * 1024 * 1024)).toBe(60_000 + 400_000);
   });
 });

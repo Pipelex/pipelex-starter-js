@@ -109,16 +109,6 @@ export interface UseFileInputs {
 
 const NO_UPLOADS: ReadonlySet<string> = new Set<string>();
 
-/**
- * How long one upload may take: a minute, plus a second per 128 KiB — a floor
- * of about 1 Mbit/s, so a 50 MiB file gets a little under eight minutes. The
- * SDK sets no limit of its own, and an upload that stalls must end in an error
- * the user can act on rather than a spinner that never stops.
- */
-export function uploadTimeoutMs(bytes: number): number {
-  return 60_000 + Math.ceil(bytes / (128 * 1024)) * 1000;
-}
-
 export function useFileInputs({
   setValues,
   requestUpload,
@@ -179,9 +169,9 @@ export function useFileInputs({
           setFileError(granted.error);
           return;
         }
-        const { uri } = await uploadWithGrant(granted.grant, file, {
-          signal: AbortSignal.timeout(uploadTimeoutMs(file.size)),
-        });
+        // The SDK bounds the upload by the file's size, so a stalled one ends in
+        // an error the user can act on rather than a spinner that never stops.
+        const { uri } = await uploadWithGrant(granted.grant, file);
         setValues((current) =>
           setValueAtPath(current, id.split("."), { url: uri, filename: file.name }),
         );
