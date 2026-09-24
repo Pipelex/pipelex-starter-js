@@ -16,6 +16,10 @@
 - **Inputs too large to send are refused with their size**: `useRun` measures a run's inputs before calling its action and refuses a set past `MAX_RUN_INPUT_BYTES` as `inputs_too_large`, where Next's body limit used to surface as "Could not reach the server".
 - **The Next.js development badge is off**: `next.config.js` sets `devIndicators: false`; compile and runtime errors still surface.
 
+### Removed
+
+- **The result view's own URL policy**: `<RunResult>` no longer runs a result through `scrubResultUrls` before the form kernel renders it, nor shows the note naming the file references that policy removed, because the kernel's own URL gate has refused what it was written to refuse since 0.9.0. A file URL the policy removed and the kernel accepts now renders: a cleartext `http:` URL, a GIF, AVIF or PDF `data:` URL, a `blob:` URL, or a same-origin path named in the payload, which is painted and linked but never framed. A file the kernel refuses is named by the kernel's own file card, and the image example's narrower still fails a run whose image URL it refuses before the result view sees it. A project made from an earlier release can delete its `src/lib/resultUrls.ts` the same way only once it runs `@pipelex/mthds-form` 0.9.0 or later: the 0.8 kernel frames a payload's `data:text/html` document in an unsandboxed frame, where its script runs and draws its own interface inside the app's page, though from an opaque origin that cannot read the app's cookies or DOM.
+
 ## [v0.5.0] - 2026-09-22
 
 ### Highlights

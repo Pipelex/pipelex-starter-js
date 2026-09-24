@@ -67,16 +67,19 @@ function dataUrlMediaType(url: URL): string {
  * the one that will actually render — `public_url ?? url` — so a usable `url`
  * can't save a broken `public_url` and vice-versa.
  *
- * The `data:` rule guards the download link rather than the `<img>`, which is why
- * an *image* type can be refused: the result view paints the same validated
- * string in an `<a href={src} download>`, so a payload the browser saves as a
- * file — a `data:text/html`, or an SVG carrying a `<script>` — runs with the
- * privileges of a `file://` origin once opened, where an `<img>` would either
- * have failed to decode it or kept its scripts inert. Unlikely to arrive from an
- * image pipeline, which is the point: an unlikely value that reaches a dangerous
- * sink is exactly what a boundary check is for. It reaches only `data:` URLs —
- * a remote `https://…/x.svg` is equally active when opened, and no predicate
- * here can see the content type a server will send for it.
+ * The `data:` rule guards the file a reader saves rather than the `<img>`, which
+ * is why an *image* type can be refused: the kernel wraps the picture in a link
+ * to the same string, and its download control saves that string's bytes, so a
+ * payload the browser saves as a file — a `data:text/html`, or an SVG carrying a
+ * `<script>` — runs with the privileges of a `file://` origin once opened, where
+ * an `<img>` would either have failed to decode it or kept its scripts inert.
+ * The kernel's own `viewableUrl` refuses both before either sink since 0.9.0;
+ * this check stays because it fails the run loudly where the kernel would name
+ * the file quietly. Unlikely to arrive from an image pipeline, which is the
+ * point: an unlikely value that reaches a dangerous sink is exactly what a
+ * boundary check is for. It reaches only `data:` URLs — a remote
+ * `https://…/x.svg` is equally active when opened, and no predicate here can see
+ * the content type a server will send for it.
  */
 export function parseGeneratedImage(results: RunResults): GeneratedImage {
   let image: Image;

@@ -76,7 +76,6 @@ src/
     wireOutput.ts             # reads main_stuff and readies it for a generated binder
     runInputs.ts              # requireContract + requireInputForm + gateRunInputs — the server-side input gate
     resultField.ts            # requireResultField — the output descriptor + payload schema → one RunField
-    resultUrls.ts             # scrubResultUrls — the result's URL policy, fileInputs' twin on the way out
     errors.ts                 # classifyPipelineError + PipelineError model
     fileInputs.ts             # the grant's type + size gate, and the run's reference gate
     uploadGrant.ts            # grantFileUpload — the upload grant behind each file method's action
