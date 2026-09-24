@@ -1,5 +1,5 @@
 /**
- * The output side of `fileEncoding.ts`'s scheme gate: the URL policy the result
+ * The output side of `fileInputs.ts`'s scheme gate: the URL policy the result
  * view applies before the form kernel is allowed to act on a run's file URLs.
  *
  * **Why this exists at all.** The kernel decides what to paint, link and frame

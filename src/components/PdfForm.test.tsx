@@ -3,24 +3,51 @@ import { act, render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { PdfForm } from "./PdfForm";
 import {
   pollSummarizePdfRun,
+  requestSummarizePdfUpload,
   runSummarizePdfBlocking,
   startSummarizePdfRun,
 } from "@/actions/runSummarizePdfPipeline";
+import type { UploadRequest } from "@/lib/fileInputs";
 
 vi.mock("@/actions/runSummarizePdfPipeline", () => ({
   runSummarizePdfBlocking: vi.fn(),
   startSummarizePdfRun: vi.fn(),
   pollSummarizePdfRun: vi.fn(),
+  requestSummarizePdfUpload: vi.fn(),
+}));
+
+const uploadWithGrant = vi.fn();
+vi.mock("@pipelex/sdk/upload", () => ({
+  uploadWithGrant: (...args: unknown[]) => uploadWithGrant(...args),
 }));
 
 const blocking = vi.mocked(runSummarizePdfBlocking);
 const start = vi.mocked(startSummarizePdfRun);
 const poll = vi.mocked(pollSummarizePdfRun);
+const requestUpload = vi.mocked(requestSummarizePdfUpload);
+
+/** Where the stand-in storage puts a file: one reference per filename. */
+const storedUri = (filename: string) => `pipelex-storage://org_1/uploads/${filename}`;
 
 beforeEach(() => {
   blocking.mockReset();
   start.mockReset();
   poll.mockReset();
+  // Every drop is granted and stored unless a test says otherwise: the grant
+  // names the reference, and the stand-in storage answers with it.
+  requestUpload.mockReset().mockImplementation(async (request: UploadRequest) => ({
+    ok: true,
+    grant: {
+      url: `https://storage.example/${request.filename}`,
+      headers: { "Content-Type": request.content_type },
+      uri: storedUri(request.filename),
+      expires_at: "2026-09-24T12:00:00Z",
+      max_bytes: 52_428_800,
+    },
+  }));
+  uploadWithGrant.mockReset().mockImplementation(async (grant: { uri: string }) => ({
+    uri: grant.uri,
+  }));
 });
 
 const USAGE = {
@@ -55,7 +82,8 @@ function fileInput(): HTMLInputElement {
 
 async function selectFile(file: File) {
   fireEvent.change(fileInput(), { target: { files: [file] } });
-  // fileToDataUrl is async (FileReader); the submit button enables once done.
+  // The grant request and the upload are async; the submit button enables once
+  // storage has the file and the form holds its reference.
   await waitFor(() => expect(screen.getByRole("button", { name: /summarize pdf/i })).toBeEnabled());
 }
 
@@ -79,38 +107,67 @@ describe("PdfForm", () => {
     expect(screen.getByRole("button", { name: /summarize pdf/i })).toBeDisabled();
   });
 
-  it("encodes a dropped PDF and renders the summary on success (durable)", async () => {
+  it("stores a dropped PDF, runs on its reference and renders the summary (durable)", async () => {
     durableCompletes({ title: "Invoice", doc_type: "invoice", key_points: ["Total $1,728"] });
 
     render(<PdfForm />);
-    await selectFile(pdfFile());
+    const file = pdfFile();
+    await selectFile(file);
+    // Only the file's description crosses to the server, never its bytes.
+    expect(requestUpload).toHaveBeenCalledWith({
+      filename: "doc.pdf",
+      content_type: "application/pdf",
+      size: file.size,
+    });
     fireEvent.click(screen.getByRole("button", { name: /summarize pdf/i }));
 
     expect(await screen.findByText("Invoice")).toBeInTheDocument();
-    // The action receives the kernel's `FileValue` in schema shape — a
-    // serializable data URL and a filename, never a `File`.
-    const value = documentArg(start.mock.calls[0]);
-    expect(value.url?.startsWith("data:application/pdf;base64,")).toBe(true);
-    expect(value.filename).toBe("doc.pdf");
+    // The action receives the kernel's `FileValue` in schema shape — the stored
+    // file's reference and its filename, never a `File` and never its bytes.
+    expect(documentArg(start.mock.calls[0])).toEqual({
+      url: storedUri("doc.pdf"),
+      filename: "doc.pdf",
+    });
+    // The finished run keeps its id on screen, under the result.
+    expect(screen.getByText("run-1")).toBeInTheDocument();
   });
 
-  it("rejects an oversized file before encoding it", async () => {
+  it("rejects an oversized file before asking for a grant", async () => {
     render(<PdfForm />);
     const huge = pdfFile("huge.pdf");
-    // `File.size` is read-only; stand in for a 9 MB file (the cap is 8 MB).
-    Object.defineProperty(huge, "size", { value: 9 * 1024 * 1024 });
+    // `File.size` is read-only; stand in for a 51 MB file (the cap is 50 MB).
+    Object.defineProperty(huge, "size", { value: 51 * 1024 * 1024 });
     fireEvent.change(fileInput(), { target: { files: [huge] } });
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.getByText("File too large")).toBeInTheDocument();
+    expect(requestUpload).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
     expect(blocking).not.toHaveBeenCalled();
+  });
+
+  it("shows a refused grant beside the field, and starts no run", async () => {
+    requestUpload.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        kind: "upload_unavailable",
+        title: "File upload isn't available on this API",
+        message: "https://api.example.test doesn't serve upload grants.",
+        details: "ApiResponseError: HTTP 404",
+      },
+    });
+    render(<PdfForm />);
+    fireEvent.change(fileInput(), { target: { files: [pdfFile()] } });
+
+    expect(await screen.findByText("File upload isn't available on this API")).toBeInTheDocument();
+    expect(uploadWithGrant).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /summarize pdf/i })).toBeDisabled();
   });
 
   it("clears a rejection once the user fixes the input by pasting a URL", async () => {
     render(<PdfForm />);
     const huge = pdfFile("huge.pdf");
-    Object.defineProperty(huge, "size", { value: 9 * 1024 * 1024 });
+    Object.defineProperty(huge, "size", { value: 51 * 1024 * 1024 });
     fireEvent.change(fileInput(), { target: { files: [huge] } });
     expect(await screen.findByText("File too large")).toBeInTheDocument();
 
@@ -132,12 +189,24 @@ describe("PdfForm", () => {
 
     // Once a file is chosen the kernel renders a file chip and hides the drop
     // zone, so the one way to select a replacement is this form's own shortcut.
-    // Hand it an oversized sample: the replacement is rejected, and the point is
-    // that the *first* PDF must not survive as a submittable value.
-    const oversized = new Blob([new Uint8Array(9 * 1024 * 1024)], { type: "application/pdf" });
+    // Have storage's authority refuse the sample: the replacement is rejected,
+    // and the point is that the *first* PDF must not survive as a submittable
+    // value.
+    requestUpload.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        kind: "file_too_large",
+        title: "File too large",
+        message: "The file is past the size limit of Pipelex storage.",
+        details: "ApiResponseError: HTTP 413",
+      },
+    });
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValueOnce({ ok: true, blob: async () => oversized }),
+      vi.fn().mockResolvedValueOnce({
+        ok: true,
+        blob: async () => new Blob(["%PDF-1.4 sample"], { type: "application/pdf" }),
+      }),
     );
     try {
       fireEvent.click(screen.getByRole("button", { name: /use sample pdf/i }));
@@ -176,7 +245,7 @@ describe("PdfForm", () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       });
       // An accepted drop renders its filename in the kernel's file chip, and
-      // its `finally` would have emptied `encodingIds` and re-enabled submit.
+      // its `finally` would have emptied `uploadingIds` and re-enabled submit.
       expect(screen.queryByText(/mine\.pdf/)).not.toBeInTheDocument();
       // The third door: the kernel's `uploadingIds` shuts the "paste a URL
       // instead" toggle and its input too, not only the dropzone — the form
@@ -290,10 +359,10 @@ describe("PdfForm", () => {
     fireEvent.click(screen.getByRole("button", { name: /summarize pdf/i }));
 
     expect(await screen.findByText("Invoice")).toBeInTheDocument();
-    // The empty MIME is normalized before encoding, so the data URL carries
-    // application/pdf and the server's MIME gate accepts it.
-    expect(documentArg(start.mock.calls[0]).url?.startsWith("data:application/pdf;base64,")).toBe(
-      true,
+    // The empty MIME is normalized before the grant is asked for, so the grant
+    // action's type gate accepts it and storage signs the upload as a PDF.
+    expect(requestUpload).toHaveBeenCalledWith(
+      expect.objectContaining({ filename: "report.pdf", content_type: "application/pdf" }),
     );
   });
 });

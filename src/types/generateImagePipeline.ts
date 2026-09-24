@@ -31,8 +31,9 @@ function parseUrl(value: string): URL | null {
 /**
  * Media types a `data:` image output may carry: the image formats a Pipelex run
  * actually returns. An allow-list rather than an `image/` prefix test, matching
- * how `validateDataUrl` gates the file *inputs* in `src/lib/fileEncoding.ts` —
- * a gate that decides what is safe to hand a user as a file should fail closed.
+ * how `checkFileInputs` gates the file *inputs* in `src/lib/fileInputs.ts` on a
+ * closed set of schemes — a gate that decides what is safe to hand a user as a
+ * file should fail closed.
  */
 const ACCEPTED_IMAGE_MEDIA_TYPES = ["image/png", "image/jpeg", "image/webp"];
 

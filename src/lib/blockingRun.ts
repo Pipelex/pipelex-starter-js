@@ -9,12 +9,16 @@ import { buildUsageReport, type UsageReport } from "@/lib/usageReport";
 // method that lives on the platform or in a published package rather than
 // shipping its bundle inline. Every extension is optional, so an action that
 // sends `mthds_contents` satisfies this type unchanged.
-import { resultsFromExecute } from "@pipelex/sdk";
-import type { PipelexStartOptions, RunResults } from "@pipelex/sdk";
+import { resultsFromExecute, type PipelexStartOptions, type RunResults } from "@pipelex/sdk";
 
 export type BlockingOutcome<T> =
-  | { ok: true; output: T; usage: UsageReport }
-  | { ok: false; error: PipelineError };
+  | { ok: true; output: T; usage: UsageReport; runId: string }
+  /**
+   * `runId` is set when the run finished but its result could not be read —
+   * no locatable main stuff, or an output the narrower refused — so the error
+   * can still name the run. Absent when no run was made.
+   */
+  | { ok: false; error: PipelineError; runId?: string };
 
 /**
  * Run a pipeline the **blocking** way — one synchronous `POST /v1/execute` —
@@ -25,34 +29,38 @@ export type BlockingOutcome<T> =
  * `PipelineExecuteTimeoutError`; that (and every other SDK error) is caught and
  * classified, so the caller always gets a structured `BlockingOutcome`.
  *
- * The execute response already carries the resolved main output on `.main_stuff`
- * (the SDK digs it out of the working memory), so it adapts onto `RunResults`
- * with the SAME resolved `main_stuff` the durable path delivers — one narrower,
- * one accessor, no `pipe_output` search. A completed run that named no locatable
- * main stuff throws `MissingMainStuffError` on that access, which the catch below
- * classifies like any other SDK error.
- *
- * Several fields ride differently on the two paths: the durable path gets
- * `working_memory`, the graph pair and the usage pair directly on `RunResults`,
- * while the blocking execute response carries each on the extension-open
- * `pipe_output`. The SDK's own `resultsFromExecute` is the canonical lift of all
- * of them onto their declared fields — the same mapping `startAndWaitForResult`
- * applies on its bare-runner fallback, public since `@pipelex/sdk` 0.20.1 — so
- * this helper calls it rather than restating a partial copy. That is what makes
- * `buildUsageReport` read the usage pair the same way for both modes, and
- * `working_memory` genuinely present on both.
+ * The execute response is lifted onto `RunResults` by the SDK's own
+ * `resultsFromExecute`, the mapping its durable fallback applies: the resolved
+ * `main_stuff` (the SDK digs it out of the working memory), the working memory
+ * itself, and the usage pair the runner carries on the extension-open
+ * `pipe_output`. So a narrower, `buildUsageReport` and anything reading an
+ * intermediate stuff read the blocking result exactly as they read the durable
+ * one — one accessor each, no `pipe_output` search. A completed run that named no
+ * locatable main stuff throws `MissingMainStuffError` on that lift, which the catch
+ * below classifies like any other SDK error.
  */
 export async function executeBlockingRun<T>(
   buildOptions: () => Promise<PipelexStartOptions>,
   parse: (results: RunResults) => T,
 ): Promise<BlockingOutcome<T>> {
+  let runId: string | undefined;
   try {
     const options = await buildOptions();
     const response = await getPipelexClient().execute(options);
-    const adapted: RunResults = resultsFromExecute(response);
-    return { ok: true, output: parse(adapted), usage: buildUsageReport(adapted) };
+    runId = response.pipeline_run_id;
+    // The durable path logs a run's id when it starts; a blocking run has no id
+    // until it has finished, so it is logged here, before its result is read,
+    // and every run this app makes is in the server's log whichever mode made
+    // it and whether or not its result could be read. It is not a diagnostic:
+    // it is the handle a user quotes, and the one a run is looked up by once
+    // the page is closed (see `durableRun.ts`).
+    // eslint-disable-next-line no-console
+    console.info(`[pipelex] run finished: ${runId}`);
+    const results = resultsFromExecute(response);
+    return { ok: true, output: parse(results), usage: buildUsageReport(results), runId };
   } catch (err) {
     // `blocking: true` maps the gateway's 502/504 cap response to execute_timeout.
-    return { ok: false, error: classifyPipelineError(err, readClassifyEnv(), { blocking: true }) };
+    const error = classifyPipelineError(err, readClassifyEnv(), { blocking: true });
+    return runId === undefined ? { ok: false, error } : { ok: false, error, runId };
   }
 }

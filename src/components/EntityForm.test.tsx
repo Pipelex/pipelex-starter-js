@@ -108,7 +108,7 @@ describe("EntityForm", () => {
   });
 
   it("blocking mode: toggling to Blocking calls the blocking action and renders the result", async () => {
-    blocking.mockResolvedValueOnce({ ok: true, output: ENTITIES, usage: USAGE });
+    blocking.mockResolvedValueOnce({ ok: true, output: ENTITIES, usage: USAGE, runId: "run-b" });
 
     render(<EntityForm />);
     fireEvent.click(screen.getByRole("radio", { name: "Blocking" }));

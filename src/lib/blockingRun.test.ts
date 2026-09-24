@@ -1,5 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ApiResponseError, ApiUnreachableError, type RunResults } from "@pipelex/sdk";
+import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  ApiResponseError,
+  ApiUnreachableError,
+  MissingMainStuffError,
+  type RunResults,
+} from "@pipelex/sdk";
 
 const execute = vi.fn();
 
@@ -11,6 +16,7 @@ import { executeBlockingRun } from "./blockingRun";
 import { BadImageOutputError, BadPipelineOutputError } from "@/types/pipelineError";
 
 beforeEach(() => execute.mockReset());
+afterEach(() => vi.restoreAllMocks());
 
 const OPTIONS = {
   pipe_code: "extract_entities",
@@ -59,6 +65,7 @@ describe("executeBlockingRun", () => {
     expect(result).toEqual({
       ok: true,
       output: { items: ["Ada"] },
+      runId: "run-1",
       usage: {
         calls: [],
         totalCostUsd: null,
@@ -106,6 +113,41 @@ describe("executeBlockingRun", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("api_unreachable");
+    // No run was made, so there is no id to carry.
+    expect(result).not.toHaveProperty("runId");
+  });
+
+  it("keeps the id of a run that finished but whose output the narrower refused, and logs it", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    execute.mockResolvedValueOnce({
+      pipeline_run_id: "run-2",
+      main_stuff: { unexpected: true },
+      pipe_output: { pipeline_run_id: "run-2", working_memory: { root: {}, aliases: {} } },
+    });
+
+    const result = await executeBlockingRun(async () => OPTIONS, parseFixture);
+
+    expect(result).toMatchObject({ ok: false, error: { kind: "bad_response" }, runId: "run-2" });
+    expect(info).toHaveBeenCalledWith("[pipelex] run finished: run-2");
+  });
+
+  it("keeps the id of a run that finished with no locatable main stuff, and logs it", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    execute.mockResolvedValueOnce({
+      pipeline_run_id: "run-3",
+      get main_stuff(): never {
+        throw new MissingMainStuffError(
+          "Blocking run 'run-3' delivered no locatable main stuff",
+          "run-3",
+        );
+      },
+      pipe_output: { pipeline_run_id: "run-3", working_memory: { root: {}, aliases: {} } },
+    });
+
+    const result = await executeBlockingRun(async () => OPTIONS, parseFixture);
+
+    expect(result).toMatchObject({ ok: false, runId: "run-3" });
+    expect(info).toHaveBeenCalledWith("[pipelex] run finished: run-3");
   });
 
   it("maps the gateway's 502 cap response to execute_timeout (the real blocking cap)", async () => {
