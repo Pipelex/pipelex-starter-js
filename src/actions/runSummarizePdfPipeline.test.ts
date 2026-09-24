@@ -93,7 +93,7 @@ describe("runSummarizePdfBlocking", () => {
     expect(loadMethodBundles).toHaveBeenCalledWith("summarize-pdf");
     expect(prepareInputs).toHaveBeenCalledWith(PREPARE_CALL);
     expect(execute).toHaveBeenCalledWith({
-      pipe_code: "summarize_pdf",
+      pipe_code: "summarize_pdf.summarize_pdf",
       mthds_contents: ["DUMMY_BUNDLE_TOML"],
       inputs: PREPARED_INPUTS,
     });
@@ -157,7 +157,7 @@ describe("startSummarizePdfRun", () => {
     const result = await startSummarizePdfRun(DATA);
     expect(prepareInputs).toHaveBeenCalledWith(PREPARE_CALL);
     expect(start).toHaveBeenCalledWith({
-      pipe_code: "summarize_pdf",
+      pipe_code: "summarize_pdf.summarize_pdf",
       mthds_contents: ["DUMMY_BUNDLE_TOML"],
       inputs: PREPARED_INPUTS,
     });

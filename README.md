@@ -151,7 +151,7 @@ A few things worth knowing:
 
 A method directory holds either a `.mthds` bundle or a `method.json` manifest naming a method that lives elsewhere; `npm run codegen` regenerates both kinds in one pass, and bumping a published method's version is an edit to that manifest's tag plus a regeneration. See [`docs/codegen.md`](docs/codegen.md) for the two source kinds, and [Add a method](#add-a-method) for the gesture that writes either.
 
-**Regeneration currently needs `PIPELEX_BASE_URL=https://api-dev.pipelex.com`.** Measured 2026-09-05: `api.pipelex.com` is on an older release that returns neither of `/v1/validate`'s `input_form` and `output_form` views (codegen needs both for every method) and does not advertise `method_ref` (which a package-sourced manifest needs). Both scripts say so rather than failing obscurely, and this is a deploy away. Nothing in the committed tree depends on it — `npm run codegen:check` is pure hashing, so `git clone && make all` passes with no key and no network either way.
+**Regeneration needs `PIPELEX_API_KEY` and the network, and no base URL override.** The default, `https://api.pipelex.com`, serves `/v1/validate`'s `input_form` and `output_form` views (codegen needs both for every method) and resolves both selector kinds a manifest can name. Nothing in the committed tree depends on it — `npm run codegen:check` is pure hashing, so `git clone && make all` passes with no key and no network.
 
 ## Add a method
 
@@ -247,15 +247,15 @@ Aliases: `make ul` / `make un`. **Re-run `make use-local` after every edit to ei
 
 ## Environment variables
 
-| Variable                     | Purpose                                                                                                                                                   | Default                   |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| `PIPELEX_BASE_URL`           | Pipelex API base URL. Running the examples needs no override; `npm run codegen`, `codegen:verify` and `make add-method` currently do — see the note below | `https://api.pipelex.com` |
-| `PIPELEX_API_KEY`            | Bearer token used by the SDK                                                                                                                              | (required at runtime)     |
-| `NEXT_PUBLIC_EXECUTION_MODE` | Default execution mode for the examples — `durable` or `blocking`. Each example also has a runtime toggle.                                                | `durable`                 |
+| Variable                     | Purpose                                                                                                    | Default                   |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `PIPELEX_BASE_URL`           | Pipelex API base URL                                                                                       | `https://api.pipelex.com` |
+| `PIPELEX_API_KEY`            | Bearer token used by the SDK                                                                               | (required at runtime)     |
+| `NEXT_PUBLIC_EXECUTION_MODE` | Default execution mode for the examples — `durable` or `blocking`. Each example also has a runtime toggle. | `durable`                 |
 
 A variable already exported in your shell wins over `.env.local` — Next.js loads the file without overwriting what is already in the environment. If a run reaches an endpoint you did not configure here, check your shell first.
 
-**The three keyed build-time scripts want `https://api-dev.pipelex.com` for now.** Running the app needs no override at all, but as measured on 2026-09-05 `api.pipelex.com` is on an older release: it returns neither of `/v1/validate`'s `input_form` and `output_form` views, both of which `npm run codegen` needs for every method, and it does not advertise the `method_ref` selector, which `make add-method` and a package-sourced manifest need. Each script names the missing capability and the base URL rather than failing obscurely. This is a deploy away, and it does not reach a consumer who only runs the app: the committed trees make `git clone && make all` pass with no key and no network.
+**`npm run codegen`, `npm run codegen:verify` and `make add-method` need `PIPELEX_API_KEY` and the network.** Each one asks the API for the form views codegen needs and, for a catalog id or a package address, checks that the base URL resolves that kind of method, naming the base URL and the missing capability when one is not served. The default serves everything they ask for; a base URL pointed elsewhere may not. `make all` needs neither a key nor a network.
 
 ## License
 

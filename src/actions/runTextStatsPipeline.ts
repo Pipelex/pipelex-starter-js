@@ -22,6 +22,12 @@ import type { PipelexStartOptions } from "@pipelex/sdk";
 // `npm run codegen`.
 const METHOD_REF = MANIFEST.method_ref;
 const PIPE_CODE = "analyze_text";
+/**
+ * What the run names the pipe by: the qualified `<domain>.<pipe_code>`, an exact
+ * key. A bare code is searched for across every domain of the method, and
+ * refused as ambiguous once two domains declare it.
+ */
+const PIPE_REF = "text_stats.analyze_text";
 
 // The same generated contract the browser rendered the form from. One gate, two
 // call sites, zero drift — and the server's copy is the one that's trusted.
@@ -37,7 +43,7 @@ const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "text_stats", PIPE_CODE);
 async function buildOptions(inputs: Record<string, unknown>): Promise<PipelexStartOptions> {
   return {
     method_ref: METHOD_REF,
-    pipe_code: PIPE_CODE,
+    pipe_code: PIPE_REF,
     inputs,
   };
 }

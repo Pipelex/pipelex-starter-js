@@ -115,7 +115,7 @@ A published package can carry several pipes, so the pipe is chosen by a rule tha
 3. The only pipe, when the method declares exactly one.
 4. Otherwise a refusal listing the pipes and asking for `PIPE`.
 
-The chosen ref is split at its last dot: the domain and the code are what `requireContract` and `requireInputForm` take, and the action sends the bare `pipe_code` beside the selector or the bundle, which is what the demo actions do.
+The chosen ref is split at its last dot: the domain and the code are what `requireContract` and `requireInputForm` take. The action sends the whole qualified ref as `pipe_code` beside the selector or the bundle, which is what the demo actions do. The runtime looks a qualified ref up exactly, while it searches every domain of the method for a bare code and refuses one that two domains declare, so the qualified form keeps a run working after the method gains a second domain.
 
 ## The output: a typed narrower, a generic view
 
@@ -137,7 +137,7 @@ Depth is not a special case because the file gate does not read the value's shap
 
 ## The emitted test
 
-The scaffold writes one test file, `src/actions/run<Name>Pipeline.test.ts`, and it is deliberately fixture-free. A test that guessed input fixtures from a descriptor would be a liability the day it guessed wrong. What can be asserted without inventing data is the trust boundary: when the pipe has a gating input, `run<Name>Blocking({})` and `start<Name>Run({})` return a `bad_request` **without calling the SDK**; when it has none, `{}` reaches `execute` carrying the method — the selector read from the manifest, or the bundle read with `loadMethodBundles` — and the bare `pipe_code`. The test imports only the actions it calls, since an unused import fails the type check.
+The scaffold writes one test file, `src/actions/run<Name>Pipeline.test.ts`, and it is deliberately fixture-free. A test that guessed input fixtures from a descriptor would be a liability the day it guessed wrong. What can be asserted without inventing data is the trust boundary: when the pipe has a gating input, `run<Name>Blocking({})` and `start<Name>Run({})` return a `bad_request` **without calling the SDK**; when it has none, `{}` reaches `execute` carrying the method — the selector read from the manifest, or the bundle read with `loadMethodBundles` — and the qualified `pipe_code`. The test imports only the actions it calls, since an unused import fails the type check.
 
 What the scaffold emits is itself proven inside `make test`, twice over. The shipped "Text stats" slice compiles, lints and tests with the rest of the app on every `make all`, and `scripts/lib/scaffold-tree.test.mts` covers the source kinds that slice does not: it copies the app to a temporary directory, scaffolds one slice of each kind into the copy from recorded API responses (`scripts/lib/fixtures/recorded/`, with the bundle it copies in under `scripts/lib/fixtures/bundles/`), and runs `tsc`, ESLint, the offline codegen check and the emitted tests over the result.
 
@@ -162,7 +162,7 @@ A bundle needs no handshake: it travels inline, and the base URL only has to ser
 
 Two cases deliberately **proceed** rather than refuse, because in both the handshake has no verdict to give and the real call's own error is the better message: the handshake itself failing, and a response that advertises no capabilities at all.
 
-**On 2026-09-05 `api.pipelex.com` advertised `runs` and `method_id`, not `method_ref`** (hosted `0.10.1`), and did not yet serve `/v1/validate`'s `input_form` and `output_form` views — which `npm run codegen` and this gesture need for **every** method, bundles included. So both currently want `PIPELEX_BASE_URL=https://api-dev.pipelex.com`. This is a deploy away and nothing in the committed tree depends on it: `codegen:check` is pure hashing, so `git clone && make all` stays green with no key and no network. See the README's environment table.
+**The default base URL, `https://api.pipelex.com`, serves all of it**: `/v1/validate`'s `input_form` and `output_form` views, which `npm run codegen` and this gesture need for **every** method, bundles included, and both selector kinds. The handshake and the view check matter when `PIPELEX_BASE_URL` points elsewhere, at a local stack or another deployment that may lack one of them. Nothing in `make all` depends on any of this: `codegen:check` is pure hashing, so `git clone && make all` stays green with no key and no network. See the README's environment table.
 
 A selector that the API cannot resolve — an unknown package, a foreign-org id — comes back as a 404, and the server's own message is printed **verbatim** under a line naming the selector. For a bad address that message lists the packages the repository does contain, which is far more useful than a guess about `PIPELEX_BASE_URL` would be.
 

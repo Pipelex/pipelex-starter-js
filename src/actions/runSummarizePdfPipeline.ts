@@ -19,7 +19,12 @@ import { ALLOWED_MIMES } from "@/types/summarizePdfUploads";
 import type { StartOptions } from "@pipelex/sdk";
 
 const PIPE_CODE = "summarize_pdf";
-/** `prepareInputs` keys on the qualified ref — a bare pipe code is refused. */
+/**
+ * What `prepareInputs` and the run name the pipe by: the qualified
+ * `<domain>.<pipe_code>`, an exact key. `prepareInputs` refuses a bare code, and
+ * the run searches every domain of the method for one, refusing it as ambiguous
+ * once two domains declare it.
+ */
 const PIPE_REF = "summarize_pdf.summarize_pdf";
 
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "summarize_pdf", PIPE_CODE);
@@ -78,8 +83,7 @@ export async function requestSummarizePdfUpload(request: UploadRequest): Promise
  * Since SDK 0.19.0 a validation report stating `default_pipe_ref: null` is the
  * server saying it determined no entry pipe, and preparation refuses there
  * instead of falling back — so the ref is stated, exactly as `make add-method`
- * scaffolds it. It is the qualified `<domain>.<pipe_code>` form; a bare pipe
- * code is refused.
+ * scaffolds it, and the run is sent the same ref.
  *
  * On failure `prepareInputs` throws *before any run starts* (a typed
  * `InputPreparationError` — see `classifyInputPreparationError`). Because this
@@ -95,7 +99,7 @@ async function buildOptions(inputs: Record<string, unknown>): Promise<StartOptio
     pipe_ref: PIPE_REF,
     inputs,
   });
-  return { pipe_code: PIPE_CODE, mthds_contents: bundles, inputs: prepared.inputs };
+  return { pipe_code: PIPE_REF, mthds_contents: bundles, inputs: prepared.inputs };
 }
 
 /** BLOCKING path: summarize a stored PDF synchronously (`POST /v1/execute`). */

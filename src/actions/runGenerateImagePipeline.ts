@@ -14,12 +14,18 @@ import { gateRunInputs, requireContract } from "@/lib/runInputs";
 import type { StartOptions } from "@pipelex/sdk";
 
 const PIPE_CODE = "generate_image";
+/**
+ * What the run names the pipe by: the qualified `<domain>.<pipe_code>`, an exact
+ * key. A bare code is searched for across every domain of the method, and
+ * refused as ambiguous once two domains declare it.
+ */
+const PIPE_REF = "generate_image.generate_image";
 
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "generate_image", PIPE_CODE);
 
 async function buildOptions(inputs: Record<string, unknown>): Promise<StartOptions> {
   return {
-    pipe_code: PIPE_CODE,
+    pipe_code: PIPE_REF,
     mthds_contents: await loadMethodBundles("generate-image"),
     inputs,
   };
