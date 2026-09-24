@@ -12,9 +12,9 @@ import { useRun } from "@/hooks/useRun";
 import { useRunInputs } from "@/hooks/useRunInputs";
 import { requireResultField } from "@/lib/resultField";
 import { requireContract, requireInputForm } from "@/lib/runInputs";
-import { CostReport } from "./CostReport";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { ModeToggle } from "./ModeToggle";
+import { RunDetails } from "./RunDetails";
 import { RunInputsForm } from "./RunInputsForm";
 import { RunResult } from "./RunResult";
 import { RunStatus } from "./RunStatus";
@@ -28,7 +28,7 @@ const SAMPLE_PROMPT =
 
 export function ImageForm() {
   const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR, {
-    image_prompt: SAMPLE_PROMPT,
+    initialValues: { image_prompt: SAMPLE_PROMPT },
   });
   const [mode, setMode] = useState<ExecutionMode>(DEFAULT_EXECUTION_MODE);
   // Headline demo: in durable mode this streams status then returns the image;
@@ -79,7 +79,7 @@ export function ImageForm() {
       {state.phase === "done" && (
         <>
           <RunResult field={RESULT_FIELD} value={state.output} name="generated_image" />
-          <CostReport usage={state.usage} />
+          <RunDetails runId={state.runId} usage={state.usage} />
         </>
       )}
     </div>

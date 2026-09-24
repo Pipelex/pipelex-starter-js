@@ -1,117 +1,58 @@
 import { describe, it, expect } from "vitest";
 import type { PipeInputFormDescriptor } from "@pipelex/sdk";
 import {
-  MAX_PDF_BYTES,
+  MAX_FILE_BYTES,
   checkFileInputs,
-  dataUrlByteLength,
-  dataUrlMimeType,
+  checkUploadRequest,
   fileInputErrorToPipelineError,
-  validateDataUrl,
-} from "./fileEncoding";
+  fileTooLargeError,
+} from "./fileInputs";
 
+const STORED = "pipelex-storage://org_1/assets/cv.pdf";
 const PDF_DATA_URL = "data:application/pdf;base64,JVBERi0xLjQK";
 
-describe("dataUrlMimeType", () => {
-  it("extracts the MIME type from a base64 data URL", () => {
-    expect(dataUrlMimeType(PDF_DATA_URL)).toBe("application/pdf");
-    expect(dataUrlMimeType("data:image/png;base64,AAAA")).toBe("image/png");
+describe("checkUploadRequest", () => {
+  const opts = { allowedMimes: ["application/pdf"], maxBytes: MAX_FILE_BYTES };
+  const request = { filename: "cv.pdf", content_type: "application/pdf", size: 1024 };
+
+  it("accepts a file of a type the method takes, under the cap", () => {
+    expect(checkUploadRequest(request, opts)).toBeNull();
+    expect(checkUploadRequest({ ...request, size: MAX_FILE_BYTES }, opts)).toBeNull();
   });
 
-  it("returns null for non-data-URL strings", () => {
-    expect(dataUrlMimeType("https://example.com/file.pdf")).toBeNull();
-    expect(dataUrlMimeType("")).toBeNull();
-    // A non-base64 data URL is not accepted.
-    expect(dataUrlMimeType("data:text/plain,plain")).toBeNull();
-  });
-});
-
-describe("dataUrlByteLength", () => {
-  it("computes decoded length from base64 length and padding", () => {
-    // "JVBERi0=" → 8 chars, 1 pad → 5 bytes ("%PDF-").
-    expect(dataUrlByteLength("data:application/pdf;base64,JVBERi0=")).toBe(5);
-    // "JVBERi0xLjQK" → 12 chars, no pad → 9 bytes.
-    expect(dataUrlByteLength(PDF_DATA_URL)).toBe(9);
+  it("refuses a type the method does not take, naming it and what is expected", () => {
+    const refused = checkUploadRequest({ ...request, content_type: "image/png" }, opts);
+    expect(refused?.kind).toBe("unsupported_file_type");
+    expect(refused?.message).toContain('"image/png"');
+    expect(refused?.message).toContain("application/pdf");
   });
 
-  it("returns 0 when there is no payload", () => {
-    expect(dataUrlByteLength("no-comma-here")).toBe(0);
-    expect(dataUrlByteLength("data:application/pdf;base64,")).toBe(0);
-  });
-});
-
-describe("validateDataUrl", () => {
-  const opts = { allowedMimes: ["application/pdf"], maxBytes: MAX_PDF_BYTES };
-
-  it("returns null for a valid PDF data URL", () => {
-    expect(validateDataUrl(PDF_DATA_URL, opts)).toBeNull();
+  it("refuses a file the browser could not type", () => {
+    // A browser reports `file.type === ""` for a type it does not know.
+    const refused = checkUploadRequest({ ...request, content_type: "" }, opts);
+    expect(refused?.kind).toBe("unsupported_file_type");
+    expect(refused?.message).toContain("an unknown type");
   });
 
-  it("rejects a non-data-URL string", () => {
-    const result = validateDataUrl("https://example.com/x.pdf", opts);
-    expect(result?.kind).toBe("unsupported_file_type");
+  it("refuses a file over the cap with the shared wording", () => {
+    const size = MAX_FILE_BYTES + 1;
+    expect(checkUploadRequest({ ...request, size }, opts)).toEqual(
+      fileTooLargeError(size, MAX_FILE_BYTES),
+    );
   });
 
-  it("rejects a disallowed MIME type", () => {
-    const result = validateDataUrl("data:image/png;base64,AAAA", opts);
-    expect(result?.kind).toBe("unsupported_file_type");
-    expect(result?.message).toContain("image/png");
-  });
-
-  it("rejects a file over the size cap", () => {
-    const result = validateDataUrl(PDF_DATA_URL, {
-      allowedMimes: ["application/pdf"],
-      maxBytes: 4,
-    });
-    expect(result?.kind).toBe("file_too_large");
-    expect(result?.message).toMatch(/limit/);
-  });
-
-  it("rejects a malformed base64 payload", () => {
-    // `@@@@` matches MIME and would pass the size cap, but isn't valid base64.
-    const result = validateDataUrl("data:application/pdf;base64,@@@@", opts);
-    expect(result?.kind).toBe("unsupported_file_type");
-    expect(result?.message).toMatch(/base64/i);
-  });
-
-  it("rejects base64 with wrong padding", () => {
-    // Base64 padding only appears at the very end; embedded `==` is invalid.
-    const result = validateDataUrl("data:application/pdf;base64,AB==A===", opts);
-    expect(result?.kind).toBe("unsupported_file_type");
-  });
-
-  it("rejects a payload whose length is not a multiple of four", () => {
-    // The `% 4` rule is a separate half of `isBase64Payload` from the alphabet
-    // test, and this is the only fixture that tells them apart: the alphabet
-    // and the padding here are both valid, so deleting the length check leaves
-    // every other case in this file green.
-    const result = validateDataUrl("data:application/pdf;base64,AAAAA", opts);
-    expect(result?.kind).toBe("unsupported_file_type");
-    expect(result?.message).toMatch(/base64/i);
-  });
-
-  it("handles a payload large enough to have overflowed the old shape regex", () => {
-    // The previous group-repetition regex threw `RangeError: Maximum call stack
-    // size exceeded` above ~4.47 M payload characters, so every PDF between
-    // 3.2 MB and the 8 MB cap crashed the Server Action instead of running.
-    // 6 MB decoded: comfortably past that threshold, comfortably under the cap.
-    const payload = "A".repeat(8 * 1024 * 1024); // 8 M chars → 6 MB decoded.
-    expect(validateDataUrl(`data:application/pdf;base64,${payload}`, opts)).toBeNull();
-  });
-
-  it("reports a file over the cap rather than inspecting its payload", () => {
-    // Size is checked first, so `file_too_large` is reachable for a payload big
-    // enough that the old ordering would have crashed on the way to it.
-    const result = validateDataUrl(`data:application/pdf;base64,${"A".repeat(16 * 1024 * 1024)}`, {
-      allowedMimes: ["application/pdf"],
-      maxBytes: MAX_PDF_BYTES,
-    });
-    expect(result?.kind).toBe("file_too_large");
+  it.each([
+    ["no request at all", undefined],
+    ["a nameless file", { ...request, filename: "" }],
+    ["an empty file", { ...request, size: 0 }],
+    ["a size that is not a whole number", { ...request, size: 1.5 }],
+    ["a size that is not a number", { ...request, size: "1024" }],
+  ])("refuses %s — a Server Action reads untrusted JSON", (_label, bad) => {
+    expect(checkUploadRequest(bad, opts)?.kind).toBe("invalid_file");
   });
 });
 
 describe("checkFileInputs", () => {
-  const opts = { allowedMimes: ["application/pdf"], maxBytes: MAX_PDF_BYTES };
-
   // Descriptor nodes in the wire shape `POST /v1/validate` returns — the same
   // artifact `INPUT_FORM` in a generated `contracts.ts` carries. The gate is
   // typed on the standard's closed shapes, so the fixtures cast to it.
@@ -132,10 +73,17 @@ describe("checkFileInputs", () => {
     document: { concept: "native.Document", content: { url, ...(filename && { filename }) } },
   });
 
-  it("accepts the schemes a file input may legitimately carry", () => {
-    expect(checkFileInputs(SINGLE, enveloped(PDF_DATA_URL), opts)).toBeNull();
-    expect(checkFileInputs(SINGLE, enveloped("https://example.com/a.pdf"), opts)).toBeNull();
-    expect(checkFileInputs(SINGLE, enveloped("pipelex-storage://abc"), opts)).toBeNull();
+  it("accepts the references a file input may legitimately carry", () => {
+    expect(checkFileInputs(SINGLE, enveloped(STORED))).toBeNull();
+    expect(checkFileInputs(SINGLE, enveloped("https://example.com/a.pdf"))).toBeNull();
+  });
+
+  it("refuses a file sent inline — a run carries references, never bytes", () => {
+    // The browser uploads a dropped file with a grant before any run, so a
+    // `data:` URL reaching a run action was not sent by this app's page.
+    const error = checkFileInputs(SINGLE, enveloped(PDF_DATA_URL, "cv.pdf"));
+    expect(error?.title).toBe("Unsupported file reference");
+    expect(error?.details).toBe("unsupported_scheme: document");
   });
 
   it("reads the compact form the SDK also accepts", () => {
@@ -146,8 +94,8 @@ describe("checkFileInputs", () => {
     const compact = (content: string) => ({
       document: { concept: "native.Document", content },
     });
-    expect(checkFileInputs(SINGLE, compact(PDF_DATA_URL), opts)).toBeNull();
-    expect(checkFileInputs(SINGLE, compact("/etc/passwd"), opts)?.details).toBe(
+    expect(checkFileInputs(SINGLE, compact(STORED))).toBeNull();
+    expect(checkFileInputs(SINGLE, compact("/etc/passwd"))?.details).toBe(
       "unsupported_scheme: document",
     );
   });
@@ -156,7 +104,7 @@ describe("checkFileInputs", () => {
     // The SDK reads a top-level input either way — the explicit `{concept,
     // content}` envelope or the compact value — and so must this, or a caller
     // that skips the envelope skips the gate.
-    expect(checkFileInputs(SINGLE, { document: { url: "/etc/passwd" } }, opts)?.details).toBe(
+    expect(checkFileInputs(SINGLE, { document: { url: "/etc/passwd" } })?.details).toBe(
       "unsupported_scheme: document",
     );
   });
@@ -171,7 +119,7 @@ describe("checkFileInputs", () => {
     // Anything outside the accepted set reaches `prepareInputs` as a *local
     // filesystem path*, which it reads and uploads. Refusing by default is the
     // whole design; see the ALLOWED_FILE_SCHEMES docstring.
-    const error = checkFileInputs(SINGLE, enveloped(url), opts);
+    const error = checkFileInputs(SINGLE, enveloped(url));
     expect(error?.kind).toBe("bad_request");
     expect(error?.title).toBe("Unsupported file reference");
   });
@@ -182,15 +130,7 @@ describe("checkFileInputs", () => {
     // and the descriptor this gate walks, so the gate moves with it.
     const RENAMED = descriptor(top("attachment", DOCUMENT));
     const renamed = { attachment: { concept: "native.Document", content: { url: "/etc/passwd" } } };
-    expect(checkFileInputs(RENAMED, renamed, opts)?.details).toBe("unsupported_scheme: attachment");
-
-    const oversized = {
-      attachment: {
-        concept: "native.Document",
-        content: { url: `data:application/pdf;base64,${"A".repeat(16 * 1024 * 1024)}` },
-      },
-    };
-    expect(checkFileInputs(RENAMED, oversized, opts)?.kind).toBe("file_too_large");
+    expect(checkFileInputs(RENAMED, renamed)?.details).toBe("unsupported_scheme: attachment");
   });
 
   it("ignores inputs the descriptor declares as something else, and checks every file", () => {
@@ -204,17 +144,7 @@ describe("checkFileInputs", () => {
       first: { concept: "native.Document", content: { url: "https://example.com/a.pdf" } },
       second: { concept: "native.Document", content: { url: "/etc/passwd" } },
     };
-    expect(checkFileInputs(MIXED, mixed, opts)?.details).toBe("unsupported_scheme: second");
-  });
-
-  it("rejects a data URL of the wrong type, naming the file", () => {
-    const error = checkFileInputs(
-      SINGLE,
-      enveloped("data:image/png;base64,AAAA", "logo.png"),
-      opts,
-    );
-    expect(error?.kind).toBe("unsupported_file_type");
-    expect(error?.details).toContain("logo.png");
+    expect(checkFileInputs(MIXED, mixed)?.details).toBe("unsupported_scheme: second");
   });
 
   // `prepareInputs` walks the method's wire descriptor, so it resolves a file
@@ -236,27 +166,21 @@ describe("checkFileInputs", () => {
         concept: "native.Document",
         content: urls.map((url, index) => ({ url, filename: `cv-${index}.pdf` })),
       },
-      job_offer_pdf: { concept: "native.Document", content: { url: PDF_DATA_URL } },
+      job_offer_pdf: { concept: "native.Document", content: { url: STORED } },
     });
 
     it("accepts every file in a list", () => {
-      expect(checkFileInputs(CVS, cvs(PDF_DATA_URL, "https://example.com/b.pdf"), opts)).toBeNull();
+      expect(checkFileInputs(CVS, cvs(STORED, "https://example.com/b.pdf"))).toBeNull();
     });
 
     it("refuses one bad reference in a list, naming its position", () => {
-      const error = checkFileInputs(CVS, cvs(PDF_DATA_URL, "/etc/passwd"), opts);
+      const error = checkFileInputs(CVS, cvs(STORED, "/etc/passwd"));
       expect(error?.title).toBe("Unsupported file reference");
       expect(error?.details).toBe("unsupported_scheme: cvs.1");
     });
 
-    it("applies the MIME and size checks to a list item, naming its file", () => {
-      const error = checkFileInputs(CVS, cvs("data:image/png;base64,AAAA"), opts);
-      expect(error?.kind).toBe("unsupported_file_type");
-      expect(error?.details).toBe("unsupported_file_type: cv-0.pdf");
-    });
-
     it("accepts an empty list — a variable list needs no items", () => {
-      expect(checkFileInputs(CVS, cvs(), opts)).toBeNull();
+      expect(checkFileInputs(CVS, cvs())).toBeNull();
     });
 
     it("reaches a file nested in a structured concept", () => {
@@ -276,7 +200,7 @@ describe("checkFileInputs", () => {
           content: { note: "hi", attachment: { url: "/etc/passwd", filename: "x.pdf" } },
         },
       };
-      expect(checkFileInputs(PACKET, nested, opts)?.details).toBe(
+      expect(checkFileInputs(PACKET, nested)?.details).toBe(
         "unsupported_scheme: packet.attachment",
       );
     });
@@ -292,7 +216,7 @@ describe("checkFileInputs", () => {
         }),
       );
       const empty = { packet: { concept: "d.Packet", content: { scan: null } } };
-      expect(checkFileInputs(PACKET, empty, opts)).toBeNull();
+      expect(checkFileInputs(PACKET, empty)).toBeNull();
     });
   });
 
@@ -312,7 +236,7 @@ describe("checkFileInputs", () => {
         }),
       );
       const link = { link: { concept: "d.Link", content: { url: "/not/a/file" } } };
-      expect(checkFileInputs(LINK, link, opts)).toBeNull();
+      expect(checkFileInputs(LINK, link)).toBeNull();
     });
 
     it("lets a plural text input through — an array is not by itself a file", () => {
@@ -325,7 +249,7 @@ describe("checkFileInputs", () => {
         gating: false,
       });
       const pages = { pages: { concept: "native.Text", content: [{ text: "first" }] } };
-      expect(checkFileInputs(PAGES, pages, opts)).toBeNull();
+      expect(checkFileInputs(PAGES, pages)).toBeNull();
     });
 
     it("does not walk a value whose shape disagrees with its node", () => {
@@ -336,29 +260,27 @@ describe("checkFileInputs", () => {
       loop.self = loop;
       const PROSE = descriptor(top("text", { kind: "prose", concept_ref: "native.Text" }));
       expect(
-        checkFileInputs(PROSE, { text: { concept: "native.Text", content: loop } }, opts),
+        checkFileInputs(PROSE, { text: { concept: "native.Text", content: loop } }),
       ).toBeNull();
     });
 
     it("refuses a present file position that holds neither a string nor {url}", () => {
-      // Bytes or a shapeless object at a file position would either bypass the
-      // size cap (the SDK uploads bytes as-is) or fail in the SDK with a typed
+      // Bytes or a shapeless object at a file position would either be uploaded
+      // unchecked (the SDK uploads bytes as-is) or fail in the SDK with a typed
       // error; either way the verdict is this gate's, not the schema's in front.
       const blob = { document: { concept: "native.Document", content: new Uint8Array(4) } };
-      expect(checkFileInputs(SINGLE, blob, opts)?.details).toBe("unsupported_scheme: document");
+      expect(checkFileInputs(SINGLE, blob)?.details).toBe("unsupported_scheme: document");
       const shapeless = {
         document: { concept: "native.Document", content: { filename: "x.pdf" } },
       };
-      expect(checkFileInputs(SINGLE, shapeless, opts)?.details).toBe(
-        "unsupported_scheme: document",
-      );
+      expect(checkFileInputs(SINGLE, shapeless)?.details).toBe("unsupported_scheme: document");
     });
 
     it("passes an input the descriptor does not name through untouched", () => {
       // The shape gate in front drops undeclared inputs before this runs, and
       // the SDK copies one through without reading it; neither is a file.
       const stray = { stray: { concept: "native.Document", content: { url: "/etc/passwd" } } };
-      expect(checkFileInputs(SINGLE, stray, opts)).toBeNull();
+      expect(checkFileInputs(SINGLE, stray)).toBeNull();
     });
   });
 });
@@ -366,7 +288,7 @@ describe("checkFileInputs", () => {
 describe("fileInputErrorToPipelineError", () => {
   it("maps file_too_large to a rendered PipelineError", () => {
     const result = fileInputErrorToPipelineError(
-      { kind: "file_too_large", message: "File is 20 MB; the limit is 8 MB." },
+      { kind: "file_too_large", message: "File is 60 MB; the limit is 50 MB." },
       "big.pdf",
     );
     expect(result.kind).toBe("file_too_large");
@@ -382,5 +304,15 @@ describe("fileInputErrorToPipelineError", () => {
     expect(result.kind).toBe("unsupported_file_type");
     expect(result.title).toBe("Unsupported file type");
     expect(result.details).toContain("(no filename)");
+  });
+
+  it("titles an empty or nameless file as one that can't be uploaded, not as a wrong type", () => {
+    const result = fileInputErrorToPipelineError(
+      { kind: "invalid_file", message: "The file is empty." },
+      "blank.pdf",
+    );
+    expect(result.kind).toBe("invalid_file");
+    expect(result.title).toBe("File can't be uploaded");
+    expect(result.message).toBe("The file is empty.");
   });
 });

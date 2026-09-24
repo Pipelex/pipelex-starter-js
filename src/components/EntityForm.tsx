@@ -12,9 +12,9 @@ import { useRun } from "@/hooks/useRun";
 import { useRunInputs } from "@/hooks/useRunInputs";
 import { requireResultField } from "@/lib/resultField";
 import { requireContract, requireInputForm } from "@/lib/runInputs";
-import { CostReport } from "./CostReport";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { ModeToggle } from "./ModeToggle";
+import { RunDetails } from "./RunDetails";
 import { RunInputsForm } from "./RunInputsForm";
 import { RunResult } from "./RunResult";
 import { RunStatus } from "./RunStatus";
@@ -36,7 +36,7 @@ const SAMPLE_TEXT =
 
 export function EntityForm() {
   const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR, {
-    text: SAMPLE_TEXT,
+    initialValues: { text: SAMPLE_TEXT },
   });
   const [mode, setMode] = useState<ExecutionMode>(DEFAULT_EXECUTION_MODE);
   // `useRun` presents one state machine and dispatches to the blocking or
@@ -88,7 +88,7 @@ export function EntityForm() {
       {state.phase === "done" && (
         <>
           <RunResult field={RESULT_FIELD} value={state.output} name="extracted_entities" />
-          <CostReport usage={state.usage} />
+          <RunDetails runId={state.runId} usage={state.usage} />
         </>
       )}
     </div>

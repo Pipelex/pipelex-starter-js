@@ -1,5 +1,30 @@
 # Changelog
 
+## [v0.6.0] - 2026-09-24
+
+### Highlights
+
+- **A dropped file goes from the browser straight to Pipelex storage**, through an upload grant, so a run carries a reference and never the file's bytes, and `make add-method` writes the same seam for any method with a file input.
+- **Every finished run keeps its id**, shown under each tab's result with a Copy button in both modes, beside a closed usage-and-cost disclosure.
+
+### Added
+
+- **A finished run keeps its id**: under every tab's result, `<RunDetails>` shows the run's id, selectable with a Copy button, in Blocking mode too, and folds the token-and-cost table into a closed "Usage and cost" disclosure. `useRun`'s `done` state and `BlockingOutcome` carry `runId`, a blocking run that finished but could not be read keeps its id on the error, and the server logs `[pipelex] run finished: <id>` for every blocking run.
+- **`html[data-hydrated]`, a hydration signal for browser scripts**: the root layout sets it once React has hydrated the page, so a script waits for it before clicking, dropping a file or taking a screenshot. The new offline `home` e2e spec waits for it and fails on a hydration error.
+
+### Changed
+
+- **`@pipelex/sdk` 0.24.0**: bumped from 0.20.1, which brings the upload grant (`requestUploadGrant`), the browser-safe `@pipelex/sdk/upload` entry, and an `uploadWithGrant` that bounds each upload by a time limit growing with the file's size. A failed upload is named by the SDK's own error `code`, so a refusal from storage, storage out of reach, and storage failing or giving up on the bytes each read as what they are. The other breaking changes in between are confined to the artifact-download helpers, which this app does not use.
+- **`@pipelex/mthds-form` 0.10.1**: bumped from 0.8.0. An enum value reads as words in a form and a result ("Legal") while its code still travels on the wire, a table of records keeps five columns chosen by rank and opens a row to the whole record, a nested record in a cell is named by its first text field, and a stored file's card no longer prints its `pipelex-storage://` address, the "paste a URL instead" input reading `https://…` and "Attached file" titling a file with no name. The kernel now judges every URL it paints, a resolver's answer included, and shows an image in a text result's Markdown as a link rather than loading it, so the PDF example's preview of a stored reference settles on the kernel's placeholder where it used to show "Preview unavailable". It gets there with no resolver: `PdfForm` no longer passes the one that handed a storage reference straight back, which 0.10.0 still needed to keep that preview from spinning forever.
+- **File inputs offer only what their upload action grants, and `useRunInputs` takes an options object (Breaking)**: the PDF example's dropzone used to accept a PNG or a JPEG that its action then refused, and `useRunInputs(CONTRACT, DESCRIPTOR, { allowedMimes, initialValues })` now narrows each file input to the method's `ALLOWED_MIMES` through the kernel's `narrowFileFormats`, the seed values moving from the third argument to `initialValues`. The list moves out of the action into `src/types/<camel>Uploads.ts` (`summarizePdfUploads.ts` for the PDF example), which the action and the form both import, and `make add-method` writes it for any method with a file input.
+- **A dropped file goes straight to Pipelex storage (Breaking)**: the PDF example asks its new `requestSummarizePdfUpload` Server Action for an upload grant and sends the file from the browser with `uploadWithGrant`, so a run carries a `pipelex-storage://` reference and never the file's bytes, and `make add-method` emits the same grant action for any method with a file input. `src/lib/fileEncoding.ts` becomes `src/lib/fileInputs.ts`, whose `checkFileInputs` now refuses a `data:` URL; `MAX_PDF_BYTES` becomes `MAX_FILE_BYTES`, the platform's 50 MiB; `src/lib/clientFile.ts` is removed and `next.config.js` no longer raises the Server Action body limit. The upload needs an API that serves `POST /v1/upload/grant`, and against one that does not the page says so beside the field as `upload_unavailable`.
+- **Inputs too large to send are refused with their size**: `useRun` measures a run's inputs before calling its action and refuses a set past `MAX_RUN_INPUT_BYTES` as `inputs_too_large`, where Next's body limit used to surface as "Could not reach the server".
+- **The Next.js development badge is off**: `next.config.js` sets `devIndicators: false`; compile and runtime errors still surface.
+
+### Removed
+
+- **The result view's own URL policy**: `<RunResult>` no longer runs a result through `scrubResultUrls` before the form kernel renders it, nor shows the note naming the file references that policy removed, because the kernel's own URL gate has refused what it was written to refuse since 0.9.0. A file URL the policy removed and the kernel accepts now reaches the page: a cleartext `http:` URL, at which a previewable document is framed as well as linked; a GIF or AVIF `data:` URL, painted and linked; a PDF `data:` URL, linked but never framed; a `blob:` URL; and a same-origin path named in the payload, painted and linked but never framed. A file the kernel refuses is named by the kernel's own file card, and the image example's narrower still fails a run whose image URL it refuses before the result view sees it. A project made from an earlier release can delete its `src/lib/resultUrls.ts` the same way only once it runs `@pipelex/mthds-form` 0.9.0 or later: the 0.8 kernel frames a payload's `data:text/html` document in an unsandboxed frame, where its script runs and draws its own interface inside the app's page, though from an opaque origin that cannot read the app's cookies or DOM.
+
 ## [v0.5.0] - 2026-09-22
 
 ### Highlights

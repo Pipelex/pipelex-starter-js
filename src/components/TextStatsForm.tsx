@@ -12,9 +12,9 @@ import { useRun } from "@/hooks/useRun";
 import { useRunInputs } from "@/hooks/useRunInputs";
 import { requireResultField } from "@/lib/resultField";
 import { requireContract, requireInputForm } from "@/lib/runInputs";
-import { CostReport } from "./CostReport";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { ModeToggle } from "./ModeToggle";
+import { RunDetails } from "./RunDetails";
 import { RunInputsForm } from "./RunInputsForm";
 import { RunResult } from "./RunResult";
 import { RunStatus } from "./RunStatus";
@@ -87,7 +87,9 @@ export function TextStatsForm() {
               of your own if this output deserves a bespoke view; the value is
               already typed by the narrower. */}
           <RunResult field={RESULT_FIELD} value={state.output} name="text_stats" />
-          <CostReport usage={state.usage} />
+          {/* The run's id, which a user quotes, and what it cost, folded away for
+              whoever built the app. */}
+          <RunDetails runId={state.runId} usage={state.usage} />
         </>
       )}
     </div>

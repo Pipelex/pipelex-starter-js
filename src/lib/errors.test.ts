@@ -18,8 +18,10 @@ import {
 import { BadImageOutputError, BadPipelineOutputError } from "@/types/pipelineError";
 import {
   buildClientTimeoutError,
+  buildInputsTooLargeError,
   classifyPipelineError,
   classifyTransportError,
+  classifyUploadError,
   type ClassifyEnv,
 } from "./errors";
 
@@ -523,15 +525,61 @@ describe("classifyPipelineError — input-preparation (upload) errors", () => {
     ]) {
       const result = classifyPipelineError(err, CLOUD_ENV);
       expect(result.kind).toBe("upload_failed");
-      expect(result.title).toMatch(/Preparing the PDF/i);
+      expect(result.title).toMatch(/Preparing the inputs/i);
     }
   });
 
-  it("falls back to generic upload_failed for the base InputPreparationError (e.g. a malformed data URL)", () => {
-    const err = new InputPreparationError("Malformed data URL payload (invalid base64)");
+  it("frames the base InputPreparationError as a preparation failure, not a failed upload", () => {
+    const err = new InputPreparationError(
+      "Cannot prepare inputs: the method signature did not resolve",
+    );
     const result = classifyPipelineError(err, CLOUD_ENV);
     expect(result.kind).toBe("upload_failed");
-    expect(result.details).toContain("Malformed data URL");
+    expect(result.title).toBe("Preparing the inputs failed");
+    expect(result.message).not.toMatch(/upload/i);
+    expect(result.details).toContain("the method signature did not resolve");
+  });
+});
+
+describe("classifyUploadError — a file's upload, in the browser", () => {
+  it.each([
+    ["grant_expired", /permission ran out/i, /expired/],
+    ["grant_used", /permission ran out/i, /already been used/],
+    ["signature_mismatch", /changed before it was stored/i, /no longer matches/],
+    ["too_large", /too large/i, /size limit/],
+  ] as const)("says what a storage refusal coded %s means", (code, title, message) => {
+    const err = new RejectedAssetError("refused", "receipt.jpg", 403, { code });
+    const result = classifyUploadError(err);
+    expect(result.kind).toBe("upload_failed");
+    expect(result.title).toMatch(title);
+    expect(result.message).toMatch(message);
+    expect(result.message).toContain("receipt.jpg");
+    expect(result.details).toContain(`code: ${code}`);
+  });
+
+  it.each([
+    ["timeout", undefined, "The upload took too long"],
+    ["storage_timeout", 400, "The upload stalled"],
+    ["unreachable", undefined, "Could not reach Pipelex storage"],
+    ["server_error", 503, "Pipelex storage had a problem"],
+    ["conflict", 409, "Uploading the file failed"],
+    ["unexpected", 418, "Uploading the file failed"],
+  ] as const)("says what a transport failure coded %s means", (code, status, title) => {
+    const err = new UploadTransportError("upload failed", { code, status });
+    const result = classifyUploadError(err);
+    expect(result.kind).toBe("upload_failed");
+    expect(result.title).toBe(title);
+    expect(result.details).toContain(`code: ${code}`);
+  });
+
+  it("puts a server error's status in its message", () => {
+    const err = new UploadTransportError("storage 503", { code: "server_error", status: 503 });
+    expect(classifyUploadError(err).message).toContain("HTTP 503");
+  });
+
+  it("treats anything else as the grant request failing to reach this app", () => {
+    const result = classifyUploadError(new TypeError("Failed to fetch"));
+    expect(result.kind).toBe("transport_error");
   });
 });
 
@@ -542,6 +590,27 @@ describe("buildClientTimeoutError", () => {
     expect(result.title).toMatch(/Stopped waiting/i);
     expect(result.message).toContain("150s");
   });
+});
+
+describe("buildInputsTooLargeError", () => {
+  it("says how large the inputs are and what the limit is, and that files do not count", () => {
+    const result = buildInputsTooLargeError(1_534_000, 1_000_000);
+    expect(result.kind).toBe("inputs_too_large");
+    expect(result.title).toMatch(/too large/i);
+    expect(result.message).toContain("1.6 MB");
+    expect(result.message).toContain("at most 1 MB");
+    expect(result.message).toMatch(/Files don't count/);
+    expect(result.details).toBe("inputs_too_large: 1534000 bytes, limit 1000000 bytes");
+  });
+
+  it.each([1_000_001, 1_020_000, 1_049_999])(
+    "never prints a size equal to the limit for %i bytes, just past it",
+    (bytes) => {
+      const result = buildInputsTooLargeError(bytes, 1_000_000);
+      expect(result.message).toContain("come to 1.1 MB");
+      expect(result.message).toContain("at most 1 MB");
+    },
+  );
 });
 
 describe("classifyTransportError", () => {

@@ -56,7 +56,13 @@ import {
   writeAddMethod,
   type ScaffoldPlan,
 } from "./add-method.mts";
-import { renderAction, renderActionTest, renderAdapter, renderForm } from "./add-method.mts";
+import {
+  renderAction,
+  renderActionTest,
+  renderAdapter,
+  renderForm,
+  renderUploads,
+} from "./add-method.mts";
 import { MANIFEST_FILENAME, REPO_ROOT } from "./shared.mts";
 import RECEIPT_REVIEW_CODEGEN from "./fixtures/recorded/receipt-review.codegen.json" with { type: "json" };
 import RECEIPT_REVIEW_VALIDATE from "./fixtures/recorded/receipt-review.validate.json" with { type: "json" };
@@ -395,6 +401,7 @@ describe("the name derivations", () => {
       manifest: "methods/text-stats/method.json",
       generatedDir: "src/generated/text-stats",
       adapter: "src/types/textStatsPipeline.ts",
+      uploads: "src/types/textStatsUploads.ts",
       action: "src/actions/runTextStatsPipeline.ts",
       actionTest: "src/actions/runTextStatsPipeline.test.ts",
       form: "src/components/TextStatsForm.tsx",
@@ -792,9 +799,20 @@ describe("renderAction", () => {
     }
   });
 
-  it("adds the file gate and prepareInputs when the method takes a file", () => {
+  it("adds the file gate, the grant action and prepareInputs when the method takes a file", () => {
     const source = renderAction(DOCUMENTS_PLAN);
-    expect(source).toContain('const ALLOWED_MIMES = ["application/pdf"];');
+    // The media types live in their own module, which the form reads as well: a
+    // `"use server"` file may export async functions only.
+    expect(source).toContain('import { ALLOWED_MIMES } from "@/types/documentsUploads";');
+    expect(source).not.toContain("const ALLOWED_MIMES");
+    // A dropped file is stored before the run, through a grant this action asks
+    // for with the method's own media types; the run then carries references.
+    expect(source).toContain(
+      "export async function requestDocumentsUpload(request: UploadRequest): Promise<GrantOutcome> {",
+    );
+    expect(source).toContain(
+      "return grantFileUpload(request, { allowedMimes: ALLOWED_MIMES, maxBytes: MAX_FILE_BYTES });",
+    );
     // The file gate walks the pipe's wire descriptor, the same one the form is
     // rendered from — so the action looks it up beside the contract.
     expect(source).toContain(
@@ -803,7 +821,7 @@ describe("renderAction", () => {
     expect(source).toContain(
       'const DESCRIPTOR = requireInputForm(INPUT_FORM, "documents", PIPE_CODE);',
     );
-    expect(source).toContain("checkFileInputs(DESCRIPTOR, gated.inputs, {");
+    expect(source).toContain("checkFileInputs(DESCRIPTOR, gated.inputs);");
     // prepareInputs keys on the QUALIFIED ref — a bare pipe code is refused.
     expect(source).toContain('const PIPE_REF = "documents.extract_text_pages";');
     expect(source).toContain("pipe_ref: PIPE_REF,");
@@ -824,8 +842,8 @@ describe("renderAction", () => {
       ...DOCUMENTS_PLAN,
       files: [{ path: "cvs[]", kind: "document" }],
     });
-    expect(source).toContain('const ALLOWED_MIMES = ["application/pdf"];');
-    expect(source).toContain("checkFileInputs(DESCRIPTOR, gated.inputs, {");
+    expect(source).toContain('import { ALLOWED_MIMES } from "@/types/documentsUploads";');
+    expect(source).toContain("checkFileInputs(DESCRIPTOR, gated.inputs);");
     expect(source).toContain("prepareInputs({");
   });
 
@@ -848,6 +866,30 @@ describe("renderAction", () => {
     expect(source).toContain('const PIPE_REF = "receipt_review.review_receipts";');
     // Read once per run: prepareInputs and the run options share the one read.
     expect(source.match(/loadMethodBundles\(/g)).toHaveLength(1);
+  });
+});
+
+describe("renderUploads", () => {
+  it("holds the media types the method's file inputs take, for both halves to import", () => {
+    const source = renderUploads(DOCUMENTS_PLAN);
+    expect(source).toContain('export const ALLOWED_MIMES = ["application/pdf"];');
+    expect(source).toContain("`requestDocumentsUpload` refuses a grant for any");
+    // A plain module: the form, a client component, imports it too.
+    expect(source).not.toContain("use server");
+    expect(source).not.toContain("use client");
+  });
+
+  it("takes every kind the method's file inputs declare", () => {
+    const source = renderUploads({
+      ...DOCUMENTS_PLAN,
+      files: [
+        { path: "document", kind: "document" },
+        { path: "shots[]", kind: "image" },
+      ],
+    });
+    expect(source).toContain(
+      'export const ALLOWED_MIMES = ["application/pdf","image/png","image/jpeg","image/webp"];',
+    );
   });
 });
 
@@ -876,6 +918,13 @@ describe("renderActionTest", () => {
     expect(source).toContain("prepareInputs.mockResolvedValueOnce(");
     expect(source).not.toContain("MANIFEST");
   });
+
+  it("pins the grant action's boundary when the method takes a file", () => {
+    const source = renderActionTest(RECEIPTS_PLAN);
+    expect(source).toContain("refuses to grant an upload of a type the method does not take");
+    expect(source).toContain("expect(requestUploadGrant).not.toHaveBeenCalled();");
+    expect(renderActionTest(TEXT_STATS_PLAN)).not.toContain("requestUploadGrant");
+  });
 });
 
 describe("renderForm", () => {
@@ -884,6 +933,15 @@ describe("renderForm", () => {
     expect(source).toContain("useRunInputs(CONTRACT, DESCRIPTOR)");
     expect(source).toContain("<RunInputsForm");
     for (const tag of ["<textarea", "<input", "<select"]) expect(source).not.toContain(tag);
+    // A method with no file input has no media types to narrow to.
+    expect(source).not.toContain("ALLOWED_MIMES");
+  });
+
+  it("narrows each file input to the media types the upload action grants", () => {
+    const source = renderForm(DOCUMENTS_PLAN);
+    expect(source).toContain('import { ALLOWED_MIMES } from "@/types/documentsUploads";');
+    expect(source).toContain("useRunInputs(CONTRACT, DESCRIPTOR, {");
+    expect(source).toContain("allowedMimes: ALLOWED_MIMES,");
   });
 
   it("hands the run id to the status card and the error display", () => {
@@ -921,18 +979,27 @@ describe("renderForm", () => {
   it("wires the kernel's file seam through useFileInputs when the method takes a file", () => {
     const source = renderForm(DOCUMENTS_PLAN);
     expect(source).toContain('import { useFileInputs } from "@/hooks/useFileInputs";');
-    expect(source).toContain("env={{ onDropFile: dropFile, uploadingIds: encodingIds }}");
+    expect(source).toContain("env={{ onDropFile: dropFile, uploadingIds }}");
     expect(source).toContain("{fileError && <ErrorDisplay error={fileError} />}");
   });
 
-  it("holds the run while a file is encoding — its value is unset until then", () => {
+  it("holds the run while a file is uploading — its value is unset until then", () => {
     // `ready` speaks only for the inputs the gate refuses empty, so an optional
     // or non-gating file input (a list of receipts) would otherwise run without
     // the file the person just dropped.
     const source = renderForm(RECEIPTS_PLAN);
-    expect(source).toContain("disabled={running || encodingIds.size > 0 || !ready}");
-    expect(source).toContain("if (encodingIds.size > 0) return;");
+    expect(source).toContain("disabled={running || uploadingIds.size > 0 || !ready}");
+    expect(source).toContain("if (uploadingIds.size > 0) return;");
+    // The file is stored through the method's own grant action before any run.
+    expect(source).toContain("requestUpload: requestReceiptReviewUpload,");
     expect(renderForm(TEXT_STATS_PLAN)).toContain("disabled={running || !ready}");
+  });
+
+  it("keeps the finished run's id under the result, with the cost folded beside it", () => {
+    const source = renderForm(TEXT_STATS_PLAN);
+    expect(source).toContain('import { RunDetails } from "./RunDetails";');
+    expect(source).toContain("<RunDetails runId={state.runId} usage={state.usage} />");
+    expect(source).not.toContain("CostReport");
   });
 });
 
@@ -1254,7 +1321,7 @@ describe("runAddMethod", () => {
       path.join(root, "src", "actions", "runTextStatsPipeline.ts"),
       "utf-8",
     );
-    expect(action).toContain("checkFileInputs(DESCRIPTOR, gated.inputs, {");
+    expect(action).toContain("checkFileInputs(DESCRIPTOR, gated.inputs);");
     const form = await readFile(path.join(root, "src", "components", "TextStatsForm.tsx"), "utf-8");
     expect(form).toContain("useFileInputs");
   });
@@ -1278,6 +1345,7 @@ describe("runAddMethod", () => {
       "src/generated/receipt-review/sources.json",
       "src/generated/receipt-review/types.ts",
       "src/types/receiptReviewPipeline.ts",
+      "src/types/receiptReviewUploads.ts",
     ]);
     // Copied byte for byte.
     expect(await readFile(path.join(root, "methods/receipt-review/main.mthds"), "utf-8")).toBe(

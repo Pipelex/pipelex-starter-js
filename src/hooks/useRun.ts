@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { buildClientTimeoutError, classifyTransportError, type PipelineError } from "@/lib/errors";
+import {
+  buildClientTimeoutError,
+  buildInputsTooLargeError,
+  classifyTransportError,
+  type PipelineError,
+} from "@/lib/errors";
+import { MAX_RUN_INPUT_BYTES, runInputBytes } from "@/lib/runRequest";
 import type { ExecutionMode } from "@/config";
 import type { UsageReport } from "@/lib/usageReport";
 import type { BlockingOutcome } from "@/lib/blockingRun";
@@ -26,8 +32,10 @@ export type RunHealth = "reconnecting" | "retrying";
  * coarse run status (null in blocking — there is no per-tick status),
  * `elapsedMs` is a smooth wall-clock counter, `health` is null while polling
  * cleanly or names why we're in a resilient/retrying state, and `runId` is the
- * durable run's id once it has one. The id rides the error state too: the run a
- * user saw fail is the run they need to look up.
+ * durable run's id once it has one. The id rides both terminal states too: the
+ * run a user saw finish is the run they quote, and the run they saw fail is the
+ * run they need to look up — and once the page is closed, a run started from an
+ * inline bundle has no other handle.
  */
 export type RunState<T> =
   | { phase: "idle" }
@@ -44,7 +52,13 @@ export type RunState<T> =
        */
       runId: string | null;
     }
-  | { phase: "done"; output: T; usage: UsageReport }
+  | {
+      phase: "done";
+      output: T;
+      usage: UsageReport;
+      /** The finished run's id — in blocking mode too, where it arrives with the result. */
+      runId: string;
+    }
   | {
       phase: "error";
       error: PipelineError;
@@ -164,17 +178,32 @@ export function useRun<TInput, TOutput>(
         clearTimers();
         setState({ phase: "error", error, runId });
       };
-      const succeed = (output: TOutput, usage: UsageReport) => {
+      const succeed = (output: TOutput, usage: UsageReport, finishedRunId: string) => {
         if (!isCurrent()) return;
         clearTimers();
-        setState({ phase: "done", output, usage });
+        setState({ phase: "done", output, usage, runId: finishedRunId });
       };
+
+      // Past what one Server Action body may carry, Next refuses the call
+      // before the action runs, and the rejection would read as "Could not
+      // reach the server". Refuse it here instead, saying why.
+      const inputBytes = runInputBytes(input);
+      if (inputBytes !== null && inputBytes > MAX_RUN_INPUT_BYTES) {
+        fail(buildInputsTooLargeError(inputBytes, MAX_RUN_INPUT_BYTES));
+        return;
+      }
 
       if (mode === "blocking") {
         blocking(input)
           .then((outcome) => {
-            if (outcome.ok) succeed(outcome.output, outcome.usage);
-            else fail(outcome.error);
+            if (outcome.ok) {
+              succeed(outcome.output, outcome.usage, outcome.runId);
+              return;
+            }
+            // A run that finished but could not be read still has an id, and
+            // it is the one a user needs to quote.
+            runId = outcome.runId ?? null;
+            fail(outcome.error);
           })
           .catch((err) => fail(classifyTransportError(err)));
         return;
@@ -239,7 +268,7 @@ export function useRun<TInput, TOutput>(
 
         transientFailures = 0; // a verdict-bearing tick clears the streak
         if (outcome.state === "completed") {
-          succeed(outcome.output, outcome.usage);
+          succeed(outcome.output, outcome.usage, runId);
           return;
         }
 

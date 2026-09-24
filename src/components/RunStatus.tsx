@@ -72,7 +72,9 @@ export function RunStatus({ status, elapsedMs, health, runId }: RunStatusProps) 
         {/* The run id, where a person can read and copy it: a run started from
             an inline bundle has no catalog id, so once this page is closed the
             id is the only way back to it — in the back office, through the
-            API, or in the dev server's log, which prints the same line.
+            API, or in the server's log, which prints the same line on every
+            server and not only in development. `RunDetails` keeps it on screen
+            once the run has finished.
             `aria-live="off"` keeps it out of the announcement while leaving it
             in the accessibility tree: inside this polite region it would
             otherwise be read out as a run id's worth of hexadecimal the moment

@@ -23,7 +23,7 @@
  * show.
  *
  * Pure module — no `process.env`, no Node built-ins — so it is safe to import
- * from either side (same rule as `fileEncoding.ts`).
+ * from either side (same rule as `fileInputs.ts`).
  */
 import {
   describeValidationError,

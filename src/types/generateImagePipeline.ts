@@ -31,8 +31,9 @@ function parseUrl(value: string): URL | null {
 /**
  * Media types a `data:` image output may carry: the image formats a Pipelex run
  * actually returns. An allow-list rather than an `image/` prefix test, matching
- * how `validateDataUrl` gates the file *inputs* in `src/lib/fileEncoding.ts` —
- * a gate that decides what is safe to hand a user as a file should fail closed.
+ * how `checkFileInputs` gates the file *inputs* in `src/lib/fileInputs.ts` on a
+ * closed set of schemes — a gate that decides what is safe to hand a user as a
+ * file should fail closed.
  */
 const ACCEPTED_IMAGE_MEDIA_TYPES = ["image/png", "image/jpeg", "image/webp"];
 
@@ -66,16 +67,19 @@ function dataUrlMediaType(url: URL): string {
  * the one that will actually render — `public_url ?? url` — so a usable `url`
  * can't save a broken `public_url` and vice-versa.
  *
- * The `data:` rule guards the download link rather than the `<img>`, which is why
- * an *image* type can be refused: the result view paints the same validated
- * string in an `<a href={src} download>`, so a payload the browser saves as a
- * file — a `data:text/html`, or an SVG carrying a `<script>` — runs with the
- * privileges of a `file://` origin once opened, where an `<img>` would either
- * have failed to decode it or kept its scripts inert. Unlikely to arrive from an
- * image pipeline, which is the point: an unlikely value that reaches a dangerous
- * sink is exactly what a boundary check is for. It reaches only `data:` URLs —
- * a remote `https://…/x.svg` is equally active when opened, and no predicate
- * here can see the content type a server will send for it.
+ * The `data:` rule refuses any media type the URL declares other than the raster
+ * formats a run returns, which is why an *image* type can be refused: a
+ * `data:text/html` is a document rather than a picture, and an SVG paints as a
+ * picture but can carry a script that runs once it is opened as a document. The
+ * kernel's own `viewableUrl` has refused both before any sink since 0.9.0, so
+ * this check is not what keeps them off the page; it stays because it fails the
+ * run loudly, naming the type, where the kernel would name the file quietly. It
+ * judges the declared type and nothing else — not the bytes, which may not be an
+ * image at all, and not the name the kernel's download control saves them under,
+ * which comes from the payload's own `filename` — so it makes no promise about
+ * the file a reader saves. It reaches only `data:` URLs: a remote
+ * `https://…/x.svg` is equally active when opened, and no predicate here can see
+ * the content type a server will send for it.
  */
 export function parseGeneratedImage(results: RunResults): GeneratedImage {
   let image: Image;
