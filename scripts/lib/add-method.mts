@@ -594,11 +594,11 @@ export function scaffoldPaths(names: ScaffoldNames): ScaffoldPaths {
 
 /** The chosen pipe, split the way `requireContract` and the run options take it. */
 export interface ChosenPipe {
-  /** Qualified: `text_stats.analyze_text`. */
+  /** Qualified: `text_stats.analyze_text` — what the run request sends as `pipe_code`. */
   ref: string;
   /** Everything before the last dot. */
   domain: string;
-  /** Everything after it — what the run request sends as `pipe_code`. */
+  /** Everything after it. */
   code: string;
 }
 
@@ -1141,13 +1141,22 @@ export function renderAction(plan: ScaffoldPlan): string {
     ...reference.describe,
     ...reference.declaration,
     `const PIPE_CODE = ${JSON.stringify(pipe.code)};`,
+    "/**",
+    ...(hasFiles
+      ? [
+          " * What `prepareInputs` and the run name the pipe by: the qualified",
+          " * `<domain>.<pipe_code>`, an exact key. `prepareInputs` refuses a bare code, and",
+          " * the run searches every domain of the method for one, refusing it as ambiguous",
+          " * once two domains declare it.",
+        ]
+      : [
+          " * What the run names the pipe by: the qualified `<domain>.<pipe_code>`, an exact",
+          " * key. A bare code is searched for across every domain of the method, and",
+          " * refused as ambiguous once two domains declare it.",
+        ]),
+    " */",
+    `const PIPE_REF = ${JSON.stringify(pipe.ref)};`,
   ];
-  if (hasFiles) {
-    head.push(
-      "/** `prepareInputs` keys on the qualified ref — a bare pipe code is refused. */",
-      `const PIPE_REF = ${JSON.stringify(pipe.ref)};`,
-    );
-  }
   head.push(
     "",
     "// The same generated contract the browser rendered the form from. One gate, two",
@@ -1238,7 +1247,7 @@ export function renderAction(plan: ScaffoldPlan): string {
       "  });",
       "  return {",
       closure.run,
-      "    pipe_code: PIPE_CODE,",
+      "    pipe_code: PIPE_REF,",
       "    inputs: prepared.inputs,",
       "  };",
       "}",
@@ -1269,7 +1278,7 @@ export function renderAction(plan: ScaffoldPlan): string {
       "): Promise<PipelexStartOptions> {",
       "  return {",
       run,
-      "    pipe_code: PIPE_CODE,",
+      "    pipe_code: PIPE_REF,",
       "    inputs,",
       "  };",
       "}",
@@ -1317,7 +1326,7 @@ export function renderAction(plan: ScaffoldPlan): string {
  * the method takes: the trust boundary (a gating pipe refuses an empty
  * submission before the SDK is reached), or, for a pipe that gates on nothing,
  * that an empty submission reaches `execute` carrying the method — its selector
- * or its bundle — and the bare pipe code. Everything else the slice does is
+ * or its bundle — and the qualified pipe ref. Everything else the slice does is
  * covered by the shared code's own tests — `useRun`, `RunInputsForm`,
  * `runInputs`, `blockingRun`, `durableRun`.
  */
@@ -1386,11 +1395,11 @@ export function renderActionTest(plan: ScaffoldPlan): string {
       ]
     : [
         "  // This pipe gates on nothing, so an empty submission is a legitimate run and",
-        "  // what is worth pinning is the wiring: the method and the bare pipe code.",
+        "  // what is worth pinning is the wiring: the method and the qualified pipe ref.",
         `  it(${JSON.stringify(
           source.kind === "files"
-            ? "sends the bundle and the bare pipe code to the SDK"
-            : "sends the selector and the bare pipe code to the SDK",
+            ? "sends the bundle and the qualified pipe ref to the SDK"
+            : "sends the selector and the qualified pipe ref to the SDK",
         )}, async () => {`,
         ...(hasFiles
           ? ["    prepareInputs.mockResolvedValueOnce({ inputs: {}, uploads: [] });"]
@@ -1399,7 +1408,7 @@ export function renderActionTest(plan: ScaffoldPlan): string {
         `    await run${names.pascal}Blocking({});`,
         "    expect(execute).toHaveBeenCalledWith({",
         methodField,
-        `      pipe_code: ${JSON.stringify(pipe.code)},`,
+        `      pipe_code: ${JSON.stringify(pipe.ref)},`,
         "      inputs: {},",
         "    });",
         "  });",

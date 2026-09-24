@@ -55,7 +55,7 @@ describe("runGenerateImageBlocking", () => {
     const result = await runGenerateImageBlocking(DATA);
     expect(loadMethodBundles).toHaveBeenCalledWith("generate-image");
     expect(execute).toHaveBeenCalledWith({
-      pipe_code: "generate_image",
+      pipe_code: "generate_image.generate_image",
       mthds_contents: ["DUMMY_BUNDLE_TOML"],
       inputs: WIRE_INPUTS,
     });
@@ -107,7 +107,7 @@ describe("startGenerateImageRun", () => {
     start.mockResolvedValueOnce({ pipeline_run_id: "run-1" });
     const result = await startGenerateImageRun(DATA);
     expect(start).toHaveBeenCalledWith({
-      pipe_code: "generate_image",
+      pipe_code: "generate_image.generate_image",
       mthds_contents: ["DUMMY_BUNDLE_TOML"],
       inputs: WIRE_INPUTS,
     });

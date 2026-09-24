@@ -54,7 +54,7 @@ describe("runExtractEntitiesBlocking", () => {
     const result = await runExtractEntitiesBlocking(DATA);
     expect(loadMethodBundles).toHaveBeenCalledWith("extract-entities");
     expect(execute).toHaveBeenCalledWith({
-      pipe_code: "extract_entities",
+      pipe_code: "extract_entities.extract_entities",
       mthds_contents: ["DUMMY_BUNDLE_TOML"],
       inputs: WIRE_INPUTS,
     });
@@ -94,7 +94,7 @@ describe("startExtractEntitiesRun", () => {
     start.mockResolvedValueOnce({ pipeline_run_id: "run-1" });
     const result = await startExtractEntitiesRun(DATA);
     expect(start).toHaveBeenCalledWith({
-      pipe_code: "extract_entities",
+      pipe_code: "extract_entities.extract_entities",
       mthds_contents: ["DUMMY_BUNDLE_TOML"],
       inputs: WIRE_INPUTS,
     });

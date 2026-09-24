@@ -179,7 +179,7 @@ const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "extract_entities", "extract
 // `execute` and `start` take the same options, so one closure drives both.
 async function buildOptions(inputs: Record<string, unknown>): Promise<StartOptions> {
   return {
-    pipe_code: "extract_entities",
+    pipe_code: "extract_entities.extract_entities", // the qualified <domain>.<pipe_code>, an exact key
     mthds_contents: await loadMethodBundles("extract-entities"), // every .mthds file of the directory
     inputs,
   };
@@ -253,7 +253,7 @@ The checklist below is what the gesture automates, and what the demo tabs were w
 1. Create `methods/<name>/main.mthds` (use `/mthds-build`).
 2. Run `npm run codegen`. It writes `src/generated/<name>/` — the zod schemas, the binders, the IO contracts, the lock, and the sources sidecar — for every concept that method declares. Commit that tree alongside the bundle.
 3. Add the adapter in `src/types/<name>.ts`: re-export the generated type, and write `parseXxx(results)` as the generated binder applied to `wireOutput(results)` inside a `try/catch` that rethrows `describeSchemaFailure(err, "<Name>")` as a tagged error subclass. A plural output is `z.array(<Code>Schema)` over `wireListOutput(results, <Code>Schema)` instead, typed `<Code>[]`. Write no shape by hand — if you find yourself declaring fields, the bundle already declares them.
-4. Add the action **trio** in `src/actions/run<Name>Pipeline.ts` — `run<Name>Blocking` (→ `executeBlockingRun`), `start<Name>Run` (→ `startDurableRun`), `poll<Name>Run` (→ `pollDurableRun`) — sharing a `buildOptions` closure and a module-level `CONTRACT = requireContract(PIPE_IO_CONTRACTS, "<domain>", "<pipe_code>")`. Each entry point opens with `gateRunInputs(CONTRACT, data)`.
+4. Add the action **trio** in `src/actions/run<Name>Pipeline.ts` — `run<Name>Blocking` (→ `executeBlockingRun`), `start<Name>Run` (→ `startDurableRun`), `poll<Name>Run` (→ `pollDurableRun`) — sharing a `buildOptions` closure and a module-level `CONTRACT = requireContract(PIPE_IO_CONTRACTS, "<domain>", "<pipe_code>")`. The closure names the pipe by its qualified ref, `pipe_code: "<domain>.<pipe_code>"`: the runtime looks that up exactly, while a bare code is searched across every domain of the method and refused once two domains declare it. Each entry point opens with `gateRunInputs(CONTRACT, data)`.
 5. Wire it from a component: `useRunInputs(CONTRACT, DESCRIPTOR, { initialValues?, allowedMimes? })` for the inputs (`allowedMimes` is the method's `ALLOWED_MIMES`, for a form with a file input) (module-level `DESCRIPTOR = requireInputForm(INPUT_FORM, "<domain>", "<pipe_code>")` beside the `CONTRACT` lookup), a module-level `RESULT_FIELD = requireResultField(OUTPUT_FORM, CONTRACT, "<domain>", "<pipe_code>")` beside both, `useState<ExecutionMode>(DEFAULT_EXECUTION_MODE)` and `useRun({ mode, blocking, start, poll })` for the run. Render `<RunInputsForm fields values onValuesChange disabled>`, `<ModeToggle>` (disabled while running), a submit button gated on `ready`, then `<RunStatus>` while running, `<ErrorDisplay>` on error, and `<RunResult field={RESULT_FIELD} value={state.output} name="<stuff_name>">` on done — all keyed off `state.phase`. Submit with `run(toData())`. **Write neither the form fields nor the result view**; the contract declares both. See `src/components/EntityForm.tsx` for the canonical pattern, and `PdfForm.tsx` for the `onDropFile` file seam.
 
 ## Component Conventions

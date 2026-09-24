@@ -4,6 +4,7 @@
 
 ### Changed
 
+- **Runs name their pipe by its qualified ref**: every action, and every action `make add-method` scaffolds, sends `pipe_code` as `<domain>.<pipe_code>` (`extract_entities.extract_entities`) instead of the bare code. The runtime looks a qualified ref up exactly, where it searches every domain of the method for a bare code and refuses one that two domains declare, so a run keeps working after its method gains a second domain.
 - **The keyed scripts run against the production API**: `npm run codegen`, `npm run codegen:verify` and `make add-method` no longer need `PIPELEX_BASE_URL=https://api-dev.pipelex.com`, because `api.pipelex.com` now serves the form views codegen needs and resolves both catalog ids and package addresses. A `.env.local` or shell that set it for them can drop the line.
 
 ## [v0.6.0] - 2026-09-24

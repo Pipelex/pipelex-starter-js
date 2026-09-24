@@ -14,6 +14,12 @@ import { gateRunInputs, requireContract } from "@/lib/runInputs";
 import type { StartOptions } from "@pipelex/sdk";
 
 const PIPE_CODE = "extract_brief";
+/**
+ * What the run names the pipe by: the qualified `<domain>.<pipe_code>`, an exact
+ * key. A bare code is searched for across every domain of the method, and
+ * refused as ambiguous once two domains declare it.
+ */
+const PIPE_REF = "complex_form.extract_brief";
 
 // The same generated contract the browser rendered the form from. One gate, two
 // call sites, zero drift — and the server's copy is the one that's trusted.
@@ -24,7 +30,7 @@ const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "complex_form", PIPE_CODE);
 /** SDK options shared by both paths — `execute` and `start` take the same shape. */
 async function buildOptions(inputs: Record<string, unknown>): Promise<StartOptions> {
   return {
-    pipe_code: PIPE_CODE,
+    pipe_code: PIPE_REF,
     mthds_contents: await loadMethodBundles("complex-form"),
     inputs,
   };
