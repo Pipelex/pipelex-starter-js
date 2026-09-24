@@ -557,16 +557,24 @@ describe("classifyUploadError — a file's upload, in the browser", () => {
     expect(result.details).toContain(`code: ${code}`);
   });
 
-  it("names storage, not this app's server, when storage cannot be reached", () => {
-    const result = classifyUploadError(new UploadTransportError("could not reach storage"));
+  it.each([
+    ["timeout", undefined, "The upload took too long"],
+    ["storage_timeout", 400, "The upload stalled"],
+    ["unreachable", undefined, "Could not reach Pipelex storage"],
+    ["server_error", 503, "Pipelex storage had a problem"],
+    ["conflict", 409, "Uploading the file failed"],
+    ["unexpected", 418, "Uploading the file failed"],
+  ] as const)("says what a transport failure coded %s means", (code, status, title) => {
+    const err = new UploadTransportError("upload failed", { code, status });
+    const result = classifyUploadError(err);
     expect(result.kind).toBe("upload_failed");
-    expect(result.title).toBe("Could not reach Pipelex storage");
+    expect(result.title).toBe(title);
+    expect(result.details).toContain(`code: ${code}`);
   });
 
-  it("says an upload ran out of time when its own time limit fired", () => {
-    const result = classifyUploadError(new DOMException("signal timed out", "TimeoutError"));
-    expect(result.kind).toBe("upload_failed");
-    expect(result.title).toBe("The upload took too long");
+  it("puts a server error's status in its message", () => {
+    const err = new UploadTransportError("storage 503", { code: "server_error", status: 503 });
+    expect(classifyUploadError(err).message).toContain("HTTP 503");
   });
 
   it("treats anything else as the grant request failing to reach this app", () => {
