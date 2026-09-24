@@ -15,13 +15,12 @@ import { gateRunInputs, requireContract, requireInputForm } from "@/lib/runInput
 import { INPUT_FORM, PIPE_IO_CONTRACTS } from "@/generated/summarize-pdf/contracts";
 import { grantFileUpload, type GrantOutcome } from "@/lib/uploadGrant";
 import type { PipelineError } from "@/lib/errors";
+import { ALLOWED_MIMES } from "@/types/summarizePdfUploads";
 import type { StartOptions } from "@pipelex/sdk";
 
 const PIPE_CODE = "summarize_pdf";
 /** `prepareInputs` keys on the qualified ref — a bare pipe code is refused. */
 const PIPE_REF = "summarize_pdf.summarize_pdf";
-/** The media types the grant action lets the browser store for this method. */
-const ALLOWED_MIMES = ["application/pdf"];
 
 const CONTRACT = requireContract(PIPE_IO_CONTRACTS, "summarize_pdf", PIPE_CODE);
 // The file gate walks the same wire descriptor the browser rendered the form

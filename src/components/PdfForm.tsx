@@ -14,6 +14,7 @@ import { useRun } from "@/hooks/useRun";
 import { useRunInputs } from "@/hooks/useRunInputs";
 import { requireResultField } from "@/lib/resultField";
 import { requireContract, requireInputForm } from "@/lib/runInputs";
+import { ALLOWED_MIMES } from "@/types/summarizePdfUploads";
 import { ErrorDisplay } from "./ErrorDisplay";
 import { ModeToggle } from "./ModeToggle";
 import { RunDetails } from "./RunDetails";
@@ -31,22 +32,6 @@ const SAMPLE_PDF_PATH = "/sample-invoice.pdf";
 const DOCUMENT_INPUT = "document";
 
 /**
- * The kernel previews `http(s):`, `data:` and `blob:` URLs directly, and a file
- * dropped into the control from its local copy, which it keeps after the upload.
- * Anything else it asks the host to resolve first, and what reaches it here is a
- * `pipelex-storage://…/x.pdf` reference the control holds no local copy of: the
- * sample shortcut's, which is stored the way a drop is, or one pasted through
- * the control's own "paste a URL instead". This app has nothing to resolve such
- * a reference with, so hand it straight back: the kernel then renders its
- * `<object>`, whose "Preview unavailable" child is what a browser shows for a
- * scheme it cannot fetch — which beats no preview at all. A real host would
- * exchange the storage URI for a web URL it can paint here.
- */
-async function resolvePreviewUrl(url: string): Promise<string> {
-  return url;
-}
-
-/**
  * Some drag-drop sources and Windows configurations hand a valid PDF over with
  * an empty `file.type`, and the grant action would refuse that empty type. Re-wrap
  * those so the grant is asked for, and the upload signed for, `application/pdf`.
@@ -61,7 +46,11 @@ function withPdfMime(file: File): File {
 }
 
 export function PdfForm() {
-  const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR);
+  // The document input is narrowed to the media types the upload action grants,
+  // so the dropzone never offers a PNG the action would then refuse.
+  const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR, {
+    allowedMimes: ALLOWED_MIMES,
+  });
   const [mode, setMode] = useState<ExecutionMode>(DEFAULT_EXECUTION_MODE);
 
   const { state, run, reset } = useRun({
@@ -136,11 +125,11 @@ export function PdfForm() {
             setValues(next);
           }}
           disabled={running}
-          env={{
-            onDropFile: dropFile,
-            uploadingIds,
-            resolveUrl: resolvePreviewUrl,
-          }}
+          // No `resolveUrl`: this app has nothing to exchange a stored
+          // `pipelex-storage://` reference for, so the preview of one the
+          // control holds no local copy of (the sample's, or a pasted one) shows
+          // the kernel's placeholder. A real host would sign the URI here.
+          env={{ onDropFile: dropFile, uploadingIds }}
         />
         {/* App chrome that writes into the field holds itself to the rule the
             kernel applies to its own controls through `uploadingIds`: no

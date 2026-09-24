@@ -80,8 +80,9 @@ describe("ComplexForm", () => {
     fireEvent.click(screen.getByRole("button", { name: /optional field/i }));
 
     // The enum's options come from the concept's `choices`; nothing in this
-    // component or its test fixture names them.
-    for (const option of ["general", "legal", "technical"]) {
+    // component or its test fixture names them. Under the `app` presentation the
+    // kernel names each option in words ("Legal") while it still stores the code.
+    for (const option of ["General", "Legal", "Technical"]) {
       expect(screen.getByRole("radio", { name: option })).toBeInTheDocument();
     }
     expect(screen.getByLabelText("Notes")).toBeInTheDocument();
@@ -142,7 +143,7 @@ describe("ComplexForm", () => {
     render(<ComplexForm />);
     fireEvent.click(screen.getByRole("button", { name: /optional input/i }));
     fireEvent.click(screen.getByRole("button", { name: /optional field/i }));
-    fireEvent.click(screen.getByRole("radio", { name: "legal" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Legal" }));
     fireEvent.click(screen.getByRole("button", { name: /add item/i }));
     // The kernel derives each control's DOM id from its field path behind a
     // `useId` prefix (so two forms on one page cannot collide), which makes the

@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import {
   computeReadiness,
   fieldsForContract,
+  narrowFileFormats,
   rjsfDataFromRunValues,
   type PipeInputFormDescriptor,
   type PipeIOContract,
@@ -19,6 +20,23 @@ export interface RunInputsState {
   ready: boolean;
   /** The schema-shaped data dict to hand the Server Action, built on demand. */
   toData: () => Record<string, unknown>;
+}
+
+export interface RunInputsOptions {
+  /**
+   * The media types the method's upload action grants — its `ALLOWED_MIMES`.
+   * Each file field is narrowed to the formats among them, so the dropzone's
+   * hint, its file picker's filter and its own check offer exactly what the
+   * action will grant, rather than every format the kernel knows for the kind.
+   * Omitted, a file field keeps its kind's whole list.
+   *
+   * The kernel's `narrowFileFormats` throws when a field would be left
+   * accepting nothing: a list naming none of a file input's formats is a
+   * configuration error, and the form refuses to render rather than offering a
+   * dropzone that refuses every file.
+   */
+  allowedMimes?: readonly string[];
+  initialValues?: Record<string, unknown>;
 }
 
 /**
@@ -37,9 +55,12 @@ export interface RunInputsState {
 export function useRunInputs(
   contract: PipeIOContract,
   descriptor: PipeInputFormDescriptor,
-  initialValues?: Record<string, unknown>,
+  { allowedMimes, initialValues }: RunInputsOptions = {},
 ): RunInputsState {
-  const fields = useMemo(() => fieldsForContract(contract, descriptor), [contract, descriptor]);
+  const fields = useMemo(() => {
+    const derived = fieldsForContract(contract, descriptor);
+    return allowedMimes === undefined ? derived : narrowFileFormats(derived, allowedMimes);
+  }, [contract, descriptor, allowedMimes]);
   const [values, setValues] = useState<Record<string, unknown>>(() => initialValues ?? {});
 
   // Optional and variable-plural inputs never gate, and a whitespace-only

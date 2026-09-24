@@ -56,7 +56,13 @@ import {
   writeAddMethod,
   type ScaffoldPlan,
 } from "./add-method.mts";
-import { renderAction, renderActionTest, renderAdapter, renderForm } from "./add-method.mts";
+import {
+  renderAction,
+  renderActionTest,
+  renderAdapter,
+  renderForm,
+  renderUploads,
+} from "./add-method.mts";
 import { MANIFEST_FILENAME, REPO_ROOT } from "./shared.mts";
 import RECEIPT_REVIEW_CODEGEN from "./fixtures/recorded/receipt-review.codegen.json" with { type: "json" };
 import RECEIPT_REVIEW_VALIDATE from "./fixtures/recorded/receipt-review.validate.json" with { type: "json" };
@@ -395,6 +401,7 @@ describe("the name derivations", () => {
       manifest: "methods/text-stats/method.json",
       generatedDir: "src/generated/text-stats",
       adapter: "src/types/textStatsPipeline.ts",
+      uploads: "src/types/textStatsUploads.ts",
       action: "src/actions/runTextStatsPipeline.ts",
       actionTest: "src/actions/runTextStatsPipeline.test.ts",
       form: "src/components/TextStatsForm.tsx",
@@ -794,7 +801,10 @@ describe("renderAction", () => {
 
   it("adds the file gate, the grant action and prepareInputs when the method takes a file", () => {
     const source = renderAction(DOCUMENTS_PLAN);
-    expect(source).toContain('const ALLOWED_MIMES = ["application/pdf"];');
+    // The media types live in their own module, which the form reads as well: a
+    // `"use server"` file may export async functions only.
+    expect(source).toContain('import { ALLOWED_MIMES } from "@/types/documentsUploads";');
+    expect(source).not.toContain("const ALLOWED_MIMES");
     // A dropped file is stored before the run, through a grant this action asks
     // for with the method's own media types; the run then carries references.
     expect(source).toContain(
@@ -832,7 +842,7 @@ describe("renderAction", () => {
       ...DOCUMENTS_PLAN,
       files: [{ path: "cvs[]", kind: "document" }],
     });
-    expect(source).toContain('const ALLOWED_MIMES = ["application/pdf"];');
+    expect(source).toContain('import { ALLOWED_MIMES } from "@/types/documentsUploads";');
     expect(source).toContain("checkFileInputs(DESCRIPTOR, gated.inputs);");
     expect(source).toContain("prepareInputs({");
   });
@@ -856,6 +866,30 @@ describe("renderAction", () => {
     expect(source).toContain('const PIPE_REF = "receipt_review.review_receipts";');
     // Read once per run: prepareInputs and the run options share the one read.
     expect(source.match(/loadMethodBundles\(/g)).toHaveLength(1);
+  });
+});
+
+describe("renderUploads", () => {
+  it("holds the media types the method's file inputs take, for both halves to import", () => {
+    const source = renderUploads(DOCUMENTS_PLAN);
+    expect(source).toContain('export const ALLOWED_MIMES = ["application/pdf"];');
+    expect(source).toContain("`requestDocumentsUpload` refuses a grant for any");
+    // A plain module: the form, a client component, imports it too.
+    expect(source).not.toContain("use server");
+    expect(source).not.toContain("use client");
+  });
+
+  it("takes every kind the method's file inputs declare", () => {
+    const source = renderUploads({
+      ...DOCUMENTS_PLAN,
+      files: [
+        { path: "document", kind: "document" },
+        { path: "shots[]", kind: "image" },
+      ],
+    });
+    expect(source).toContain(
+      'export const ALLOWED_MIMES = ["application/pdf","image/png","image/jpeg","image/webp"];',
+    );
   });
 });
 
@@ -899,6 +933,15 @@ describe("renderForm", () => {
     expect(source).toContain("useRunInputs(CONTRACT, DESCRIPTOR)");
     expect(source).toContain("<RunInputsForm");
     for (const tag of ["<textarea", "<input", "<select"]) expect(source).not.toContain(tag);
+    // A method with no file input has no media types to narrow to.
+    expect(source).not.toContain("ALLOWED_MIMES");
+  });
+
+  it("narrows each file input to the media types the upload action grants", () => {
+    const source = renderForm(DOCUMENTS_PLAN);
+    expect(source).toContain('import { ALLOWED_MIMES } from "@/types/documentsUploads";');
+    expect(source).toContain("useRunInputs(CONTRACT, DESCRIPTOR, {");
+    expect(source).toContain("allowedMimes: ALLOWED_MIMES,");
   });
 
   it("hands the run id to the status card and the error display", () => {
@@ -1302,6 +1345,7 @@ describe("runAddMethod", () => {
       "src/generated/receipt-review/sources.json",
       "src/generated/receipt-review/types.ts",
       "src/types/receiptReviewPipeline.ts",
+      "src/types/receiptReviewUploads.ts",
     ]);
     // Copied byte for byte.
     expect(await readFile(path.join(root, "methods/receipt-review/main.mthds"), "utf-8")).toBe(

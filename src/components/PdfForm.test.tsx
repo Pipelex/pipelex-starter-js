@@ -175,7 +175,7 @@ describe("PdfForm", () => {
     // touching the handler that set the error — so the alert outlives the value
     // that caused it unless the setter clears it.
     fireEvent.click(screen.getByRole("button", { name: /paste a url instead/i }));
-    fireEvent.change(screen.getByPlaceholderText(/pipelex-storage/i), {
+    fireEvent.change(screen.getByRole("textbox", { name: /link to the file/i }), {
       target: { value: "https://example.com/ok.pdf" },
     });
 
@@ -267,15 +267,16 @@ describe("PdfForm", () => {
     }
   });
 
-  it("resolves a pasted storage URL for preview instead of spinning forever", async () => {
-    // The kernel paints `http(s):`, `data:` and `blob:` URLs directly; a
-    // non-web scheme is what it hands to the host's `resolveUrl`, and
-    // `pipelex-storage://…` pasted through "paste a URL instead" is the path
-    // that reaches it here. The identity resolver is this template's answer —
-    // it has nothing to sign the URI with — and this pins what that buys.
+  it("settles a pasted storage URL's preview instead of spinning forever", async () => {
+    // A `pipelex-storage://…` reference pasted through "paste a URL instead" is
+    // one the control holds no local copy of and cannot paint, and this form
+    // passes no `resolveUrl` to exchange it for one it can. So nothing is painted,
+    // and the preview settles on the kernel's placeholder. Kernel 0.10.0 showed a
+    // spinner forever here unless a resolver was passed, which is what this pins
+    // against.
     render(<PdfForm />);
     fireEvent.click(screen.getByRole("button", { name: /paste a url instead/i }));
-    fireEvent.change(screen.getByPlaceholderText(/pipelex-storage/i), {
+    fireEvent.change(screen.getByRole("textbox", { name: /link to the file/i }), {
       target: { value: "pipelex-storage://bucket/invoice.pdf" },
     });
     await waitFor(() =>
@@ -284,16 +285,13 @@ describe("PdfForm", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Preview" }));
 
-    // The identity resolver hands the URI straight back, so the kernel renders
-    // its <object> (whose own "Preview unavailable" child is what a browser
-    // shows for a non-web scheme) rather than spinning on an unanswered resolve.
-    const preview = await waitFor(() => {
-      const el = document.querySelector('object[type="application/pdf"]');
-      if (!el) throw new Error("no pdf preview rendered");
-      return el;
-    });
-    expect(preview.getAttribute("data")).toContain("pipelex-storage://bucket/invoice.pdf");
+    // The spinner is pending until a resolution lands for this URI, so its
+    // absence, with the placeholder in its place, is the resolver having answered.
+    await waitFor(() => expect(document.querySelector(".lucide-image-off")).not.toBeNull());
     expect(document.querySelector(".animate-spin")).toBeNull();
+    // Nothing is painted from a scheme the browser cannot fetch.
+    expect(document.querySelector("object, iframe")).toBeNull();
+    expect(document.querySelector('img[src^="pipelex-storage:"]')).toBeNull();
   });
 
   it("renders the structured error when a poll returns ok:false", async () => {

@@ -28,7 +28,7 @@ const SAMPLE_PROMPT =
 
 export function ImageForm() {
   const { fields, values, setValues, ready, toData } = useRunInputs(CONTRACT, DESCRIPTOR, {
-    image_prompt: SAMPLE_PROMPT,
+    initialValues: { image_prompt: SAMPLE_PROMPT },
   });
   const [mode, setMode] = useState<ExecutionMode>(DEFAULT_EXECUTION_MODE);
   // Headline demo: in durable mode this streams status then returns the image;

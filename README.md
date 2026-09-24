@@ -183,7 +183,7 @@ Stripping the demos is usually the first act of making this template yours. Each
 5. Its e2e spec: `e2e/extract.spec.ts`.
 6. The references the shared code keeps to it. The text example is the form `e2e/error-display.spec.ts` drives — repoint it at a surviving example. The blurb in `src/app/page.tsx` names the examples, and the bundle-read hint in `src/lib/errors.ts` names this one by path. The complex-inputs example is additionally named by the shared gate test (`src/lib/runInputs.test.ts` imports its contract for the structured and plural rows).
 
-Then run `make all`. `tsc` type-checks the co-located tests, so it names most dangling references itself; the two it cannot see — the `vi.mock` module string in `ExampleTabs.test.tsx` and the Playwright selectors — surface as test failures instead. The PDF example additionally owns `public/sample-invoice.pdf`, and the image example is the one exercising the blocking-cap e2e case.
+Then run `make all`. `tsc` type-checks the co-located tests, so it names most dangling references itself; the two it cannot see — the `vi.mock` module string in `ExampleTabs.test.tsx` and the Playwright selectors — surface as test failures instead. The PDF example additionally owns `public/sample-invoice.pdf` and `src/types/summarizePdfUploads.ts`, and is named by the shared hook test `src/hooks/useRunInputs.test.tsx`; the image example is the one exercising the blocking-cap e2e case.
 
 **A scaffolded example (`text-stats`) comes apart the same way**, `methods/text-stats/` holding a `method.json` manifest rather than a bundle. Leave the two `add-method:` anchor comments in `ExampleTabs.tsx` in place — `make add-method` inserts at them, and a test fails if they go missing.
 

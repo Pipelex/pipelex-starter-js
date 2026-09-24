@@ -2,15 +2,14 @@
  * The output side of `fileInputs.ts`'s scheme gate: the URL policy the result
  * view applies before the form kernel is allowed to act on a run's file URLs.
  *
- * **Why this exists at all.** The kernel decides what to paint, link and frame
- * from its own `isViewableUrl`, which accepts `http:`, `https:`, **any** `data:`
- * media type, `blob:` and same-origin paths. Three of its sinks act on that
+ * **Why this exists at all.** Kernel 0.8.0 decided what to paint, link and
+ * frame from an `isViewableUrl` that accepted `http:`, `https:`, **any** `data:`
+ * media type, `blob:` and same-origin paths. Three of its sinks acted on that
  * verdict: an `<img src>`, an `<a href target="_blank">`, and — for a value
- * whose declared `mime_type` or `filename` looks previewable — a
+ * whose declared `mime_type` or `filename` looked previewable — a
  * `DocumentPreview` `<iframe src>` carrying no `sandbox` attribute. So a payload
- * stating `url: "data:text/html,…"` with `filename: "report.pdf"` is offered a
- * preview and framed, and the frame executes. The kernel's own `HtmlPreview`
- * sandboxes, which is what says the omission is a gap rather than a posture.
+ * stating `url: "data:text/html,…"` with `filename: "report.pdf"` was offered a
+ * preview and framed, and the frame executed.
  *
  * A run's output is model-shaped data crossing a trust boundary, exactly like a
  * run's input, and `checkFileInputs` is the rule on the way in. This is the same
@@ -19,14 +18,13 @@
  * proves the one thing a JSON Schema cannot state — "a reference a browser may
  * be handed".
  *
- * **It is a stopgap with an owner.** Every fix belongs in `@pipelex/mthds-form`:
- * sandbox the document preview, stop deciding previewability from the payload's
- * own `filename`/`mime_type`, and trim before scheme-testing. Delete this module
- * the day the kernel ships them — the walk below is the same walk
- * `collectFilePositions` does on the input side, so it is one deletion, not an
- * unpicking. It does **not** cover markdown a `native.Text` result carries: the
- * kernel typesets prose, and a `![](https://…)` in the model's own answer loads
- * on paint. That one has no host-side fix and is upstream's alone.
+ * **It is a stopgap whose reason is gone.** Kernel 0.9.0 shipped the fixes: one
+ * exported gate, `viewableUrl`, that parses before it scheme-tests and allows a
+ * `data:` URL only for the raster image types and PDF, a document frame only
+ * over `http(s):`, and an image in a text result's Markdown rendered as a link.
+ * This module is due to be deleted, or reduced to a narrower host policy over
+ * `viewableUrl` — the walk below is the same walk `collectFilePositions` does
+ * on the input side, so it is one deletion, not an unpicking.
  *
  * Pure module — no React, no `process.env`, no Node built-ins — so the client
  * component that renders the result may call it directly.
@@ -34,8 +32,9 @@
 import type { RunField } from "@pipelex/mthds-form";
 
 /**
- * What the form kernel would act on, restated here rather than imported because
- * the kernel does not export it: `isViewableUrl` in its `dist` core.
+ * What kernel 0.8.0 would act on, restated here because that release did not
+ * export its gate. It over-approximates the current kernel's `viewableUrl`,
+ * which refuses more, so removing what this matches stays on the safe side.
  *
  * The predicate matters as much as the allow-list. A string the kernel already
  * refuses — `pipelex-storage://`, `file:`, a bare filename — reaches no sink, so
