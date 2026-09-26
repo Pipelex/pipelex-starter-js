@@ -76,8 +76,10 @@ export async function startDurableRun(
  *    status + degraded flag + the server's `Retry-After` hint.
  * 2. On a terminal status, `getRunResult`:
  *    - `completed` → narrow `result` and report `completed`.
- *    - `failed`    → classify a constructed `RunFailedError` (the status read
- *                    has no failure message; the result lookup does).
+ *    - `failed`    → classify a constructed `RunFailedError` carrying the run's
+ *                    stored error report (the result lookup's, else the status
+ *                    read's), so the person sees the runtime's reason, next
+ *                    step and retry verdict rather than the lookup's sentence.
  *    - `running`   → mid-write race (status flipped terminal but `main_stuff` /
  *                    `graph_spec` aren't written yet) → report `running` so the
  *                    client polls once more.
@@ -116,12 +118,19 @@ export async function pollDurableRun<T>(
       };
     }
     if (res.state === "failed") {
-      // A genuine run failure is terminal — never retried.
+      // A genuine run failure is terminal — never retried. Its stored error
+      // report says why: the results read carries it on a platform that serves
+      // it there, and the status read just made carries it on any hosted
+      // platform, even one whose results read does not yet, so the reason
+      // reaches the person either way. The status read also says when the run
+      // ended, for the support line.
+      const report = res.error ?? read.error ?? null;
       return {
         ok: false,
         error: classifyPipelineError(
-          new RunFailedError(res.message, runId, res.status),
+          new RunFailedError(res.message, runId, res.status, { error: report }),
           readClassifyEnv(),
+          { finishedAt: read.finished_at },
         ),
         transient: false,
       };

@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A failed durable run says why**: an example whose durable run fails now shows the runtime's reason with the failing pipe, its advice as the next step, whether running it again can help, and a line to quote to support with the run id, the error type and when the run ended, all read from the run's stored error report, where it used to show only "Run finished with status FAILED; no result available". A model provider's raw error text is kept out of everything the person can read, and a run that ended with no stored report keeps the old sentence.
+
 ## [v0.6.1] - 2026-09-24
 
 ### Changed
