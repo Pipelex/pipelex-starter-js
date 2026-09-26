@@ -16,6 +16,7 @@ vi.mock("@/lib/pipelexClient", () => ({
 
 import { pollDurableRun, startDurableRun } from "./durableRun";
 import { MODEL_NOT_ENABLED, RATE_LIMITED, WRONG_ITEM_COUNT } from "@/test/fixtures/runReports";
+import { refusedStart } from "@/test/fixtures/refusals";
 import { BadPipelineOutputError } from "@/types/pipelineError";
 
 beforeEach(() => {
@@ -59,6 +60,18 @@ describe("startDurableRun", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("lifecycle_unavailable");
+  });
+
+  it("classifies a refused start from its problem document", async () => {
+    start.mockRejectedValueOnce(refusedStart());
+    const result = await startDurableRun(async () => OPTIONS);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe("bad_request");
+    expect(result.error.message).toBe("The method is invalid.");
+    expect(result.error.hint?.summary).toBe("Fix the bundle, then run it again.");
+    expect(result.error.retry?.retryable).toBe(false);
+    expect(result.error.details).toContain("(model reference: gpt-5.1; suggestions: gpt-5)");
   });
 
   it("classifies a transport error thrown by start", async () => {

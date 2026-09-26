@@ -23,6 +23,7 @@ import {
   RATE_LIMITED_PROVIDER_TEXT,
   WRONG_ITEM_COUNT,
 } from "@/test/fixtures/runReports";
+import { refusedStart } from "@/test/fixtures/refusals";
 import { BadImageOutputError, BadPipelineOutputError } from "@/types/pipelineError";
 import {
   buildClientTimeoutError,
@@ -604,6 +605,118 @@ describe("classifyPipelineError — a failed run's stored error report", () => {
       title: "The pipeline run failed",
       message: NO_REPORT_SENTENCE,
       details: `RunFailedError: run run-1 ended FAILED\n${NO_REPORT_SENTENCE}`,
+    });
+  });
+});
+
+describe("classifyPipelineError — a refusal's problem document", () => {
+  it("classifies a refused start from its problem document: reason, next step, validation items, no re-run", () => {
+    const result = classifyPipelineError(refusedStart(), OVERRIDE_ENV);
+    expect(result.kind).toBe("bad_request");
+    expect(result.message).toBe("The method is invalid.");
+    expect(result.hint).toEqual({ summary: "Fix the bundle, then run it again." });
+    expect(result.retry).toEqual({
+      retryable: false,
+      summary: "Running it again unchanged will fail the same way.",
+    });
+    expect(result.details).toContain("error_domain: input");
+    expect(result.details).toContain("user_action: change_input");
+    expect(result.details).toContain(
+      "validation: summarize: Model handle 'gpt-5.1' was not found in the model deck. Did you mean: gpt-5? (model reference: gpt-5.1; suggestions: gpt-5)",
+    );
+  });
+
+  it("puts the validation items ahead of the raw body, which is truncated", () => {
+    const { details } = classifyPipelineError(refusedStart(), OVERRIDE_ENV);
+    expect(details.indexOf("validation: summarize")).toBeLessThan(details.indexOf("body: "));
+  });
+
+  it("offers a re-run when the refusal says it is retryable", () => {
+    const err = new ApiResponseError(
+      "API POST /v1/execute failed (503): The inference provider is overloaded.",
+      "https://api.pipelex.com",
+      503,
+      "Service Unavailable",
+      "{}",
+      "LLMCompletionError",
+      "The inference provider is overloaded.",
+      undefined,
+      undefined,
+      {
+        problem: {
+          retryable: true,
+          userAction: {
+            kind: "wait_and_retry",
+            detail: "Transient provider error — the system will retry automatically.",
+          },
+        },
+      },
+    );
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
+    expect(result.kind).toBe("server_error");
+    expect(result.retry?.retryable).toBe(true);
+    // Nothing retries a refused request, so the stale promise is not the hint.
+    expect(result.hint).toBeUndefined();
+  });
+
+  it("keeps the status's hint when the runtime's advice is its unknown fallback", () => {
+    const err = new ApiResponseError(
+      "API POST /v1/execute failed (500)",
+      "http://localhost:8081",
+      500,
+      "Internal Server Error",
+      "{}",
+      "PipelineExecutionError",
+      "Pipe 'summarize' failed.",
+      undefined,
+      undefined,
+      {
+        problem: {
+          userAction: { kind: "unknown", detail: "Check pipe_stack to identify which pipe failed" },
+        },
+      },
+    );
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
+    expect(result.kind).toBe("server_error");
+    expect(result.hint).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("Check pipe_stack");
+  });
+
+  it("keeps its curated hint for a server error whose document advises nothing", () => {
+    const err = new ApiResponseError(
+      "API POST /v1/execute failed (500)",
+      "https://api.pipelex.com",
+      500,
+      "Internal Server Error",
+      "{}",
+      "CredentialsError",
+      "No API key for the provider.",
+      undefined,
+      undefined,
+    );
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
+    expect(result.hint?.summary).toMatch(/verify the URL/);
+    expect(result.retry).toBeUndefined();
+  });
+
+  it("keeps today's wording for an answer with no problem document", () => {
+    const err = new ApiResponseError(
+      "API POST /v1/start failed (400): Bad Request",
+      "https://api.pipelex.com",
+      400,
+      "Bad Request",
+      "<html>Bad Request</html>",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
+    expect(classifyPipelineError(err, OVERRIDE_ENV)).toEqual({
+      kind: "bad_request",
+      title: "Pipelex API rejected the request (HTTP 400)",
+      message: "The API returned a client error. Inspect the request and try again.",
+      details:
+        "ApiResponseError: HTTP 400 Bad Request\nAPI URL: https://api.pipelex.com\nbody: <html>Bad Request</html>",
     });
   });
 });

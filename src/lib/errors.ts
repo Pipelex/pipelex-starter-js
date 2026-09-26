@@ -21,6 +21,8 @@ import {
   UploadAuthenticationError,
   UploadTransportError,
   type RunErrorReport,
+  type UserAction,
+  type ValidationErrorItem,
 } from "@pipelex/sdk";
 import { BadImageOutputError, BadPipelineOutputError } from "@/types/pipelineError";
 
@@ -248,6 +250,12 @@ function classifyResponse(err: ApiResponseError, env: ClassifyEnv): PipelineErro
     err.apiUrl ? `API URL: ${err.apiUrl}` : null,
     err.errorType ? `error_type: ${err.errorType}` : null,
     err.serverMessage ? `server message: ${err.serverMessage}` : null,
+    // The refusal's own classification, when it came as a problem document:
+    // ahead of the raw body, whose truncation could cut a validation item off.
+    detailLine("error_domain", err.errorDomain),
+    detailLine("retryable", err.retryable),
+    detailLine("user_action", err.userAction?.kind),
+    ...validationLines(err.validationErrors),
     err.responseBody ? `body: ${truncate(err.responseBody, 2000)}` : null,
   ].filter(Boolean) as string[];
   const details = detailsLines.join("\n");
@@ -280,15 +288,36 @@ function classifyResponse(err: ApiResponseError, env: ClassifyEnv): PipelineErro
   }
 
   if (err.status >= 500) {
-    return classifyServerError(err, details);
+    return withRefusalAdvice(classifyServerError(err, details), err);
   }
 
+  return withRefusalAdvice(
+    {
+      kind: "bad_request",
+      title: `Pipelex API rejected the request (HTTP ${err.status})`,
+      message:
+        err.serverMessage ?? "The API returned a client error. Inspect the request and try again.",
+      details,
+    },
+    err,
+  );
+}
+
+/**
+ * A refusal that came as a problem document carries the runtime's own advice:
+ * `user_action`, the next step, and `retryable`, whether running it again can
+ * succeed — at `/v1/start` in durable mode and at `/v1/execute` in blocking
+ * mode alike. The message is already the refusal's reason (`serverMessage`,
+ * its `detail`), and its validation items are in the details; this puts the
+ * user action's detail in place of the hint the HTTP status chose, and the
+ * retry verdict beside it. An answer without them is returned as it was.
+ */
+function withRefusalAdvice(error: PipelineError, err: ApiResponseError): PipelineError {
+  const nextStep = nextStepOf(err.userAction);
   return {
-    kind: "bad_request",
-    title: `Pipelex API rejected the request (HTTP ${err.status})`,
-    message:
-      err.serverMessage ?? "The API returned a client error. Inspect the request and try again.",
-    details,
+    ...error,
+    ...(nextStep ? { hint: { summary: nextStep } } : {}),
+    ...(typeof err.retryable === "boolean" ? { retry: retryAdvice(err.retryable) } : {}),
   };
 }
 
@@ -445,23 +474,14 @@ function classifyRunFailed(err: RunFailedError, finishedAt?: string | null): Pip
   const message =
     visibleReportMessage(report) ??
     `The run ended ${err.status}, and its error report does not say why.`;
-  // `wait_and_retry` advice is written while the runtime is still retrying
-  // ("the system will retry automatically"). A failed run has stopped, and
-  // nothing retries it, so that advice is dropped and the retry line says
-  // what to do instead.
-  const nextStep =
-    report.user_action?.kind === "wait_and_retry"
-      ? undefined
-      : nonEmpty(report.user_action?.detail);
+  const nextStep = nextStepOf(report.user_action);
   const endedAt = formatInstant(finishedAt);
   return {
     kind: "run_failed",
     title: title ? `The pipeline run failed: ${title}` : "The pipeline run failed",
     message,
     ...(nextStep ? { hint: { summary: nextStep } } : {}),
-    ...(typeof report.retryable === "boolean"
-      ? { retry: report.retryable ? RETRYABLE : NOT_RETRYABLE }
-      : {}),
+    ...(typeof report.retryable === "boolean" ? { retry: retryAdvice(report.retryable) } : {}),
     support: [`run ${err.runId}`, nonEmpty(report.error_type), endedAt && `failed ${endedAt}`]
       .filter(Boolean)
       .join(" · "),
@@ -478,6 +498,24 @@ const NOT_RETRYABLE: RetryAdvice = {
   retryable: false,
   summary: "Running it again unchanged will fail the same way.",
 };
+
+function retryAdvice(retryable: boolean): RetryAdvice {
+  return retryable ? RETRYABLE : NOT_RETRYABLE;
+}
+
+/**
+ * The runtime's next step, as a hint. Two kinds of advice are dropped. A
+ * `wait_and_retry` advice is written while the runtime is still retrying ("the
+ * system will retry automatically"); what this app shows has stopped, and
+ * nothing retries it, so the retry line says what to do instead. An `unknown`
+ * advice is the runtime's fallback when no cause advised anything, and it
+ * points at developer fields the display never shows ("Check pipe_stack to
+ * identify which pipe failed") or back at the message already shown.
+ */
+function nextStepOf(action: UserAction | null | undefined): string | undefined {
+  if (action?.kind === "wait_and_retry" || action?.kind === "unknown") return undefined;
+  return nonEmpty(action?.detail);
+}
 
 /**
  * The report's message as a person may read it. A failure that came back from
@@ -506,28 +544,56 @@ function visibleReportMessage(report: RunErrorReport): string | undefined {
  * `visibleReportMessage` gives, and the message is the one shown above.
  */
 function reportDetails(err: RunFailedError, report: RunErrorReport, message: string): string {
-  const field = (name: string, value: unknown) => {
-    const text = typeof value === "boolean" ? String(value) : nonEmpty(value);
-    return text === undefined ? null : `${name}: ${text}`;
-  };
-  const items = Array.isArray(report.validation_errors) ? report.validation_errors : [];
   return [
     `${err.name}: run ${err.runId} ended ${err.status}`,
-    field("error_type", report.error_type),
-    field("error_domain", report.error_domain),
-    field("error_category", report.error_category),
-    field("retryable", report.retryable),
-    field("user_action", report.user_action?.kind),
-    field("model", report.model),
-    field("type_uri", report.type_uri),
+    detailLine("error_type", report.error_type),
+    detailLine("error_domain", report.error_domain),
+    detailLine("error_category", report.error_category),
+    detailLine("retryable", report.retryable),
+    detailLine("user_action", report.user_action?.kind),
+    detailLine("model", report.model),
+    detailLine("type_uri", report.type_uri),
     `message: ${message}`,
-    ...items.map((item) => {
-      const where = nonEmpty(item?.pipe_code) ?? nonEmpty(item?.concept_code);
-      return `validation: ${where ? `${where}: ` : ""}${nonEmpty(item?.message) ?? "(no message)"}`;
-    }),
+    ...validationLines(report.validation_errors),
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/** One `name: value` line of technical details, or null when there is no value. */
+function detailLine(name: string, value: unknown): string | null {
+  const text = typeof value === "boolean" ? String(value) : nonEmpty(value);
+  return text === undefined ? null : `${name}: ${text}`;
+}
+
+/**
+ * The locators an `unknown_model` validation item carries beside the declared
+ * fields: the model reference exactly as the method wrote it, and the model
+ * deck's close matches. The runtime sends them; the SDK's `ValidationErrorItem`
+ * does not name them yet, so they are read as optional extensions.
+ */
+type UnknownModelLocators = { model_reference?: unknown; suggestions?: unknown };
+
+/**
+ * A method's validation items as lines of technical details, one per item:
+ * where it is (the pipe, else the concept), what is wrong, and for an unknown
+ * model the reference the method wrote and the deck's suggestions.
+ */
+function validationLines(items: readonly ValidationErrorItem[] | null | undefined): string[] {
+  if (!Array.isArray(items)) return [];
+  return items.map((item: ValidationErrorItem & UnknownModelLocators) => {
+    const where = nonEmpty(item?.pipe_code) ?? nonEmpty(item?.concept_code);
+    const model = nonEmpty(item?.model_reference);
+    const suggestions = Array.isArray(item?.suggestions)
+      ? item.suggestions.map(nonEmpty).filter((name) => name !== undefined)
+      : [];
+    const locators = [
+      model && `model reference: ${model}`,
+      suggestions.length > 0 && `suggestions: ${suggestions.join(", ")}`,
+    ].filter(Boolean);
+    const text = nonEmpty(item?.message) ?? "(no message)";
+    return `validation: ${where ? `${where}: ` : ""}${text}${locators.length > 0 ? ` (${locators.join("; ")})` : ""}`;
+  });
 }
 
 /** A string with something in it, trimmed; anything else is undefined. */
