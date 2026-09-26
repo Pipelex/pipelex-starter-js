@@ -10,6 +10,12 @@ interface ErrorDisplayProps {
   runId?: string | null;
 }
 
+/**
+ * A classified error, as the person using the app reads it: what happened,
+ * the next step, whether running it again can help, and what to quote to
+ * support — the run's id alone, or the error's own support line when it has
+ * one, which names the run with what failed and when.
+ */
 export function ErrorDisplay({ error, runId }: ErrorDisplayProps) {
   return (
     <div
@@ -57,10 +63,22 @@ export function ErrorDisplay({ error, runId }: ErrorDisplayProps) {
         </div>
       )}
 
-      {runId && (
-        <p className="text-xs text-red-700">
-          Run <span className="select-all font-mono">{runId}</span>
+      {error.retry && (
+        <p className={error.retry.retryable ? "font-medium text-red-900" : "text-red-800"}>
+          {error.retry.summary}
         </p>
+      )}
+
+      {error.support ? (
+        <p className="text-xs text-red-700">
+          For support: <span className="select-all font-mono">{error.support}</span>
+        </p>
+      ) : (
+        runId && (
+          <p className="text-xs text-red-700">
+            Run <span className="select-all font-mono">{runId}</span>
+          </p>
+        )
       )}
 
       <details className="text-xs text-red-700">

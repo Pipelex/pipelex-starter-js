@@ -20,6 +20,7 @@ import {
   UnsupportedUploadCapabilityError,
   UploadAuthenticationError,
   UploadTransportError,
+  type RunErrorReport,
 } from "@pipelex/sdk";
 import { BadImageOutputError, BadPipelineOutputError } from "@/types/pipelineError";
 
@@ -94,8 +95,26 @@ export interface PipelineError {
    */
   apiMessage?: string;
   hint?: ErrorHint;
+  /**
+   * Whether running it again can succeed, as the runtime judged it. Set only
+   * from a verdict — a failed run's report carries `retryable` — and absent
+   * when nobody said, so the display never claims either way on a guess.
+   */
+  retry?: RetryAdvice;
+  /**
+   * One line a person quotes to support: the run's id, what failed and when.
+   * `<ErrorDisplay>` shows it selectable in place of the bare run id.
+   */
+  support?: string;
   /** Raw technical info for the collapsible "Technical details" section. */
   details: string;
+}
+
+export interface RetryAdvice {
+  /** True when running it again can succeed: the display offers a re-run. */
+  retryable: boolean;
+  /** The sentence that says so. */
+  summary: string;
 }
 
 export interface ClassifyEnv {
@@ -121,6 +140,12 @@ export interface ClassifyOptions {
    * a declared size over its limit, which is the authority on "too large".
    */
   uploadGrant?: boolean;
+  /**
+   * Set by `pollDurableRun` for a run that ended without a result: when it
+   * ended, from the run's status read (`finished_at`). A failed run's support
+   * line carries it, because it is what finds the run in the server's logs.
+   */
+  finishedAt?: string | null;
 }
 
 export function classifyPipelineError(
@@ -142,7 +167,7 @@ export function classifyPipelineError(
   // are distinct concrete classes, so order among them is irrelevant).
   if (err instanceof PipelineExecuteTimeoutError) return classifyExecuteTimeout(err);
   if (err instanceof RunStillRunningError) return classifyRunStillRunning(err);
-  if (err instanceof RunFailedError) return classifyRunFailed(err);
+  if (err instanceof RunFailedError) return classifyRunFailed(err, opts?.finishedAt);
   if (err instanceof RunTimeoutError) return classifyRunTimeout(err);
   if (err instanceof RunLifecycleUnavailableError) return classifyLifecycleUnavailable(err, env);
   if (err instanceof InputPreparationError) return classifyInputPreparationError(err, env);
@@ -391,15 +416,138 @@ function classifyRunStillRunning(err: RunStillRunningError): PipelineError {
   };
 }
 
-function classifyRunFailed(err: RunFailedError): PipelineError {
+/**
+ * A run that ended without a result. Its stored error report, when it has one,
+ * is the runtime's own account of the failure, and the classification is read
+ * from it: the report's title in the headline, its message as what happened
+ * (with the provider's raw text taken out, see `visibleReportMessage`), its
+ * user action's detail as the next step, its `retryable` verdict as the retry
+ * advice, and a support line naming the run, the error type and when it ended.
+ *
+ * A run with no report keeps the SDK's sentence, which is all there is: a
+ * cancelled, terminated or timed-out run, one the platform finalized itself,
+ * and any failed run on a platform that does not serve the report.
+ */
+function classifyRunFailed(err: RunFailedError, finishedAt?: string | null): PipelineError {
+  const report = err.error;
+  if (!report) {
+    return {
+      kind: "run_failed",
+      title: "The pipeline run failed",
+      message:
+        err.message ||
+        `The run finished in a non-successful state (${err.status}). Check the technical details below.`,
+      details: `${err.name}: run ${err.runId} ended ${err.status}\n${err.message}`,
+    };
+  }
+
+  const title = nonEmpty(report.title);
+  const message =
+    visibleReportMessage(report) ??
+    `The run ended ${err.status}, and its error report does not say why.`;
+  // `wait_and_retry` advice is written while the runtime is still retrying
+  // ("the system will retry automatically"). A failed run has stopped, and
+  // nothing retries it, so that advice is dropped and the retry line says
+  // what to do instead.
+  const nextStep =
+    report.user_action?.kind === "wait_and_retry"
+      ? undefined
+      : nonEmpty(report.user_action?.detail);
+  const endedAt = formatInstant(finishedAt);
   return {
     kind: "run_failed",
-    title: "The pipeline run failed",
-    message:
-      err.message ||
-      `The run finished in a non-successful state (${err.status}). Check the technical details below.`,
-    details: `${err.name}: run ${err.runId} ended ${err.status}\n${err.message}`,
+    title: title ? `The pipeline run failed: ${title}` : "The pipeline run failed",
+    message,
+    ...(nextStep ? { hint: { summary: nextStep } } : {}),
+    ...(typeof report.retryable === "boolean"
+      ? { retry: report.retryable ? RETRYABLE : NOT_RETRYABLE }
+      : {}),
+    support: [`run ${err.runId}`, nonEmpty(report.error_type), endedAt && `failed ${endedAt}`]
+      .filter(Boolean)
+      .join(" · "),
+    details: reportDetails(err, report, message),
   };
+}
+
+const RETRYABLE: RetryAdvice = {
+  retryable: true,
+  summary: "This failure can pass on a second try: run it again.",
+};
+
+const NOT_RETRYABLE: RetryAdvice = {
+  retryable: false,
+  summary: "Running it again unchanged will fail the same way.",
+};
+
+/**
+ * The report's message as a person may read it. A failure that came back from
+ * a model provider carries the provider SDK's own text inside the runtime's
+ * message (`<provider> inference failed for model '<model>' (HTTP 412): <the
+ * provider's text>`), and that text is raw: a repr of the provider's error
+ * body, or a whole HTML page from an edge in front of it, naming the
+ * deployment's own provider account. The report says which text is the
+ * provider's (`provider_metadata.message`), so it is cut out wherever it
+ * appears, with the separator before it; what remains names the failing pipe,
+ * the provider, the model and the HTTP status. Undefined when nothing is left.
+ */
+function visibleReportMessage(report: RunErrorReport): string | undefined {
+  const message = nonEmpty(report.message);
+  if (!message) return undefined;
+  const providerText = nonEmpty(report.provider_metadata?.message);
+  if (!providerText) return message;
+  const cut = message.split(`: ${providerText}`).join("").split(providerText).join("");
+  return nonEmpty(cut.replace(/[\s:]+$/, ""));
+}
+
+/**
+ * The report's classification for the "Technical details" section: every field
+ * a developer reads to place the failure, and the validation items of a method
+ * that failed validation. The provider's metadata is left out, for the reason
+ * `visibleReportMessage` gives, and the message is the one shown above.
+ */
+function reportDetails(err: RunFailedError, report: RunErrorReport, message: string): string {
+  const field = (name: string, value: unknown) => {
+    const text = typeof value === "boolean" ? String(value) : nonEmpty(value);
+    return text === undefined ? null : `${name}: ${text}`;
+  };
+  const items = Array.isArray(report.validation_errors) ? report.validation_errors : [];
+  return [
+    `${err.name}: run ${err.runId} ended ${err.status}`,
+    field("error_type", report.error_type),
+    field("error_domain", report.error_domain),
+    field("error_category", report.error_category),
+    field("retryable", report.retryable),
+    field("user_action", report.user_action?.kind),
+    field("model", report.model),
+    field("type_uri", report.type_uri),
+    `message: ${message}`,
+    ...items.map((item) => {
+      const where = nonEmpty(item?.pipe_code) ?? nonEmpty(item?.concept_code);
+      return `validation: ${where ? `${where}: ` : ""}${nonEmpty(item?.message) ?? "(no message)"}`;
+    }),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** A string with something in it, trimmed; anything else is undefined. */
+function nonEmpty(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  return text === "" ? undefined : text;
+}
+
+/**
+ * An instant as a support desk reads it: UTC to the second when the value
+ * carries its zone, and the value as given otherwise, since a timestamp
+ * without one cannot be converted without guessing.
+ */
+function formatInstant(value: string | null | undefined): string | undefined {
+  const text = nonEmpty(value);
+  if (text === undefined) return undefined;
+  const time = new Date(text);
+  if (!/(Z|[+-]\d{2}:?\d{2})$/i.test(text) || Number.isNaN(time.getTime())) return text;
+  return time.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
 function classifyRunTimeout(err: RunTimeoutError): PipelineError {

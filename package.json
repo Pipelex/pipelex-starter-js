@@ -25,7 +25,7 @@
   },
   "dependencies": {
     "@pipelex/mthds-form": "^0.10.1",
-    "@pipelex/sdk": "^0.24.0",
+    "@pipelex/sdk": "github:Pipelex/pipelex-sdk-js#98260ff0c1b25c8e0d8bea3ee8366094f9f30a65",
     "next": "^16.3.5",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
