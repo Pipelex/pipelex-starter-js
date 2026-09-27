@@ -14,7 +14,16 @@ import {
   UnsupportedUploadCapabilityError,
   UploadAuthenticationError,
   UploadTransportError,
+  type RunErrorReport,
 } from "@pipelex/sdk";
+import {
+  MODEL_NOT_ENABLED,
+  MODEL_NOT_ENABLED_PROVIDER_TEXT,
+  RATE_LIMITED,
+  RATE_LIMITED_PROVIDER_TEXT,
+  WRONG_ITEM_COUNT,
+} from "@/test/fixtures/runReports";
+import { refusedStart } from "@/test/fixtures/refusals";
 import { BadImageOutputError, BadPipelineOutputError } from "@/types/pipelineError";
 import {
   buildClientTimeoutError,
@@ -475,6 +484,240 @@ describe("classifyPipelineError — run-lifecycle errors", () => {
     expect(result.message).toMatch(/PIPELEX_BASE_URL/);
     expect(result.hint?.summary).toMatch(/hosted Pipelex API/);
     expect(result.hint?.code).toContain("PIPELEX_BASE_URL");
+  });
+});
+
+describe("classifyPipelineError — a failed run's stored error report", () => {
+  // The results read's `detail`, as a platform serving the report writes it:
+  // the status, then the report's message — provider text included — and the
+  // sentence it writes for a run with no report.
+  const detailFor = (report: RunErrorReport) =>
+    `Run finished with status FAILED: ${report.message}`;
+  const NO_REPORT_SENTENCE = "Run finished with status FAILED; no result available";
+  const failed = (report: RunErrorReport | null) =>
+    new RunFailedError(report ? detailFor(report) : NO_REPORT_SENTENCE, "run-1", "FAILED", {
+      error: report,
+    });
+
+  it("reads a change_input failure from its report: reason, next step, no re-run, support line", () => {
+    const result = classifyPipelineError(failed(WRONG_ITEM_COUNT), OVERRIDE_ENV, {
+      finishedAt: "2026-09-26T10:01:00.482913+00:00",
+    });
+    expect(result.kind).toBe("run_failed");
+    expect(result.title).toBe("The pipeline run failed: Multiplicity count mismatch");
+    expect(result.message).toBe(WRONG_ITEM_COUNT.message);
+    expect(result.hint).toEqual({ summary: "Provide exactly 2 items for input 'pages'." });
+    expect(result.retry).toEqual({
+      retryable: false,
+      summary: "Running it again unchanged will fail the same way.",
+    });
+    expect(result.support).toBe(
+      "run run-1 · MultiplicityCountMismatchError · failed 2026-09-26T10:01:00Z",
+    );
+    expect(result.details).toContain("run run-1 ended FAILED");
+    expect(result.details).toContain("error_domain: input");
+    expect(result.details).toContain("user_action: change_input");
+    expect(result.message).not.toContain("no result available");
+  });
+
+  it("offers a re-run when the report says the failure is retryable", () => {
+    const result = classifyPipelineError(failed(RATE_LIMITED), OVERRIDE_ENV);
+    expect(result.retry).toEqual({
+      retryable: true,
+      summary: "This failure can pass on a second try: run it again.",
+    });
+    // "The system will retry automatically" is untrue of a run that ended, so
+    // the retry line is the only advice.
+    expect(result.hint).toBeUndefined();
+  });
+
+  it("keeps the provider's raw text out of everything the person can read", () => {
+    const result = classifyPipelineError(failed(MODEL_NOT_ENABLED), OVERRIDE_ENV);
+    expect(result.title).toBe("The pipeline run failed: LLM completion");
+    // What remains of the runtime's message still names the pipe, the model and the status.
+    expect(result.message).toBe(
+      "Pipe 'summarize' (path: two_steps > summarize) failed: openai inference failed for model 'claude-4.8-opus' (HTTP 412)",
+    );
+    expect(result.hint?.summary).toBe(
+      "This model is not enabled on the inference gateway; choose another model for the pipe.",
+    );
+    expect(result.retry?.retryable).toBe(false);
+    const shown = JSON.stringify(result);
+    expect(shown).not.toContain(MODEL_NOT_ENABLED_PROVIDER_TEXT);
+    expect(shown).not.toContain("not allowed for this integration");
+    expect(shown).not.toContain("req_gw_5f1c");
+    expect(result.details).toContain("model: claude-4.8-opus");
+  });
+
+  it("claims nothing about retrying when the report has no verdict", () => {
+    // `null` and an absent field both mean unknown, never "no".
+    const result = classifyPipelineError(
+      failed({ ...WRONG_ITEM_COUNT, retryable: null }),
+      OVERRIDE_ENV,
+    );
+    expect(result.retry).toBeUndefined();
+    expect(result.details).not.toContain("retryable");
+  });
+
+  it("leaves the time out of the support line when the run's end is unknown", () => {
+    const result = classifyPipelineError(failed(WRONG_ITEM_COUNT), OVERRIDE_ENV);
+    expect(result.support).toBe("run run-1 · MultiplicityCountMismatchError");
+  });
+
+  it("says the report is silent rather than showing the provider's text when nothing else is left", () => {
+    const bare: RunErrorReport = {
+      error_type: "LLMCompletionError",
+      message: RATE_LIMITED_PROVIDER_TEXT,
+      provider_metadata: { message: RATE_LIMITED_PROVIDER_TEXT },
+    };
+    const result = classifyPipelineError(failed(bare), OVERRIDE_ENV);
+    expect(result.title).toBe("The pipeline run failed");
+    expect(result.message).toBe("The run ended FAILED, and its error report does not say why.");
+    expect(result.hint).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("rate_limit_exceeded");
+  });
+
+  it("lists a method's validation items under the technical details", () => {
+    const report: RunErrorReport = {
+      error_type: "PipeValidationError",
+      message: "The method failed validation.",
+      title: "Pipe validation",
+      validation_errors: [
+        {
+          category: "pipe_validation",
+          message: "Output multiplicity does not match the parallel branches.",
+          pipe_code: "fan_out",
+        },
+      ],
+    };
+    const result = classifyPipelineError(failed(report), OVERRIDE_ENV);
+    expect(result.details).toContain(
+      "validation: fan_out: Output multiplicity does not match the parallel branches.",
+    );
+  });
+
+  it("keeps today's wording for a failed run with no stored report", () => {
+    const result = classifyPipelineError(failed(null), OVERRIDE_ENV, {
+      finishedAt: "2026-09-26T10:01:00+00:00",
+    });
+    expect(result).toEqual({
+      kind: "run_failed",
+      title: "The pipeline run failed",
+      message: NO_REPORT_SENTENCE,
+      details: `RunFailedError: run run-1 ended FAILED\n${NO_REPORT_SENTENCE}`,
+    });
+  });
+});
+
+describe("classifyPipelineError — a refusal's problem document", () => {
+  it("classifies a refused start from its problem document: reason, next step, validation items, no re-run", () => {
+    const result = classifyPipelineError(refusedStart(), OVERRIDE_ENV);
+    expect(result.kind).toBe("bad_request");
+    expect(result.message).toBe("The method is invalid.");
+    expect(result.hint).toEqual({ summary: "Fix the bundle, then run it again." });
+    expect(result.retry).toEqual({
+      retryable: false,
+      summary: "Running it again unchanged will fail the same way.",
+    });
+    expect(result.details).toContain("error_domain: input");
+    expect(result.details).toContain("user_action: change_input");
+    expect(result.details).toContain(
+      "validation: summarize: Model handle 'gpt-5.1' was not found in the model deck. Did you mean: gpt-5? (model reference: gpt-5.1; suggestions: gpt-5)",
+    );
+  });
+
+  it("puts the validation items ahead of the raw body, which is truncated", () => {
+    const { details } = classifyPipelineError(refusedStart(), OVERRIDE_ENV);
+    expect(details.indexOf("validation: summarize")).toBeLessThan(details.indexOf("body: "));
+  });
+
+  it("offers a re-run when the refusal says it is retryable", () => {
+    const err = new ApiResponseError(
+      "API POST /v1/execute failed (503): The inference provider is overloaded.",
+      "https://api.pipelex.com",
+      503,
+      "Service Unavailable",
+      "{}",
+      "LLMCompletionError",
+      "The inference provider is overloaded.",
+      undefined,
+      undefined,
+      {
+        problem: {
+          retryable: true,
+          userAction: {
+            kind: "wait_and_retry",
+            detail: "Transient provider error — the system will retry automatically.",
+          },
+        },
+      },
+    );
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
+    expect(result.kind).toBe("server_error");
+    expect(result.retry?.retryable).toBe(true);
+    // Nothing retries a refused request, so the stale promise is not the hint.
+    expect(result.hint).toBeUndefined();
+  });
+
+  it("keeps the status's hint when the runtime's advice is its unknown fallback", () => {
+    const err = new ApiResponseError(
+      "API POST /v1/execute failed (500)",
+      "http://localhost:8081",
+      500,
+      "Internal Server Error",
+      "{}",
+      "PipelineExecutionError",
+      "Pipe 'summarize' failed.",
+      undefined,
+      undefined,
+      {
+        problem: {
+          userAction: { kind: "unknown", detail: "Check pipe_stack to identify which pipe failed" },
+        },
+      },
+    );
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
+    expect(result.kind).toBe("server_error");
+    expect(result.hint).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("Check pipe_stack");
+  });
+
+  it("keeps its curated hint for a server error whose document advises nothing", () => {
+    const err = new ApiResponseError(
+      "API POST /v1/execute failed (500)",
+      "https://api.pipelex.com",
+      500,
+      "Internal Server Error",
+      "{}",
+      "CredentialsError",
+      "No API key for the provider.",
+      undefined,
+      undefined,
+    );
+    const result = classifyPipelineError(err, OVERRIDE_ENV);
+    expect(result.hint?.summary).toMatch(/verify the URL/);
+    expect(result.retry).toBeUndefined();
+  });
+
+  it("keeps today's wording for an answer with no problem document", () => {
+    const err = new ApiResponseError(
+      "API POST /v1/start failed (400): Bad Request",
+      "https://api.pipelex.com",
+      400,
+      "Bad Request",
+      "<html>Bad Request</html>",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
+    expect(classifyPipelineError(err, OVERRIDE_ENV)).toEqual({
+      kind: "bad_request",
+      title: "Pipelex API rejected the request (HTTP 400)",
+      message: "The API returned a client error. Inspect the request and try again.",
+      details:
+        "ApiResponseError: HTTP 400 Bad Request\nAPI URL: https://api.pipelex.com\nbody: <html>Bad Request</html>",
+    });
   });
 });
 
