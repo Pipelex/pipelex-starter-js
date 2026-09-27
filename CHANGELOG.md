@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [v0.6.2] - 2026-09-27
+
+### Changed
+
+- **`@pipelex/sdk` 0.26.0**: bumped from 0.24.0, which carries a failed run's stored error report on `RunFailedError` and the whole problem document of a refused request on `ApiResponseError`, the two things the fixes below read. The other breaking change in between removes the gateway key surface, which this app does not use.
 
 ### Fixed
 
