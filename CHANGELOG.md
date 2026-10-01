@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.6.3] - 2026-10-01
+
+### Removed
+
+- **The `/wip/` ignore rule**: the template's `.gitignore` no longer ignores a `wip/` directory, and the `/bump-sdk` skill's rename check no longer names `wip/` notes. A project that keeps untracked notes in `wip/` adds the line back to its own `.gitignore`.
+
+### Security
+
+- **Next.js `^16.3.8`**: `next` and `eslint-config-next` move past the critical remote-code-execution advisory GHSA-vcvr-r3jv-pc5j in `next/og`'s `ImageResponse`, which the template does not import but a project made from it could, and the re-lock also fixes the transitive `brace-expansion` and `fast-uri` advisories, leaving `npm audit` clean.
+
 ## [v0.6.2] - 2026-09-27
 
 ### Changed
