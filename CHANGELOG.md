@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [v0.6.3] - 2026-10-01
+
+### Removed
+
+- **The `/wip/` ignore rule**: the template's `.gitignore` no longer ignores a `wip/` directory, and the `/bump-sdk` skill's rename check no longer names `wip/` notes. A project that keeps untracked notes in `wip/` adds the line back to its own `.gitignore`.
 
 ### Security
 
