@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Security
+
+- **Next.js `^16.3.8`**: `next` and `eslint-config-next` move past the critical remote-code-execution advisory GHSA-vcvr-r3jv-pc5j in `next/og`'s `ImageResponse`, which the template does not import but a project made from it could, and the re-lock also fixes the transitive `brace-expansion` and `fast-uri` advisories, leaving `npm audit` clean.
+
 ## [v0.6.2] - 2026-09-27
 
 ### Changed
