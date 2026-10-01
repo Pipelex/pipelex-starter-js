@@ -1,5 +1,7 @@
 # Agent instructions — pipelex-starter-js
 
+> **This repository is frozen for its move into `Pipelex/pipelex-sdk`** (epic L-261001-a2fd94, plan in the workspace root's `wip/sdk-monorepo/plan.md`). Open no new branch here and claim no ledger item this repository owns: those items are re-owned to the new repository when the import lands, and the work happens there.
+
 The full project guide for AI coding agents is [`CLAUDE.md`](CLAUDE.md) — read it; everything there applies regardless of which agent you are. The rules below are the ones that cause real damage when missed:
 
 - **Never edit anything under `src/generated/`** — not even a reformat. Every file carries a stamp, and any edit makes `make check` fail with `hand-edited`. Customize by wrapping from `src/types/` instead. Relatedly, `src/generated/` is excluded from Prettier and ESLint on purpose — do not "fix" that exclusion.

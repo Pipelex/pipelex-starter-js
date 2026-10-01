@@ -1,5 +1,7 @@
 # pipelex-starter-js
 
+> **This repository is frozen for its move into `Pipelex/pipelex-sdk`** (epic L-261001-a2fd94, plan in the workspace root's `wip/sdk-monorepo/plan.md`). Open no new branch here and claim no ledger item this repository owns: those items are re-owned to the new repository when the import lands, and the work happens there.
+
 Minimal Next.js 16 starter that calls the [Pipelex](https://pipelex.com) API via the [`@pipelex/sdk`](https://www.npmjs.com/package/@pipelex/sdk) SDK to run AI methods (`.mthds` bundles) from a TypeScript app.
 
 This repo is a **reference template**. Keep it small, clear, and high-quality — clarity beats features. When adding anything, ask: "would I want every consumer of this template to inherit this?" It is also the gallery of the demo-free [`pipelex-method-apps`](https://github.com/Pipelex/pipelex-method-apps) template, whose `webapp-js/` holds **the reference copy of the run chrome and the codegen kit** — the hooks, the run helpers in `src/lib/`, the shared components, `scripts/` with `make add-method`, and the Makefile's gestures — and this repo carries a copy kept by hand. A fix to any of them lands in the template first and reaches this gallery as a port; before fixing one here, check whether the template already has the fix, and when a fix is made here first, make sure the template gets its twin. [`docs/chrome-lineage.md`](docs/chrome-lineage.md) lists the shared files and the differences that are deliberate.
