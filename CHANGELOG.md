@@ -1,5 +1,20 @@
 # Changelog
 
+## [v0.29.1] - 2026-10-02
+
+### Fixed
+
+- **Exported to the template repository**: 0.29.0 was released in `Pipelex/pipelex-sdk` but never exported to `Pipelex/pipelex-starter-js`, because that release stopped before its export, so 0.29.1, which carries the same template, is the first version the template repository receives from `Pipelex/pipelex-sdk`.
+
+## [v0.29.0] - 2026-10-02
+
+### Changed
+
+- **Version 0.29.0, shared with the SDKs**: the template is now developed in the `starter-js/` directory of `Pipelex/pipelex-sdk` and exported to `Pipelex/pipelex-starter-js` at each release that ships it, under the one version number it shares with `@pipelex/sdk`, `pipelex-sdk`, the Python starter and `@pipelex/create-method-app`, so its number jumped from 0.6.3 to 0.29.0 for that reason alone, and its later versions may skip numbers.
+- **`/bump-sdk` reads the SDK's changelog from `Pipelex/pipelex-sdk`**: without a local checkout, the skill now fetches `@pipelex/sdk`'s changelog from the `js/` directory of `Pipelex/pipelex-sdk`, where the SDK is developed, and the documents that point at the method-app template link to its directory there.
+- **`make use-local` takes the SDK from a `pipelex-sdk` checkout**: the target now builds `@pipelex/sdk` from `../pipelex-sdk/js`, the `js/` directory of a `Pipelex/pipelex-sdk` checkout beside the project, where it looked for a `../pipelex-sdk-js` checkout, and `/bump-sdk` reads a local changelog from the same place. The form kernel is still `../mthds-form`.
+- **The workflows run on Node 24 actions**: `.github/workflows/lint-check.yml` and `tests-check.yml` use `actions/checkout@v5` and `actions/setup-node@v5` instead of `actions/checkout@v4` and `actions/setup-node@v4`, whose Node 20 runtime GitHub Actions has retired, so a project made from the template no longer starts with a deprecation warning on every job; a project made earlier makes the same changes in those two files.
+
 ## [v0.6.3] - 2026-10-01
 
 ### Removed
